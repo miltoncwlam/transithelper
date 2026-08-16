@@ -1,0 +1,137 @@
+body {
+  background: #f4f7f7;
+  color: #172033;
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+}
+
+.shell {
+  max-width: 920px;
+  margin: auto;
+  padding: 20px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #dce7e7;
+  border-radius: 18px;
+  padding: 18px;
+}
+
+.field {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #cfdcdc;
+  border-radius: 12px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.btn,
+.tab {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  border: 0;
+  cursor: pointer;
+}
+
+.btn,
+.tab.active {
+  background: #287d75;
+  color: #fff;
+}
+
+.tab {
+  background: #e7eff0;
+  color: #172033;
+}
+
+.panel {
+  display: none;
+}
+
+.panel.active {
+  display: block;
+}
+
+.item {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #dce7e7;
+  border-radius: 12px;
+  background: #fbfcfc;
+}
+
+.choice {
+  width: 100%;
+  text-align: left;
+}
+
+.muted {
+  font-size: .9rem;
+  color: #64748b;
+}
+
+.note {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #eef7f5;
+  color: #17675f;
+}
+
+.eta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.mins {
+  font-weight: 800;
+  color: #17675f;
+}
+
+.badge {
+  font-size: .75rem;
+  font-weight: 800;
+  border-radius: 99px;
+  padding: 3px 7px;
+  background: #e1f3ef;
+  color: #17675f;
+}
+
+.hidden {
+  display: none;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.flex { display: flex; }
+.justify-between { justify-content: space-between; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.mb-4 { margin-bottom: 16px; }
+.mt-1 { margin-top: 4px; }
+.mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 12px; }
+.mt-4 { margin-top: 16px; }
+.my-5 { margin-top: 20px; margin-bottom: 20px; }
+.items-start { align-items: flex-start; }
+.items-center { align-items: center; }
+.flex-wrap { flex-wrap: wrap; }
+.block { display: block; }
+.text-xl { font-size: 1.25rem; }
+.text-lg { font-size: 1.125rem; }
+.font-bold { font-weight: 700; }
+.grid { display: grid; }
+.md-grid-2 { display: grid; gap: 12px; }
+@media (min-width: 768px) {
+  .md-grid-2 { grid-template-columns: 1fr 1fr; }
+}

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>巴士實時到站與轉乘助手</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="flex justify-between gap-3 mb-4 items-start">
+      <div>
+        <h1 id="appTitle" class="text-xl font-bold">巴士實時到站與轉乘助手</h1>
+        <p id="appSubtitle" class="muted">九巴／龍運實時到站與轉車時間</p>
+      </div>
+      <div class="flex gap-2 items-center">
+        <button id="langBtn" class="tab" type="button">English</button>
+        <select id="refresh" class="field" style="width:auto">
+          <option value="15">15 秒</option>
+          <option value="30" selected>30 秒</option>
+        </select>
+      </div>
+    </header>
+    <div id="status" class="note">正在載入路線資料…</div>
+    <nav class="flex gap-2 flex-wrap my-5">
+      <button class="tab active" data-tab="arrivals">巴士到站</button>
+      <button class="tab" data-tab="transfer">轉乘助手</button>
+      <button class="tab" data-tab="mtr">港鐵到站</button>
+      <button class="tab" data-tab="home">我的回家路線</button>
+    </nav>
+
+    <section id="arrivals" class="panel active">
+      <div class="card">
+        <h2 id="arrivalsHeading" class="text-lg font-bold">九巴／龍運實時到站</h2>
+        <div class="flex gap-2 mt-3">
+          <input id="arrivalRoute" class="field" placeholder="路線，例如 286C">
+          <button id="arrivalFind" class="btn">查詢</button>
+        </div>
+        <div id="arrivalVariants"></div>
+        <div id="arrivalStops"></div>
+        <div id="arrivalOutput"></div>
+      </div>
+    </section>
+
+    <section id="transfer" class="panel">
+      <div class="card">
+        <h2 id="transferHeading" class="text-lg font-bold">轉乘助手</h2>
+        <label class="block mt-3"><span id="stateLabel">目前行程</span>
+          <select id="state" class="field mt-1">
+            <option value="wait">尚未登上第一程巴士</option>
+            <option value="onboard">已經在第一程巴士上</option>
+          </select>
+        </label>
+        <label class="block mt-3"><input id="nearby" type="checkbox" checked> <span id="nearbyLabel">同時顯示附近車站的其他選擇</span></label>
+        <label class="block mt-2"><span id="radiusLabel">附近範圍</span>
+          <select id="radius" class="field mt-1">
+            <option value="150">150 米</option>
+            <option value="250" selected>250 米</option>
+            <option value="400">400 米</option>
+          </select>
+        </label>
+        <div id="firstBox" class="mt-4">
+          <b id="firstRouteLabel">第一程巴士路線</b>
+          <div class="flex gap-2 mt-1">
+            <input id="firstRoute" class="field" placeholder="路線，例如 286C">
+            <button id="firstFind" class="btn">查詢</button>
+          </div>
+          <div id="firstVariants"></div>
+        </div>
+        <div id="firstSummary"></div>
+        <div id="firstStops"></div>
+        <div id="destinationBox" class="mt-4">
+          <b id="destLabel">終點站</b>
+          <div class="flex gap-2 mt-1">
+            <input id="destinationInput" class="field" placeholder="輸入站名">
+            <button id="destinationFind" class="btn">查詢</button>
+          </div>
+          <div id="destinationResults"></div>
+        </div>
+        <div id="destinationSummary"></div>
+        <button id="transferFind" class="btn mt-4">查看可轉乘班次</button>
+        <div id="transferOutput"></div>
+      </div>
+    </section>
+
+    <section id="mtr" class="panel">
+      <div class="card">
+        <h2 id="mtrHeading" class="text-lg font-bold">港鐵下班車</h2>
+        <label class="block mt-3"><span id="mtrLineLabel">路綫</span>
+          <select id="mtrLine" class="field mt-1"></select>
+        </label>
+        <label class="block mt-3"><span id="mtrStationLabel">車站</span>
+          <select id="mtrStation" class="field mt-1"></select>
+        </label>
+        <button id="mtrFind" class="btn mt-4">顯示下班車</button>
+        <div id="mtrOutput"></div>
+      </div>
+    </section>
+
+    <section id="home" class="panel">
+      <div class="card">
+        <h2 id="homeHeading" class="text-lg font-bold">我的回家路線</h2>
+        <p id="homeHelp" class="muted">可從巴士、轉乘或港鐵頁面儲存，方便下次直接開啟。</p>
+        <div id="homeOutput"></div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/standalone.js"></script>
+</body>
+</html>
