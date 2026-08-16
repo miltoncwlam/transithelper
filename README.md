@@ -27,7 +27,14 @@ npm run sync-i18n
 
 ## Stage 2 — GitHub and Vercel
 
-This repo is a Next.js App Router app. On Vercel: framework **Next.js**, root = this project, production branch `main`. KMB and MTR public APIs need no env vars. Serverless cold starts reload the KMB directory; after you claim the project on **miltoncwlam@gmail.com**, add a Vercel Cron for `/api/cron/warm` every 10 minutes (`*/10 * * * *`). Anonymous deploys cannot register crons.
+Use **miltoncwlam@gmail.com** (GitHub user `miltoncwlam`). SSH from this machine already authenticates as that user.
+
+1. In the browser, create an empty repo: https://github.com/new — name `TransitBuddy`, no README.
+2. From this folder: `git push -u origin main`
+3. Sign in to Vercel with the same Gmail, import that repo (framework Next.js, root = this project, production = `main`).
+4. Anonymous CLI deploys of Next.js 15 fail (missing `node_modules` in the upload). A logged-in Git import is required.
+
+KMB and MTR public APIs need no env vars. After the project is claimed, add a Vercel Cron for `/api/cron/warm` every 10 minutes (`*/10 * * * *`) if cold starts are slow.
 
 ## Stage 3 — Supabase (your account)
 
