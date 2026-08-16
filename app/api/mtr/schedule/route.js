@@ -1,5 +1,5 @@
-import { json } from '../../../../lib/http.js';
-import { fetchMtrSchedule, normalizeMtrSchedule } from '../../../../lib/mtr.js';
+import { json } from '@/lib/http.js';
+import { fetchMtrSchedule, normalizeMtrSchedule } from '@/lib/mtr.js';
 
 export const dynamic = 'force-dynamic';
 

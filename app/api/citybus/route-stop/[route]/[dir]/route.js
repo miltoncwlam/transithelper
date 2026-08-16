@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic';
 
-import { cache } from '../../../../lib/directory.js';
-import { json } from '../../../../lib/http.js';
-import { citybusRouteStops } from '../../../../lib/citybus.js';
+import { cache } from '@/lib/directory.js';
+import { json } from '@/lib/http.js';
+import { citybusRouteStops } from '@/lib/citybus.js';
 
 export async function GET(_request, context) {
   const { route, dir } = await context.params;

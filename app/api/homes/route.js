@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 
-import { addHome, listHomes } from '../../../lib/homes.js';
-import { json, requireDevice } from '../../../lib/http.js';
+import { addHome, listHomes } from '@/lib/homes.js';
+import { json, requireDevice } from '@/lib/http.js';
 
 export async function GET(request) {
   const { id, error } = requireDevice(request);

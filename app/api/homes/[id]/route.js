@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 
-import { pinHome, removeHome } from '../../../../lib/homes.js';
-import { json, requireDevice } from '../../../../lib/http.js';
+import { pinHome, removeHome } from '@/lib/homes.js';
+import { json, requireDevice } from '@/lib/http.js';
 
 export async function DELETE(request, context) {
   const { id: deviceId, error } = requireDevice(request);

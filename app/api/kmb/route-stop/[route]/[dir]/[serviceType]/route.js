@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic';
 
-import { cache, getDirectory } from '../../../../../../../lib/directory.js';
-import { json } from '../../../../../../../lib/http.js';
-import { attachStopMeta, kmbFetch } from '../../../../../../../lib/kmb.js';
+import { cache, getDirectory } from '@/lib/directory.js';
+import { json } from '@/lib/http.js';
+import { attachStopMeta, kmbFetch } from '@/lib/kmb.js';
 
 const ROUTE_STOP_TTL = 24 * 60 * 60 * 1000;
 

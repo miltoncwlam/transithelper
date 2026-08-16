@@ -31,7 +31,7 @@ This repo is a Next.js App Router app. On Vercel: framework **Next.js**, root = 
 
 ## Stage 3 — Supabase (your account)
 
-The Cursor plugin is currently signed into the flashcard org (`interns@aail.ai`). Create a dedicated **TransitBuddy** project on the account you actually use (Singapore `ap-southeast-1` is a reasonable region for Hong Kong). Do not reuse the flashcard projects.
+The Cursor plugin is currently signed into the flashcard org (`interns@aail.ai`). Use **miltoncwlam@gmail.com** for GitHub, Vercel, and Supabase. Create a dedicated **TransitBuddy** project on that account (Singapore `ap-southeast-1` is a reasonable region for Hong Kong). Do not reuse the flashcard projects.
 
 1. Re-auth the Supabase plugin / dashboard to that account.
 2. Create the project, then apply `supabase/migrations/20260816130000_homes_and_discounts.sql`.

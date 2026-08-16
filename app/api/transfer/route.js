@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic';
 
-import { cache, getDirectory } from '../../../lib/directory.js';
-import { json } from '../../../lib/http.js';
-import { planTransfer } from '../../../lib/transfer.js';
+import { cache, getDirectory } from '@/lib/directory.js';
+import { json } from '@/lib/http.js';
+import { planTransfer } from '@/lib/transfer.js';
 
 export async function POST(request) {
   try {

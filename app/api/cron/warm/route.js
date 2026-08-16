@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 
-import { getDirectory } from '../../../../lib/directory.js';
-import { json } from '../../../../lib/http.js';
+import { getDirectory } from '@/lib/directory.js';
+import { json } from '@/lib/http.js';
 
 export async function GET(request) {
   const secret = process.env.CRON_SECRET;
