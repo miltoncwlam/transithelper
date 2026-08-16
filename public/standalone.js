@@ -93,6 +93,10 @@ import { I18N } from '/i18n.js';
     $('arrivalsHeading').textContent = t('arrivalsHeading');
     $('arrivalRoute').placeholder = t('routePlaceholder');
     $('arrivalFind').textContent = t('find');
+    if ($('nearbyFind')) {
+      $('nearbyFind').textContent = t('nearbyStops');
+      $('nearbyFind').setAttribute('aria-label', t('nearbyStops'));
+    }
     $('transferHeading').textContent = t('transferHeading');
     $('stateLabel').textContent = t('stateLabel');
     const state = $('state');
@@ -118,6 +122,9 @@ import { I18N } from '/i18n.js';
     $('mtrFind').textContent = t('mtrFind');
     $('homeHeading').textContent = t('homeHeading');
     $('homeHelp').textContent = t('homeHelp');
+    if ($('a2hs') && !window.matchMedia('(display-mode: standalone)').matches) {
+      $('a2hs').textContent = t('addHomeScreen');
+    }
     $('arrivalFind').setAttribute('aria-label', t('find'));
     $('firstFind').setAttribute('aria-label', t('find'));
     $('destinationFind').setAttribute('aria-label', t('find'));
@@ -527,10 +534,68 @@ import { I18N } from '/i18n.js';
     return type;
   }
 
+  function groupStopEtas(rows) {
+    const m = new Map();
+    for (const x of rows || []) {
+      if (!x.eta) continue;
+      const destZh = x.dest_tc || x.dest_en || '';
+      const destEn = x.dest_en || x.dest_tc || '';
+      const k = [n(x.route), destZh].join('|');
+      if (!m.has(k)) m.set(k, { route: x.route, dest: { zh: destZh, en: destEn }, times: [] });
+      m.get(k).times.push(x.eta);
+    }
+    return [...m.values()].map((g) => ({ ...g, times: cluster(g.times) }));
+  }
+
+  async function findNearbyStops() {
+    put('nearbyOutput', '');
+    if (!navigator.geolocation) {
+      put('nearbyStops', `<p class="muted">${esc(t('geoDenied'))}</p>`);
+      return;
+    }
+    put('nearbyStops', `<div class="note">${esc(t('locating'))}</div>`);
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        const json = await api(`/api/stops/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&radius=250`);
+        const data = json.data || [];
+        if (!data.length) {
+          put('nearbyStops', `<p class="muted">${esc(t('noStops'))}</p>`);
+          return;
+        }
+        put('nearbyStops', data.map((stop, i) =>
+          `<button class="item choice" data-i="${i}"><b>${esc(S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc)}</b><div class="muted">${esc(t('metres', stop.metres))}</div></button>`
+        ).join(''));
+        $('nearbyStops').querySelectorAll('button').forEach((b) => {
+          b.onclick = () => pickNearbyStop(data[+b.dataset.i]);
+        });
+      } catch (error) {
+        put('nearbyStops', `<p class="muted">${esc(error.message || t('geoDenied'))}</p>`);
+      }
+    }, () => put('nearbyStops', `<p class="muted">${esc(t('geoDenied'))}</p>`), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+  }
+
+  async function pickNearbyStop(stop) {
+    try {
+      const json = await api(`/api/kmb/stop-eta/${encodeURIComponent(stop.stop)}`);
+      const groups = groupStopEtas(json.data || []);
+      const name = S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc;
+      const list = groups.length
+        ? groups.map((g) => `<div class="item"><b>${esc(g.route)}</b><div>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(loc(g.dest))}</div>${etaList(g.times)}</div>`).join('')
+        : `<p class="muted">${esc(t('noEta'))}</p>`;
+      put('nearbyOutput', `<h3 class="font-bold mt-3">${esc(name)}</h3>${list}`);
+    } catch {
+      put('nearbyOutput', `<p class="muted">${esc(t('noEta'))}</p>`);
+    }
+  }
+
   async function renderHome() {
     try {
       const json = await api('/api/homes');
       const rows = json.data || [];
+      if (!S.homeOpened && rows.length) {
+        S.homeOpened = true;
+        tabs('home');
+      }
       if (!rows.length) {
         put('homeOutput', `<p class="muted mt-3">${esc(t('homeEmpty'))}</p>`);
         return;
@@ -615,6 +680,7 @@ import { I18N } from '/i18n.js';
     await refreshDynamic();
   };
   $('arrivalFind').onclick = () => choices('arrivalVariants', $('arrivalRoute').value, pickA);
+  if ($('nearbyFind')) $('nearbyFind').onclick = findNearbyStops;
   $('firstFind').onclick = () => choices('firstVariants', $('firstRoute').value, pickF);
   $('destinationFind').onclick = dest;
   $('transferFind').onclick = go;

@@ -24,6 +24,7 @@
       </div>
     </header>
     <div id="status" class="note">正在載入路線資料…</div>
+    <p id="a2hs" class="muted"></p>
     <nav class="flex gap-2 flex-wrap my-5">
       <button class="tab active" data-tab="arrivals">巴士到站</button>
       <button class="tab" data-tab="transfer">轉乘助手</button>
@@ -38,6 +39,9 @@
           <input id="arrivalRoute" class="field" placeholder="路線，例如 286C">
           <button id="arrivalFind" class="btn">查詢</button>
         </div>
+        <button id="nearbyFind" class="tab mt-3" type="button">附近車站</button>
+        <div id="nearbyStops"></div>
+        <div id="nearbyOutput"></div>
         <div id="arrivalVariants"></div>
         <div id="arrivalStops"></div>
         <div id="arrivalOutput"></div>

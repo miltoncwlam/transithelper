@@ -26,7 +26,8 @@ body {
 
 .btn,
 .tab {
-  padding: 10px 14px;
+  padding: 14px 18px;
+  min-height: 44px;
   border-radius: 12px;
   font-weight: 700;
   border: 0;

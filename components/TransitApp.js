@@ -70,10 +70,14 @@ export default function TransitApp() {
 
   const [homes, setHomes] = useState([]);
   const [homeError, setHomeError] = useState('');
+  const [nearbyList, setNearbyList] = useState(null);
+  const [nearbyBoard, setNearbyBoard] = useState(null);
+  const [standaloneHint, setStandaloneHint] = useState(false);
 
   const stopCache = useRef(new Map());
   const lastView = useRef(null);
   const transferSeq = useRef(0);
+  const homeOpened = useRef(false);
   const stopMap = useMemo(() => new Map(stops.map((x) => [x.stop, x])), [stops]);
 
   const t = useCallback((key, ...args) => {
@@ -393,11 +397,56 @@ export default function TransitApp() {
     }
   }, [api, currentLineKey, currentSta]);
 
+  function groupStopEtas(rows) {
+    const m = new Map();
+    for (const x of rows || []) {
+      if (!x.eta) continue;
+      const destZh = x.dest_tc || x.dest_en || '';
+      const destEn = x.dest_en || x.dest_tc || '';
+      const k = [n(x.route), destZh].join('|');
+      if (!m.has(k)) m.set(k, { route: x.route, dest: { zh: destZh, en: destEn }, times: [] });
+      m.get(k).times.push(x.eta);
+    }
+    return [...m.values()].map((g) => ({ ...g, times: cluster(g.times) }));
+  }
+
+  async function findNearbyStops() {
+    setNearbyBoard(null);
+    if (!navigator.geolocation) {
+      setNearbyList({ error: 'geoDenied' });
+      return;
+    }
+    setNearbyList({ loading: true });
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        const json = await api(`/api/stops/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&radius=250`);
+        setNearbyList({ data: json.data || [] });
+      } catch (error) {
+        setNearbyList({ error: error.message || 'geoDenied' });
+      }
+    }, () => setNearbyList({ error: 'geoDenied' }), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+  }
+
+  async function pickNearbyStop(stop) {
+    setNearbyList((prev) => ({ ...(prev || {}), picked: stop }));
+    try {
+      const json = await api(`/api/kmb/stop-eta/${encodeURIComponent(stop.stop)}`);
+      setNearbyBoard({ stop, groups: groupStopEtas(json.data || []) });
+    } catch {
+      setNearbyBoard({ stop, groups: [] });
+    }
+  }
+
   const renderHome = useCallback(async () => {
     try {
       const json = await api('/api/homes');
-      setHomes(json.data || []);
+      const rows = json.data || [];
+      setHomes(rows);
       setHomeError('');
+      if (!homeOpened.current && rows.length) {
+        homeOpened.current = true;
+        setTab('home');
+      }
     } catch (error) {
       setHomeError(error.message);
     }
@@ -472,6 +521,9 @@ export default function TransitApp() {
     if (stored === 'en' || stored === 'zh') setLang(stored);
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+    if (typeof window !== 'undefined' && !window.matchMedia('(display-mode: standalone)').matches) {
+      setStandaloneHint(true);
     }
   }, []);
 
@@ -629,6 +681,7 @@ export default function TransitApp() {
         </div>
       </header>
       <div className="note">{dirCount == null ? t('loading') : dirCount < 0 ? (offline ? t('connectionRefused') : t('loadFail')) : t('ready', dirCount)}</div>
+      {standaloneHint ? <p className="muted">{t('addHomeScreen')}</p> : null}
       <nav className="flex gap-2 flex-wrap my-5">
         {tabs.map(([id, label]) => (
           <button key={id} className={`tab${tab === id ? ' active' : ''}`} type="button" onClick={() => setTab(id)}>{label}</button>
@@ -647,6 +700,33 @@ export default function TransitApp() {
                 if (payload.auto) pickArrival(payload.auto);
               }}>{t('find')}</button>
           </div>
+          <button className="tab mt-3" type="button" aria-label={t('nearbyStops')} onClick={findNearbyStops}>{t('nearbyStops')}</button>
+          {nearbyList?.loading ? <div className="note">{t('locating')}</div> : null}
+          {nearbyList?.error ? <p className="muted">{nearbyList.error === 'geoDenied' ? t('geoDenied') : nearbyList.error}</p> : null}
+          {nearbyList?.data?.length ? (
+            <div className="mt-2">
+              {nearbyList.data.map((stop) => (
+                <button key={stop.stop} className="item choice" type="button" onClick={() => pickNearbyStop(stop)}>
+                  <b>{lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc}</b>
+                  <div className="muted">{t('metres', stop.metres)}</div>
+                </button>
+              ))}
+            </div>
+          ) : nearbyList?.data && !nearbyList.data.length ? <p className="muted">{t('noStops')}</p> : null}
+          {nearbyBoard ? (
+            <>
+              <h3 className="font-bold mt-3">{lang === 'zh' ? nearbyBoard.stop.name_tc || nearbyBoard.stop.name_en : nearbyBoard.stop.name_en || nearbyBoard.stop.name_tc}</h3>
+              {nearbyBoard.groups.length
+                ? nearbyBoard.groups.map((g) => (
+                  <div className="item" key={g.route + loc(g.dest)}>
+                    <b>{g.route}</b>
+                    <div>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(g.dest)}</div>
+                    {etaList(g.times)}
+                  </div>
+                ))
+                : <p className="muted">{t('noEta')}</p>}
+            </>
+          ) : null}
           <div>{renderChoiceList(arrivalChoices, pickArrival)}</div>
           {arrivalService ? (
             <select className="field mt-3" value={arrivalStopIndex} onChange={async (e) => {

@@ -45,6 +45,15 @@ try {
   if (!eta.ok) fail(`KMB route-eta ${eta.status}`);
   else console.log('ok KMB route 1 etas', (eta.json.data || []).length);
 
+  const nearby = await get('/api/stops/nearby?lat=22.2975&lng=114.1722&radius=250');
+  if (!nearby.ok) fail(`nearby ${nearby.status}`);
+  else if (!(nearby.json.data || []).length) fail('nearby TST returned no stops');
+  else console.log('ok nearby TST', nearby.json.data.length, 'stops', nearby.json.data[0]?.name_en || nearby.json.data[0]?.name_tc);
+
+  const discounts = await get('/api/discounts');
+  if (!discounts.ok) fail(`discounts ${discounts.status}`);
+  else console.log('ok discounts', (discounts.json.data || []).length);
+
   const home = await fetch(`${BASE}/`);
   if (!home.ok) fail(`home ${home.status}`);
   else console.log('ok home', home.status);

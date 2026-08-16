@@ -91,7 +91,12 @@ export const I18N = {
     more: (n) => `及其他 ${n} 個站`,
     octopusDiscount: '八達通轉乘優惠',
     discountNote: '實際金額以車費機為準。',
-    citybusHint: '亦已同時查詢城巴路線。'
+    citybusHint: '亦已同時查詢城巴路線。',
+    nearbyStops: '附近車站',
+    locating: '正在定位附近車站…',
+    geoDenied: '未能取得位置。請允許定位，或改為輸入路線。',
+    addHomeScreen: '可加入主畫面，方便在車站一按開啟。',
+    metres: (n) => `${n} 米`
   },
   en: {
     title: 'Live arrivals and transfer helper',
@@ -185,7 +190,12 @@ export const I18N = {
     more: (n) => `and ${n} more`,
     octopusDiscount: 'Octopus interchange discount',
     discountNote: 'The exact fare is shown on the bus reader.',
-    citybusHint: 'Citybus routes were also searched.'
+    citybusHint: 'Citybus routes were also searched.',
+    nearbyStops: 'Nearby stops',
+    locating: 'Finding nearby stops…',
+    geoDenied: 'Location was not available. Allow location, or type a route instead.',
+    addHomeScreen: 'Add this page to your Home Screen for one-tap use at the stop.',
+    metres: (n) => `${n} m`
   }
 };
 
