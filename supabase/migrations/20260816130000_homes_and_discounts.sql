@@ -1,6 +1,6 @@
 -- Apply on the TransitBuddy Supabase project (your account, not the flashcard org).
 -- Discounts: published rows are readable with the anon / publishable key.
--- Homes: no anon policies. The Next.js API uses SUPABASE_SERVICE_ROLE_KEY (server only)
+-- Homes: no anon policies. The Next.js API uses SUPABASE_SECRET_KEY (server only)
 -- and filters by X-Device-Id. Optional later: set user_id from auth.uid() for email login.
 
 create table if not exists public.interchange_discounts (

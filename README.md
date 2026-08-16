@@ -44,8 +44,8 @@ The Cursor plugin is currently signed into the flashcard org (`interns@aail.ai`)
 2. Create the project, then apply `supabase/migrations/20260816130000_homes_and_discounts.sql`.
 3. Copy `.env.example` to `.env.local` and set:
    - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or anon key)
-   - `SUPABASE_SERVICE_ROLE_KEY` (server only — never `NEXT_PUBLIC_`)
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+   - `SUPABASE_SECRET_KEY` (server only — never `NEXT_PUBLIC_`)
 4. Put the same vars on Vercel.
 
 Without those vars, saved homes fall back to a local `data/homes.json` file, which does not survive a new Vercel instance. With them, homes persist by device id (`X-Device-Id` / `tb-device` in localStorage). Email login across phones is optional later (`saved_homes.user_id`).
