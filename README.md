@@ -27,7 +27,7 @@ npm run sync-i18n
 
 ## Stage 2 — GitHub and Vercel
 
-This repo is a Next.js App Router app. On Vercel: framework **Next.js**, root = this project, production branch `main`. KMB and MTR public APIs need no env vars. Serverless cold starts reload the KMB directory; `/api/cron/warm` pings it every 10 minutes on Vercel.
+This repo is a Next.js App Router app. On Vercel: framework **Next.js**, root = this project, production branch `main`. KMB and MTR public APIs need no env vars. Serverless cold starts reload the KMB directory; after you claim the project on **miltoncwlam@gmail.com**, add a Vercel Cron for `/api/cron/warm` every 10 minutes (`*/10 * * * *`). Anonymous deploys cannot register crons.
 
 ## Stage 3 — Supabase (your account)
 
