@@ -10,6 +10,10 @@ export async function GET() {
       routes: directory.routes.length,
       stops: directory.stops.length,
       citybusStops: directory.stops.filter((stop) => stop.co === 'CTB').length,
+      gmbRoutes: directory.routes.filter((row) => row.co === 'GMB').length,
+      nlbRoutes: directory.routes.filter((row) => row.co === 'NLB').length,
+      gmbStops: directory.stops.filter((stop) => stop.co === 'GMB').length,
+      nlbStops: directory.stops.filter((stop) => stop.co === 'NLB').length,
       fareRoutes: directory.routes.filter((row) => row.full_fare_hkd != null).length,
       sectionFareRoutes: directory.routes.filter((row) => (row.section_prices || []).length > 1).length
     });

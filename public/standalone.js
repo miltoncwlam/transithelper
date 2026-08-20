@@ -5,8 +5,10 @@
   const KMB = 'https://data.etabus.gov.hk/v1/transport/kmb';
   const CTB = 'https://rt.data.gov.hk/v2/transport/citybus';
   const GMB = 'https://data.etagmb.gov.hk';
+  const NLB = 'https://rt.data.gov.hk/v2/transport/nlb';
   const MTR_API = 'https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php';
   const HOME_KEY = 'tb-homes';
+  const API_BASE = '';
 
   const $ = (id) => document.getElementById(id);
   const S = { routes: [], stops: [], map: new Map(), cache: new Map(), last: null, lines: {}, lang: localStorage.getItem('tb-lang') || 'zh', openStops: {}, fetchedStops: {}, direct: false };
@@ -64,6 +66,7 @@
   function serviceCo(row) {
     if (row?.co) return String(row.co).toUpperCase();
     if (row?.gmb_route_id) return 'GMB';
+    if (row?.nlb_route_id) return 'NLB';
     return 'KMB';
   }
   function servicePlaceKey(x, side) {
@@ -94,17 +97,16 @@
     return date.toLocaleTimeString(S.lang === 'zh' ? 'zh-HK' : 'en-HK', { hour: 'numeric', minute: '2-digit' });
   };
   const fareNote = (x, opts = {}) => {
-    if (!x || (x.full_fare_hkd == null && x.journey_time_minutes == null && x.section_fare_hkd == null && !(x.section_prices || []).length)) return '';
+    if (!x) return '';
     const parts = [];
     if (x.section_fare_hkd != null) parts.push(t('sectionFare', x.section_fare_hkd));
     else if (x.full_fare_hkd != null) parts.push(t('fullFare', x.full_fare_hkd));
     if (x.section_fare_hkd != null && x.full_fare_hkd != null && Number(x.section_fare_hkd) !== Number(x.full_fare_hkd)) {
       parts.push(t('fullFare', x.full_fare_hkd));
     }
-    if (x.section_fare_hkd == null && (x.section_prices || []).length > 1) {
-      parts.push(t('sectionList', x.section_prices.map((n) => `$${Number(n).toFixed(1)}`).join(' / ')));
-    }
-    if (x.journey_time_minutes != null && !opts.hideScheduled && !(x.rideMinutes > 0)) parts.push(t('scheduledMins', x.journey_time_minutes));
+    if (x.rideMinutes > 0) parts.push(t('rideMins', x.rideMinutes));
+    else if (x.totalMinutes > 0) parts.push(typeof t('totalMins') === 'function' ? t('totalMins', x.totalMinutes) : `全程約 ${x.totalMinutes} 分鐘`);
+    else if (x.journey_time_minutes != null && !opts.hideScheduled) parts.push(t('scheduledMins', x.journey_time_minutes));
     if (!parts.length) return '';
     return `<div class="muted">${esc(parts.join(' · '))}</div>`;
   };
@@ -121,7 +123,7 @@
       return false;
     }
     try {
-      const res = await fetch(`${location.origin}/api/status`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+      const res = await fetch(`${API_BASE}/api/status`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
       backend = res.ok;
     } catch {
       backend = false;
@@ -500,7 +502,7 @@
     const empty = { bySeq: new Map(), byStop: new Map() };
     if (!first?.route || fromIdx < 0 || toIdx < fromIdx || !seq.length) return empty;
     const firstCo = serviceCo(first);
-    if (firstCo === 'GMB' || firstCo === 'CTB') {
+    if (firstCo === 'GMB' || firstCo === 'CTB' || firstCo === 'NLB') {
       const slice = seq.slice(fromIdx, toIdx + 1);
       const lists = await mapPool(slice, 6, (row) => eta(row.stop, first, row.seq));
       const byStop = new Map();
@@ -735,6 +737,31 @@
     return null;
   }
 
+  function pickFollowedTrain(trains, board) {
+    const dest = String(board?.destCode || '').trim().toUpperCase();
+    const line = board?.line;
+    const start = trainMs(board);
+    const rows = (trains || []).filter((row) => !dest || String(row.destCode || '').trim().toUpperCase() === dest);
+    const sameLine = line ? rows.filter((row) => row.line === line) : rows;
+    const close = (list) => Number.isFinite(start)
+      ? list.filter((row) => {
+        const ms = trainMs(row);
+        return Number.isFinite(ms) && Math.abs(ms - start) <= 90 * 1000;
+      })
+      : [];
+    const withPath = (list) => list.find((row) => (row.stops || []).length > 1);
+    return withPath(close(sameLine))
+      || withPath(close(rows))
+      || withPath(sameLine)
+      || withPath(rows)
+      || sameLine.find((row) => row.terminus)
+      || rows.find((row) => row.terminus)
+      || close(sameLine)[0]
+      || sameLine[0]
+      || rows[0]
+      || null;
+  }
+
   function slotsForDest(trains, destCode) {
     return (trains || [])
       .filter((train) => train.destCode === destCode)
@@ -836,10 +863,11 @@
           : (iso ? Math.max(0, Math.ceil((new Date(iso) - Date.now()) / 60000)) : null);
         trains.push({
           dest: mtrStationName(train.dest),
-          destCode: String(train.dest || '').toUpperCase(),
+          destCode: String(train.dest || '').trim().toUpperCase(),
           time: iso,
           minutes,
-          platform: train.plat && train.plat !== '-' ? String(train.plat) : null
+          platform: train.plat && train.plat !== '-' ? String(train.plat) : null,
+          line
         });
       }
     }
@@ -901,6 +929,33 @@
 
   async function mtrFollowLine(line, origin, dest, originBase) {
     const base = originBase || normalizeMtr(await fetchMtr(line, origin), line, origin);
+    if (String(origin || '').trim().toUpperCase() && String(origin || '').trim().toUpperCase() === String(dest || '').trim().toUpperCase()) {
+      const name = mtrLines()[line]?.name || { zh: line, en: line };
+      const trains = (base.trains || [])
+        .filter((train) => String(train.destCode || '').trim().toUpperCase() === String(origin || '').trim().toUpperCase())
+        .map((train) => ({
+          ...train,
+          line,
+          lineName: name,
+          arrive: train.time,
+          arriveMinutes: train.minutes,
+          rideMinutes: 0,
+          arrivalEstimated: false,
+          terminus: true,
+          stops: [{
+            stop: String(origin).trim().toUpperCase(),
+            name: mtrStationName(origin),
+            time: train.time || null,
+            estimated: false
+          }]
+        }));
+      return {
+        ...base,
+        line,
+        trains,
+        emptyReason: trains.length ? null : (base.emptyReason === 'unavailable' ? 'unavailable' : 'no_dest')
+      };
+    }
     const serving = (base.trains || []).filter((train) => mtrPath(line, origin, dest, train.destCode));
     if (!serving.length) {
       return {
@@ -952,7 +1007,7 @@
     const ctrl = new AbortController();
     const kill = setTimeout(() => ctrl.abort(), 12000);
     try {
-      const res = await fetch(path, {
+      const res = await fetch(`${API_BASE}${path}`, {
         cache: 'no-store',
         signal: ctrl.signal,
         headers: {
@@ -980,6 +1035,7 @@
     $('appTitle').textContent = t('title');
     $('appSubtitle').textContent = t('subtitle');
     $('langBtn').textContent = t('langBtn');
+    if ($('guideBtn')) $('guideBtn').textContent = t('guideBtn') || (S.lang === 'zh' ? '使用說明' : 'Guide');
     const refresh = $('refresh');
     const keep = refresh.value;
     refresh.innerHTML = `<option value="15">${t('refresh15')}</option><option value="30">${t('refresh30')}</option>`;
@@ -1086,10 +1142,11 @@
   }
 
   async function loadDirect() {
-    const [kmbRoutes, kmbStops, ctbRoutes] = await Promise.all([
+    const [kmbRoutes, kmbStops, ctbRoutes, nlbJson] = await Promise.all([
       gov(`${KMB}/route/`),
       gov(`${KMB}/stop`),
-      gov(`${CTB}/route/CTB`).catch(() => [])
+      gov(`${CTB}/route/CTB`).catch(() => []),
+      fetch(`${NLB}/route.php?action=list`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ routes: [] }))
     ]);
     const kmb = (kmbRoutes || []).map((row) => ({ ...row, co: row.co || 'KMB' }));
     const ctb = [];
@@ -1103,7 +1160,22 @@
         orig_en: x.dest_en, dest_en: x.orig_en, orig_tc: x.dest_tc, dest_tc: x.orig_tc
       });
     }
-    S.routes = [...kmb, ...ctb];
+    const nlb = (nlbJson.routes || []).map((row) => {
+      const zh = String(row.routeName_c || '').split(/\s*>\s*/);
+      const en = String(row.routeName_e || '').split(/\s*>\s*/);
+      return {
+        co: 'NLB',
+        route: String(row.routeNo || ''),
+        bound: 'O',
+        service_type: '1',
+        nlb_route_id: String(row.routeId),
+        orig_tc: (zh[0] || '').trim(),
+        dest_tc: (zh.slice(1).join(' > ') || zh[0] || '').trim(),
+        orig_en: (en[0] || '').trim(),
+        dest_en: (en.slice(1).join(' > ') || en[0] || '').trim()
+      };
+    });
+    S.routes = [...kmb, ...ctb, ...nlb];
     S.stops = (kmbStops || []).map((row) => ({ ...row, co: row.co || 'KMB' }));
     S.map = new Map(S.stops.map((x) => [x.stop, x]));
     S.lines = globalThis.TB_MTR_LINES || {};
@@ -1127,7 +1199,6 @@
     if (!q) return [];
     const byRoute = new Map();
     for (const x of S.routes) {
-      if (serviceCo(x) === 'GMB') continue;
       const rank = routeMatchRank(q, x.route);
       if (rank >= 99) continue;
       const route = n(x.route);
@@ -1136,22 +1207,24 @@
     }
     const names = [...byRoute.values()].sort((a, b) => a.rank - b.rank || a.route.length - b.route.length || a.route.localeCompare(b.route));
     const seen = new Set();
-    const out = [];
-    for (const { route } of names) {
+    const exact = [];
+    const rest = [];
+    for (const { route, rank } of names) {
+      const bucket = rank === 0 ? exact : rest;
       for (const x of S.routes) {
         if (n(x.route) !== route) continue;
-        const k = [x.co || 'KMB', x.bound, x.service_type, x.orig_en, x.dest_en].join('|');
+        if (serviceCo(x) === 'GMB' && !x.gmb_route_id) continue;
+        const k = [x.co || 'KMB', x.bound, x.service_type, x.gmb_route_id || '', x.nlb_route_id || '', x.orig_en, x.dest_en].join('|');
         if (seen.has(k)) continue;
         seen.add(k);
-        out.push(x);
-        if (out.length >= 20) return out;
+        bucket.push(x);
       }
     }
-    return out;
+    return exact.concat(rest.slice(0, 24));
   }
 
   async function stops(s) {
-    const k = [serviceCo(s), s.route, s.bound, s.service_type, s.gmb_route_id || '', s.gmb_route_seq || ''].join('|');
+    const k = [serviceCo(s), s.route, s.bound, s.service_type, s.gmb_route_id || '', s.gmb_route_seq || '', s.nlb_route_id || ''].join('|');
     if (S.cache.has(k)) return S.cache.get(k);
     if (await hasBackend()) {
       if (serviceCo(s) === 'CTB') {
@@ -1163,6 +1236,12 @@
       }
       if (serviceCo(s) === 'GMB' && s.gmb_route_id) {
         const json = await api(`/api/gmb/route-stop/${encodeURIComponent(s.gmb_route_id)}/${encodeURIComponent(s.gmb_route_seq || 1)}`);
+        const rows = json.data || [];
+        S.cache.set(k, rows);
+        return rows;
+      }
+      if (serviceCo(s) === 'NLB' && s.nlb_route_id) {
+        const json = await api(`/api/nlb/route-stop/${encodeURIComponent(s.nlb_route_id)}`);
         const rows = json.data || [];
         S.cache.set(k, rows);
         return rows;
@@ -1186,6 +1265,17 @@
         long: row.long || row.lng,
         co: 'GMB'
       })));
+    } else if (serviceCo(s) === 'NLB' && s.nlb_route_id) {
+      const json = await fetch(`${NLB}/stop.php?action=list&routeId=${encodeURIComponent(s.nlb_route_id)}`, { cache: 'no-store' }).then((r) => r.json());
+      rows = (json.stops || []).map((row, i) => ({
+        stop: String(row.stopId),
+        seq: i + 1,
+        name_tc: row.stopName_c,
+        name_en: row.stopName_e,
+        lat: Number(row.latitude),
+        long: Number(row.longitude),
+        co: 'NLB'
+      }));
     } else if (serviceCo(s) === 'CTB') {
       const d = s.bound === 'I' ? 'inbound' : 'outbound';
       const seq = [...(await gov(`${CTB}/route-stop/CTB/${encodeURIComponent(s.route)}/${d}`) || [])].sort((a, b) => a.seq - b.seq);
@@ -1246,6 +1336,10 @@
             dest_en: x.dest_en || s.dest_en
           }));
         }
+        if (serviceCo(s) === 'NLB' && s.nlb_route_id) {
+          const json = await api(`/api/nlb/eta/${encodeURIComponent(s.nlb_route_id)}/${encodeURIComponent(stop)}`);
+          return (json.data || []).filter((x) => x.eta);
+        }
         const json = await api(`/api/kmb/stop-eta/${encodeURIComponent(stop)}`);
         return (json.data || []).filter((x) =>
           n(x.route) === n(s.route)
@@ -1255,6 +1349,15 @@
         );
       }
       if (serviceCo(s) === 'GMB') return gmbEtaDirect(stop, s, stopSeq);
+      if (serviceCo(s) === 'NLB' && s.nlb_route_id) {
+        const json = await fetch(`${NLB}/stop.php?action=estimatedArrivals&routeId=${encodeURIComponent(s.nlb_route_id)}&stopId=${encodeURIComponent(stop)}&language=zh`, { cache: 'no-store' }).then((r) => r.json());
+        return (json.estimatedArrivals || []).map((row, i) => {
+          const raw = String(row.estimatedArrivalTime || '').replace(' ', 'T');
+          const eta = raw ? `${raw}+08:00` : '';
+          if (!eta) return null;
+          return { eta, eta_seq: i + 1, dest_tc: s.dest_tc, dest_en: s.dest_en, route: s.route, dir: 'O', co: 'NLB', nlb_route_id: s.nlb_route_id };
+        }).filter(Boolean);
+      }
       if (serviceCo(s) === 'CTB') {
         const data = await gov(`${CTB}/eta/CTB/${encodeURIComponent(stop)}/${encodeURIComponent(s.route)}`);
         return (data || []).filter((x) => x.eta).map((x) => ({ ...x, dir: s.bound, service_type: '1', route: s.route, co: 'CTB' }));
@@ -1272,7 +1375,7 @@
   }
 
   async function routeLive(s, seq = []) {
-    if (serviceCo(s) === 'GMB') {
+    if (serviceCo(s) === 'GMB' || serviceCo(s) === 'NLB') {
       const probe = seq[0];
       if (!probe) return [];
       try { return await eta(probe.stop, s, probe.seq); } catch { return []; }
@@ -1309,9 +1412,14 @@
     const set = new Set((companies && companies.length ? companies : [serviceCo(service)]).map(String));
     const hasCtb = set.has('CTB');
     const hasGmb = set.has('GMB');
-    const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB');
+    const hasNlb = set.has('NLB');
+    const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB' && c !== 'NLB');
     if (hasCtb && hasFranchised) return t('coJoint');
-    if (hasGmb) return t('coGmb');
+    if (hasGmb) {
+      const region = service?.gmb_region === 'HKI' ? t('regionHki') : service?.gmb_region === 'KLN' ? t('regionKln') : service?.gmb_region === 'NT' ? t('regionNt') : '';
+      return region ? `${t('coGmb')} · ${region}` : t('coGmb');
+    }
+    if (hasNlb) return t('coNlb');
     if (hasCtb) return t('coCtb');
     if (set.has('LWB')) return t('coLwb');
     return t('coKmb');
@@ -1321,16 +1429,18 @@
     const byJourney = new Map();
     for (const z of keep) {
       const k = serviceCo(z.x) === 'GMB'
-        ? ['GMB', n(z.x.route), servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|')
-        : ['BUS', n(z.x.route), z.x.bound, servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|');
+        ? ['GMB', n(z.x.route), servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest'), z.x.gmb_route_id || ''].join('|')
+        : serviceCo(z.x) === 'NLB'
+          ? ['NLB', n(z.x.route), z.x.nlb_route_id || ''].join('|')
+          : ['BUS', n(z.x.route), z.x.bound, servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|');
       if (!byJourney.has(k)) byJourney.set(k, []);
       byJourney.get(k).push(z);
     }
     const journeys = [];
     for (const list of byJourney.values()) {
       const ranked = list.slice().sort((a, b) => {
-        const aKmb = serviceCo(a.x) !== 'CTB' && serviceCo(a.x) !== 'GMB' ? 1 : 0;
-        const bKmb = serviceCo(b.x) !== 'CTB' && serviceCo(b.x) !== 'GMB' ? 1 : 0;
+        const aKmb = serviceCo(a.x) !== 'CTB' && serviceCo(a.x) !== 'GMB' && serviceCo(a.x) !== 'NLB' ? 1 : 0;
+        const bKmb = serviceCo(b.x) !== 'CTB' && serviceCo(b.x) !== 'GMB' && serviceCo(b.x) !== 'NLB' ? 1 : 0;
         return (b.live.length - a.live.length) || (b.seq.length - a.seq.length) || (bKmb - aKmb);
       });
       const best = ranked[0];
@@ -1342,7 +1452,7 @@
     }
     const byRouteBound = new Map();
     for (const z of journeys) {
-      const k = [serviceCo(z.x) === 'GMB' ? 'GMB' : 'BUS', n(z.x.route), z.x.bound].join('|');
+      const k = [serviceCo(z.x) === 'GMB' ? 'GMB' : serviceCo(z.x) === 'NLB' ? 'NLB' : 'BUS', n(z.x.route), z.x.bound, z.x.gmb_route_id || z.x.nlb_route_id || ''].join('|');
       if (!byRouteBound.has(k)) byRouteBound.set(k, []);
       byRouteBound.get(k).push(z);
     }
@@ -1369,7 +1479,7 @@
   }
 
   async function choices(id, routeStr, pick) {
-    let rows = matchBusServices(routeStr);
+    let rows = matchBusServices(routeStr).filter((x) => serviceCo(x) !== 'GMB' || x.gmb_route_id);
     try {
       if (await hasBackend()) {
         const json = await api(`/api/gmb/lookup?route=${encodeURIComponent(n(routeStr))}`);
@@ -1395,7 +1505,7 @@
       put(id, `<p class="muted">${esc(t(info.some((z) => z.seq.length) ? 'noLiveNow' : 'routeUnavailable'))}</p>`);
       return;
     }
-    const merged = mergeLiveChoices(keep);
+    const merged = mergeLiveChoices(keep).sort((a, b) => routeMatchRank(routeStr, a.x.route) - routeMatchRank(routeStr, b.x.route) || String(a.x.route).length - String(b.x.route).length);
     if (merged.length === 1) {
       put(id, '');
       await pick(merged[0].x);
@@ -1417,15 +1527,17 @@
 
   function stopTimesBlock(id, stops, fetchable) {
     const cached = S.fetchedStops[id];
+    const terminus = !!(stops?.terminus || cached?.terminus);
     const list = (Array.isArray(stops) && stops.length > 1)
       ? stops
       : (Array.isArray(cached) ? cached : []);
     const loading = cached === 'loading';
-    if (list.length < 2 && !loading && !fetchable) return '';
+    if (!terminus && list.length < 2 && !loading && !fetchable) return '';
     const open = !!S.openStops[id];
     const btn = `<button class="tab mt-2" type="button" data-stops="${esc(id)}" data-fetch="${fetchable ? '1' : '0'}">${esc(open ? t('hideStopTimes') : t('showStopTimes'))}</button>`;
     if (!open) return btn;
     if (loading) return `${btn}<p class="muted mt-2">${esc(t('stopTimesLoading'))}</p>`;
+    if (terminus) return `${btn}<p class="muted mt-2">${esc(t('stopTimesTerminus'))}</p>`;
     if (list.length < 2) return `${btn}<p class="muted mt-2">${esc(t('stopTimesEmpty'))}</p>`;
     const rows = list.map((stop) => `<li><span>${esc(loc(stop.name))}</span><span>${esc(clk(stop.time))}${stop.estimated ? ` · ${esc(t('stopTimeEst'))}` : ''}</span></li>`).join('');
     return `${btn}<ol class="stop-times">${rows}</ol>`;
@@ -1444,7 +1556,8 @@
         S.openStops[id] = true;
         if (fetchers?.paint) fetchers.paint();
         const hasList = (Array.isArray(S.fetchedStops[id]) && S.fetchedStops[id].length > 1)
-          || (fetchers?.stops && (fetchers.stops(id) || []).length > 1);
+          || S.fetchedStops[id]?.terminus
+          || (fetchers?.stops && ((fetchers.stops(id) || []).length > 1 || fetchers.stops(id)?.terminus));
         if (!hasList && btn.dataset.fetch === '1' && fetchers?.load) {
           await fetchers.load(id);
           if (fetchers.paint) fetchers.paint();
@@ -1630,10 +1743,20 @@
       $('firstBox').classList.remove('hidden');
       put('firstSummary', '');
     };
+    const paintInter = () => {
+      const board = $('board')?.value;
+      const interOpts = S.fg.map((g, i) => (board !== '' && i >= +board ? `<option value="${i}">${esc(g.label)}</option>` : '')).join('');
+      const prev = $('interchange')?.value;
+      $('interchange').innerHTML = `<option value="">${esc(t('chooseInterchange'))}</option>${interOpts}`;
+      if (prev !== '' && board !== '' && +prev >= +board) $('interchange').value = prev;
+      else $('interchange').value = '';
+    };
     const o = S.fg.map((g, i) => `<option value="${i}">${esc(g.label)}</option>`).join('');
-    put('firstStops', `<div class="md-grid-2 mt-4"><label>${esc(t('boardStop'))}<select id="board" class="field mt-1"><option value="">${esc(t('notSelected'))}</option>${o}</select></label><label>${esc(t('interchangeStop'))}<select id="interchange" class="field mt-1"><option value="">${esc(t('chooseInterchange'))}</option>${o}</select></label></div>`);
+    put('firstStops', `<div class="md-grid-2 mt-4"><label>${esc(t('boardStop'))}<select id="board" class="field mt-1"><option value="">${esc(t('notSelected'))}</option>${o}</select></label><label>${esc(t('interchangeStop'))}<select id="interchange" class="field mt-1"><option value="">${esc(t('chooseInterchange'))}</option></select></label></div>`);
     if (restore.board != null) $('board').value = restore.board;
-    if (restore.inter != null) $('interchange').value = restore.inter;
+    paintInter();
+    if (restore.inter != null && restore.board != null && +restore.inter >= +restore.board) $('interchange').value = restore.inter;
+    $('board').onchange = paintInter;
   }
 
   function dest() {
@@ -1783,6 +1906,17 @@
 
   async function stopAllEtas(stop) {
     try {
+      if ((stop.co || '') === 'GMB') {
+        const data = await gov(`${GMB}/eta/stop/${encodeURIComponent(stop.stop)}`);
+        const blocks = Array.isArray(data) ? data : (data ? [data] : []);
+        const out = [];
+        for (const block of blocks) {
+          for (const eta of block.eta || []) {
+            if (eta.timestamp) out.push({ eta: eta.timestamp, route: block.route_code, co: 'GMB', gmb_route_id: block.route_id, dest_tc: block.dest_tc, dest_en: block.dest_en });
+          }
+        }
+        return out;
+      }
       if ((stop.co || '') === 'CTB' || /^\d{6}$/.test(String(stop.stop || ''))) {
         const res = await fetch(`https://rt.data.gov.hk/v1/transport/batch/stop-eta/CTB/${encodeURIComponent(stop.stop)}`, {
           cache: 'no-store',
@@ -1962,6 +2096,10 @@
       put('transferOutput', `<div class="note">${esc(t('needBoard'))}</div>`);
       return;
     }
+    if ($('board') && $('interchange') && +$('interchange').value < +$('board').value) {
+      put('transferOutput', `<div class="note">${esc(t('needFields'))}</div>`);
+      return;
+    }
     const phase = opts.phase
       || (S.transferPhase === 'connections' && S.selectedDeparture ? 'connections' : 'departures');
     const picked = Object.prototype.hasOwnProperty.call(opts, 'selectedDeparture')
@@ -2072,7 +2210,8 @@
     if (!line) return;
     const keep = $('mtrStation').value;
     put('mtrStation', line.stations.map((row) => `<option value="${row[0]}">${esc(stationLabel(row))}</option>`).join(''));
-    if (keep) $('mtrStation').value = keep;
+    if (keep && line.stations.some((row) => row[0] === keep)) $('mtrStation').value = keep;
+    else $('mtrStation').value = line.stations[0]?.[0] || '';
     $('mtrStation').onchange = fillMtrDest;
     fillMtrDest();
   }
@@ -2105,6 +2244,7 @@
         const wait = x.arrive ? (x.arriveMinutes ?? mins(x.arrive)) : (x.minutes != null ? x.minutes : mins(x.time));
         const when = x.time ? clk(x.time) : '';
         const plat = x.platform ? ` · ${t('platform', x.platform)}` : '';
+        const routeBadge = x.route ? `<span class="badge">${esc(x.route)}</span> ` : '';
         const arrive = x.arrive && destName
           ? `<div class="muted">${esc(clk(x.arrive))} ${esc(t('rideArrives'))}${S.lang === 'zh' ? '' : ' '}${esc(destName)}${x.rideMinutes != null ? ` · ${esc(t('rideMins', x.rideMinutes))}` : ''}</div>`
           : '';
@@ -2112,8 +2252,10 @@
         const lineLabel = loc(x.lineName);
         const earliest = destName && i === 0 ? `<span class="badge">${esc(t('earliestArrival'))}</span>` : '';
         const lineBadge = lineLabel ? `<span class="badge">${esc(lineLabel)}</span>` : '';
-        const fetchable = !(x.stops && x.stops.length > 1);
-        return `<div class="item"><div class="eta"><div>${earliest}${lineBadge}<b>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(loc(x.dest))}</b>${when ? `<div class="muted">${esc(when)}${esc(plat)}${destName ? ` · ${esc(t('rideDeparts'))}` : ''}</div>` : ''}${arrive}${guess}</div><span class="mins">${wait == null ? '' : esc(t('minutes', wait))}</span></div>${stopTimesBlock(`mtr-${i}`, x.stops, fetchable)}</div>`;
+        const boarding = r.sta || s;
+        const terminus = !!(x.terminus || (x.destCode && x.destCode === boarding));
+        const fetchable = !terminus && !(x.stops && x.stops.length > 1);
+        return `<div class="item"><div class="eta"><div>${earliest}${routeBadge}${lineBadge}<b>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(loc(x.dest))}</b>${when ? `<div class="muted">${esc(when)}${esc(plat)}${destName ? ` · ${esc(t('rideDeparts'))}` : ''}</div>` : ''}${arrive}${guess}</div><span class="mins">${wait == null ? '' : esc(t('minutes', wait))}</span></div>${x.line === 'LRT' ? '' : stopTimesBlock(`mtr-${i}`, terminus ? { terminus: true } : x.stops, fetchable)}</div>`;
       }).join('')
       : `<p class="muted">${esc(empty)}</p>`;
     put('mtrOutput', delay + list + `<div class="row-actions"><button id="saveMtr" class="tab">${esc(t('saveHome'))}</button></div>`);
@@ -2128,22 +2270,29 @@
     });
     bindStopTimes($('mtrOutput'), {
       paint: paintMtr,
-      stops: (id) => a[+id.slice(4)]?.stops,
-      load: async (id) => {
-        if (S.fetchedStops[id] === 'loading' || (Array.isArray(S.fetchedStops[id]) && S.fetchedStops[id].length)) return;
+      stops: (id) => {
         const train = a[+id.slice(4)];
+        if (train?.terminus || (train?.destCode && train.destCode === (r.sta || s))) return { terminus: true };
+        return train?.stops;
+      },
+      load: async (id) => {
+        if (S.fetchedStops[id] === 'loading' || S.fetchedStops[id]?.terminus || (Array.isArray(S.fetchedStops[id]) && S.fetchedStops[id].length)) return;
+        const train = a[+id.slice(4)];
+        const boarding = r.sta || s;
         if (!train?.destCode) {
           S.fetchedStops[id] = [];
+          return;
+        }
+        if (train.terminus || train.destCode === boarding) {
+          S.fetchedStops[id] = { terminus: true };
           return;
         }
         S.fetchedStops[id] = 'loading';
         paintMtr();
         try {
-          const json = await api(`/api/mtr/schedule?line=${encodeURIComponent(train.line || l)}&sta=${encodeURIComponent(s)}&dest=${encodeURIComponent(train.destCode)}`);
-          const hit = (json.trains || []).find((row) => row.destCode === train.destCode && Math.abs(new Date(row.time) - new Date(train.time)) <= 90 * 1000)
-            || (json.trains || []).find((row) => row.destCode === train.destCode)
-            || (json.trains || [])[0];
-          S.fetchedStops[id] = hit?.stops || [];
+          const json = await api(`/api/mtr/schedule?line=${encodeURIComponent(train.line || l)}&sta=${encodeURIComponent(boarding)}&dest=${encodeURIComponent(train.destCode)}&sameLine=1`);
+          const hit = pickFollowedTrain(json.trains || [], { ...train, line: train.line || l });
+          S.fetchedStops[id] = hit?.terminus ? { terminus: true } : (hit?.stops || []);
         } catch {
           S.fetchedStops[id] = [];
         }
@@ -2187,6 +2336,7 @@
           S.mtrResult = base;
         }
       }
+      S.mtrResult = { ...S.mtrResult, line: l, sta: s };
       paintMtr();
       S.last = 'm';
     } catch {
@@ -2242,7 +2392,7 @@
       try {
         let data = [];
         if (await hasBackend()) {
-          const json = await api(`/api/stops/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&radius=250`);
+          const json = await api(`/api/stops/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&radius=600&limit=80`);
           data = json.data || [];
         } else {
           data = (S.stops || [])
@@ -2261,11 +2411,12 @@
           put('nearbyStops', `<p class="muted">${esc(t('noStops'))}</p>`);
           return;
         }
-        put('nearbyStops', data.map((stop, i) =>
-          `<button class="item choice" data-i="${i}"><b>${esc(S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc)}</b><div class="muted">${esc(coBadge(stop))} · ${esc(t('metres', stop.metres))}</div></button>`
+        const clusters = typeof clusterOppositeStops === 'function' ? clusterOppositeStops(data) : data;
+        put('nearbyStops', clusters.map((stop, i) =>
+          `<button class="item choice" data-i="${i}"><b>${esc(S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc)}</b><div class="muted">${esc(t('metres', stop.metres))}</div></button>`
         ).join(''));
         $('nearbyStops').querySelectorAll('button').forEach((b) => {
-          b.onclick = () => pickNearbyStop(data[+b.dataset.i]);
+          b.onclick = () => pickNearbyStop(clusters[+b.dataset.i]);
         });
       } catch (error) {
         put('nearbyStops', `<p class="muted">${esc(error.message || t('geoDenied'))}</p>`);
@@ -2275,14 +2426,18 @@
 
   async function pickNearbyStop(stop) {
     try {
+      const members = stop.members || [stop];
       let rows = [];
       if (await hasBackend()) {
-        const json = stop.co === 'CTB'
-          ? await api(`/api/citybus/stop-eta/${encodeURIComponent(stop.stop)}`)
-          : await api(`/api/kmb/stop-eta/${encodeURIComponent(stop.stop)}`);
-        rows = json.data || [];
+        const lists = await Promise.all(members.map(async (member) => {
+          const qs = new URLSearchParams({ stop: member.stop });
+          if (member.co) qs.set('co', member.co);
+          const json = await api(`/api/stops/eta?${qs}`).catch(() => ({ data: [] }));
+          return json.data || [];
+        }));
+        rows = lists.flat();
       } else {
-        rows = await stopAllEtas(stop);
+        for (const member of members) rows.push(...(await stopAllEtas(member)));
       }
       const groups = groupStopEtas(rows);
       const name = S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc;
@@ -2383,6 +2538,13 @@
     });
     document.querySelectorAll('.panel').forEach((x) => x.classList.toggle('active', x.id === id));
     if (id === 'home') renderHome();
+    if (id === 'guide') paintGuide();
+  }
+
+  function paintGuide() {
+    const guide = (typeof GUIDE !== 'undefined' && GUIDE[S.lang]) ? GUIDE[S.lang] : GUIDE?.zh;
+    if (!$('guideCard') || !guide) return;
+    $('guideCard').innerHTML = `<h2 class="text-lg font-bold">${esc(guide.title)}</h2><p class="muted mt-2">${esc(guide.intro)}</p><p class="mt-3"><a class="tab" href="/user-manual.pdf" target="_blank" rel="noreferrer">${esc(guide.pdf)}</a></p>${guide.sections.map((section) => `<div class="mt-4"><h3 class="font-bold">${esc(section.h)}</h3>${section.p.map((para) => `<p class="muted mt-2">${esc(para)}</p>`).join('')}</div>`).join('')}`;
   }
 
   function auto() {
@@ -2398,8 +2560,10 @@
     S.lang = S.lang === 'zh' ? 'en' : 'zh';
     localStorage.setItem('tb-lang', S.lang);
     applyStatic();
+    paintGuide();
     await refreshDynamic();
   };
+  if ($('guideBtn')) $('guideBtn').onclick = () => tabs('guide');
   $('arrivalFind').onclick = () => choices('arrivalVariants', $('arrivalRoute').value, pickA);
   if ($('nearbyFind')) $('nearbyFind').onclick = findNearbyStops;
   $('firstFind').onclick = () => choices('firstVariants', $('firstRoute').value, pickF);

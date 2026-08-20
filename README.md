@@ -1,6 +1,6 @@
 # TransitBuddy
 
-Hong Kong live bus and MTR helper. Default language is Traditional Chinese. Local development always uses port **3001**.
+Hong Kong live bus, minibus (GMB), and MTR helper. Default language is Traditional Chinese. Local development always uses port **3001**.
 
 ## Stage 1 — Run locally
 
@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:3001 and http://127.0.0.1:3001/standalone.html.
 
-`standalone.html` is a single file. On the Next.js server it uses `/api/*` (full Transfer follow-along, fares, saved homes). Without that server — OneCompiler, a paste, `?direct=1` — it calls KMB / Citybus / MTR public APIs itself. Transfer arrival times are then estimated from stop counts; homes stay in the browser. Rebuild the single file after UI edits:
+`standalone.html` is a single file. On the Next.js server it uses `/api/*` (full Transfer follow-along, fares, saved homes). Without that server — OneCompiler, a paste, `?direct=1` — it calls KMB / Citybus / GMB / MTR public APIs itself. Transfer arrival times are then estimated from stop counts; homes stay in the browser. Rebuild the single file after UI edits:
 
 ```bash
 npm run bundle-standalone
@@ -97,6 +97,8 @@ The older `interchange_discounts` notes table remains as a fallback if Storage h
 ## Stage 5 — Product
 
 Chinese is the default. Language is stored in `localStorage` (`tb-lang`) and shared by React and `public/standalone.html`. Boarding stop is required. Arrivals and MTR can optionally pick a destination on the same route/line; only trips that go there are listed, with a predicted arrival from the same follow-along timing as Transfer Buddy. Transfer helper first lists upcoming first-bus departures at the boarding stop (and any direct buses). After you pick a departure, it times arrival at the transfer stop and shows the best connecting bus plus up to two later options. Homes restore arrivals, transfers, and MTR in one tap and can be pinned.
+
+In-app **使用說明 / Guide** is the header button (follows `tb-lang`). The full bilingual PDF is `/user-manual.pdf` (HTML source `public/user-manual.html`, copy in `lib/guide.js`, rebuild with `npm run build-manual`). The user-facing PDF does not mention localhost or development ports.
 
 ## Friend UI contract
 

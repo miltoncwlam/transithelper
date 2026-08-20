@@ -8,9 +8,11 @@ test('home and standalone load', async ({ page }) => {
   expect(stand.ok()).toBeTruthy();
 });
 
-test('status api', async ({ request }) => {
-  const res = await request.get('/api/status');
-  expect(res.ok()).toBeTruthy();
-  const json = await res.json();
-  expect(json.routes).toBeGreaterThan(100);
+test('guide and user manual', async ({ page, request }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /使用說明|Guide/ }).click();
+  await expect(page.locator('.guide h2')).toContainText(/使用說明|How to use/);
+  const pdf = await request.get('/user-manual.pdf');
+  expect(pdf.ok()).toBeTruthy();
+  expect(pdf.headers()['content-type'] || '').toMatch(/pdf/);
 });

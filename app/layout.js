@@ -1,8 +1,8 @@
 import './globals.css';
 
 export const metadata = {
-  title: '巴士實時到站與轉乘助手',
-  description: '九巴／龍運實時到站與轉車時間',
+  title: '巴士／小巴實時到站與轉乘助手',
+  description: '九巴／龍運／城巴／嶼巴／專線小巴實時到站，港鐵及輕鐵',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,

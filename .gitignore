@@ -10,3 +10,4 @@ playwright-report/
 test-results/
 blob-report/
 .vercel
+lib/apiBase.local.js

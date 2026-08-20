@@ -9,6 +9,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
 const i18n = await readFile(new URL('../public/i18n.js', import.meta.url), 'utf8');
 const mtr = await readFile(new URL('../public/mtr-data.js', import.meta.url), 'utf8');
+const helpers = [
+  await readFile(new URL('../lib/stopCluster.js', import.meta.url), 'utf8'),
+  await readFile(new URL('../lib/guide.js', import.meta.url), 'utf8')
+].map((src) => src.replace(/^export /gm, '')).join('\n');
 const js = await readFile(new URL('../public/standalone.js', import.meta.url), 'utf8');
 const html = await readFile(new URL('../public/standalone.src.html', import.meta.url), 'utf8');
 
@@ -28,6 +32,7 @@ ${css}
   <script>
 ${i18n}
 ${mtr}
+${helpers}
 ${js}
   </script>
   <!-- /standalone-bundle -->${tail}`;

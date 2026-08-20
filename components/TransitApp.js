@@ -1,7 +1,24 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/apiBase.js';
 import { I18N } from '../lib/i18n.js';
+import { pickFollowedTrain } from '../lib/mtr.js';
+import { collectMatchingServices, sortLiveChoices } from '../lib/routeSearch.js';
+import { clusterOppositeStops } from '../lib/stopCluster.js';
+import { displayStopName } from '../lib/stopName.js';
+import StopMap from './StopMap.js';
+import UserGuide from './UserGuide.js';
+
+function isLocalHost() {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1';
+}
+
+function showLocalDevHint() {
+  return SHOW_LOCAL_DEV_HINT && isLocalHost();
+}
 
 function deviceId() {
   let id = localStorage.getItem('tb-device');
@@ -16,27 +33,6 @@ function n(x) {
   return String(x || '').trim().toUpperCase();
 }
 
-function parseRouteToken(s) {
-  const raw = n(s);
-  const m = /^([A-Z]*)(\d+)([A-Z]*)$/.exec(raw);
-  if (m) return { raw, prefix: m[1], num: m[2], suffix: m[3] };
-  return { raw, prefix: raw.replace(/[^A-Z]/g, ''), num: raw.replace(/\D/g, ''), suffix: '' };
-}
-
-function routeMatchRank(query, route) {
-  const q = parseRouteToken(query);
-  const r = parseRouteToken(route);
-  if (!q.raw || !r.raw) return 99;
-  if (r.raw === q.raw) return 0;
-  if (q.num && r.num && q.num === r.num) return 1;
-  if (!q.num && q.raw && (r.prefix === q.raw || r.suffix === q.raw)) return 1;
-  if (q.num && r.num && r.num.startsWith(q.num) && r.raw.startsWith(q.raw)) return 2;
-  if (q.num && r.raw.startsWith(q.num)) return 2;
-  if (q.num && (r.num.includes(q.num) || r.raw.includes(q.num))) return 3;
-  if (q.raw.length >= 1 && r.raw.includes(q.raw)) return 4;
-  return 99;
-}
-
 function stopNameKey(x) {
   return (x?.name_tc || x?.name_en || '').normalize('NFKC').replace(/\s*\([^)]*\)\s*/g, '').replace(/[\s–—_.,'"-]+/g, '').toLowerCase();
 }
@@ -44,6 +40,7 @@ function stopNameKey(x) {
 function serviceCo(row) {
   if (row?.co) return String(row.co).toUpperCase();
   if (row?.gmb_route_id) return 'GMB';
+  if (row?.nlb_route_id) return 'NLB';
   return 'KMB';
 }
 
@@ -75,6 +72,15 @@ function emptyReasonKey(reason) {
   if (reason === 'need_board') return 'needBoard';
   if (reason === 'empty' || reason === 'no_departure') return 'noLiveNow';
   return 'none';
+}
+
+function readRecents() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('tb-recents') || '{}');
+    return { routes: raw.routes || [], stops: raw.stops || [] };
+  } catch {
+    return { routes: [], stops: [] };
+  }
 }
 
 export default function TransitApp() {
@@ -126,6 +132,10 @@ export default function TransitApp() {
   const [homeError, setHomeError] = useState('');
   const [nearbyList, setNearbyList] = useState(null);
   const [nearbyBoard, setNearbyBoard] = useState(null);
+  const [nearbyCenter, setNearbyCenter] = useState(null);
+  const [arrivalFares, setArrivalFares] = useState(null);
+  const [firstFares, setFirstFares] = useState(null);
+  const [recents, setRecents] = useState({ routes: [], stops: [] });
   const [standaloneHint, setStandaloneHint] = useState(false);
 
   const stopCache = useRef(new Map());
@@ -135,6 +145,10 @@ export default function TransitApp() {
   const stopMap = useMemo(() => new Map(stops.map((x) => [x.stop, x])), [stops]);
 
   const t = useCallback((key, ...args) => {
+    if (key === 'connectionRefused' && showLocalDevHint()) {
+      const localText = LOCAL_CONNECTION_REFUSED[lang];
+      if (localText) return localText;
+    }
     const value = I18N[lang][key];
     return typeof value === 'function' ? value(...args) : value;
   }, [lang]);
@@ -145,9 +159,7 @@ export default function TransitApp() {
     return lang === 'zh' ? (pair.zh || pair.en) : (pair.en || pair.zh);
   }, [lang]);
 
-  const areaName = useCallback((x) => (
-    lang === 'zh' ? (x.name_tc || x.name_en || '') : (x.name_en || x.name_tc || '')
-  ), [lang]);
+  const areaName = useCallback((x) => displayStopName(x, lang), [lang]);
 
   const areaKey = (x) => (x.name_tc || x.name_en || '').normalize('NFKC').replace(/\s*\([^)]*\)\s*/g, '').replace(/[\s–—_.,'"-]+/g, '');
 
@@ -172,7 +184,7 @@ export default function TransitApp() {
     const ctrl = new AbortController();
     const kill = setTimeout(() => ctrl.abort(), 12000);
     try {
-      const res = await fetch(path, {
+      const res = await fetch(`${API_BASE}${path}`, {
         cache: 'no-store',
         signal: ctrl.signal,
         headers: {
@@ -194,6 +206,16 @@ export default function TransitApp() {
     }
   }, [t]);
 
+  function pushRecent(kind, value) {
+    if (value == null || value === '') return;
+    const cur = readRecents();
+    const token = JSON.stringify(value);
+    const list = [value, ...(cur[kind] || []).filter((row) => JSON.stringify(row) !== token)].slice(0, 8);
+    const next = { ...cur, [kind]: list };
+    try { localStorage.setItem('tb-recents', JSON.stringify(next)); } catch {}
+    setRecents(next);
+  }
+
   function groups(rows) {
     const m = new Map();
     rows.forEach((x) => {
@@ -205,35 +227,11 @@ export default function TransitApp() {
   }
 
   function matchBusServices(r) {
-    const q = n(r);
-    if (!q) return [];
-    const byRoute = new Map();
-    for (const x of routes) {
-      if (serviceCo(x) === 'GMB') continue;
-      const rank = routeMatchRank(q, x.route);
-      if (rank >= 99) continue;
-      const route = n(x.route);
-      const cur = byRoute.get(route);
-      if (!cur || rank < cur.rank) byRoute.set(route, { rank, route });
-    }
-    const names = [...byRoute.values()].sort((a, b) => a.rank - b.rank || a.route.length - b.route.length || a.route.localeCompare(b.route));
-    const seen = new Set();
-    const out = [];
-    for (const { route } of names) {
-      for (const x of routes) {
-        if (n(x.route) !== route) continue;
-        const k = [x.co || 'KMB', x.bound, x.service_type, x.orig_en, x.dest_en].join('|');
-        if (seen.has(k)) continue;
-        seen.add(k);
-        out.push(x);
-        if (out.length >= 20) return out;
-      }
-    }
-    return out;
+    return collectMatchingServices(routes, r);
   }
 
   async function fetchStops(s) {
-    const k = [serviceCo(s), s.route, s.bound, s.service_type, s.gmb_route_id || '', s.gmb_route_seq || ''].join('|');
+    const k = [serviceCo(s), s.route, s.bound, s.service_type, s.gmb_route_id || '', s.gmb_route_seq || '', s.nlb_route_id || ''].join('|');
     if (stopCache.current.has(k)) return stopCache.current.get(k);
     if (serviceCo(s) === 'CTB') {
       const d = s.bound === 'I' ? 'inbound' : 'outbound';
@@ -244,6 +242,12 @@ export default function TransitApp() {
     }
     if (serviceCo(s) === 'GMB' && s.gmb_route_id) {
       const json = await api(`/api/gmb/route-stop/${encodeURIComponent(s.gmb_route_id)}/${encodeURIComponent(s.gmb_route_seq || 1)}`);
+      const rows = json.data || [];
+      stopCache.current.set(k, rows);
+      return rows;
+    }
+    if (serviceCo(s) === 'NLB' && s.nlb_route_id) {
+      const json = await api(`/api/nlb/route-stop/${encodeURIComponent(s.nlb_route_id)}`);
       const rows = json.data || [];
       stopCache.current.set(k, rows);
       return rows;
@@ -277,6 +281,17 @@ export default function TransitApp() {
           dest_en: x.dest_en || s.dest_en
         }));
       }
+      if (serviceCo(s) === 'NLB' && s.nlb_route_id) {
+        const json = await api(`/api/nlb/eta/${encodeURIComponent(s.nlb_route_id)}/${encodeURIComponent(stopId)}`);
+        return (json.data || []).filter((x) => x.eta).map((x) => ({
+          ...x,
+          dir: 'O',
+          service_type: '1',
+          route: x.route || s.route,
+          dest_tc: x.dest_tc || s.dest_tc,
+          dest_en: x.dest_en || s.dest_en
+        }));
+      }
       const json = await api(`/api/kmb/stop-eta/${encodeURIComponent(stopId)}`);
       return (json.data || []).filter((x) =>
         n(x.route) === n(s.route)
@@ -290,7 +305,7 @@ export default function TransitApp() {
   }
 
   async function routeLive(s, seq = []) {
-    if (serviceCo(s) === 'GMB') {
+    if (serviceCo(s) === 'GMB' || serviceCo(s) === 'NLB') {
       const probe = seq[0];
       if (!probe) return [];
       try { return await eta(probe.stop, s, probe.seq); } catch { return []; }
@@ -323,16 +338,18 @@ export default function TransitApp() {
     const byJourney = new Map();
     for (const z of keep) {
       const k = serviceCo(z.x) === 'GMB'
-        ? ['GMB', n(z.x.route), servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|')
-        : ['BUS', n(z.x.route), z.x.bound, servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|');
+        ? ['GMB', n(z.x.route), servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest'), z.x.gmb_region || '', z.x.gmb_route_id || ''].join('|')
+        : serviceCo(z.x) === 'NLB'
+          ? ['NLB', n(z.x.route), z.x.nlb_route_id || '', servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|')
+          : ['BUS', n(z.x.route), z.x.bound, servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|');
       if (!byJourney.has(k)) byJourney.set(k, []);
       byJourney.get(k).push(z);
     }
     const journeys = [];
     for (const list of byJourney.values()) {
       const ranked = list.slice().sort((a, b) => {
-        const aKmb = serviceCo(a.x) !== 'CTB' && serviceCo(a.x) !== 'GMB' ? 1 : 0;
-        const bKmb = serviceCo(b.x) !== 'CTB' && serviceCo(b.x) !== 'GMB' ? 1 : 0;
+        const aKmb = serviceCo(a.x) !== 'CTB' && serviceCo(a.x) !== 'GMB' && serviceCo(a.x) !== 'NLB' ? 1 : 0;
+        const bKmb = serviceCo(b.x) !== 'CTB' && serviceCo(b.x) !== 'GMB' && serviceCo(b.x) !== 'NLB' ? 1 : 0;
         return (b.live.length - a.live.length) || (b.seq.length - a.seq.length) || (bKmb - aKmb);
       });
       const best = ranked[0];
@@ -344,7 +361,7 @@ export default function TransitApp() {
     }
     const byRouteBound = new Map();
     for (const z of journeys) {
-      const k = [serviceCo(z.x) === 'GMB' ? 'GMB' : 'BUS', n(z.x.route), z.x.bound].join('|');
+      const k = [serviceCo(z.x) === 'GMB' ? 'GMB' : serviceCo(z.x) === 'NLB' ? 'NLB' : 'BUS', n(z.x.route), z.x.bound, z.x.gmb_route_id || z.x.nlb_route_id || ''].join('|');
       if (!byRouteBound.has(k)) byRouteBound.set(k, []);
       byRouteBound.get(k).push(z);
     }
@@ -371,11 +388,18 @@ export default function TransitApp() {
   }
 
   async function loadChoices(routeStr) {
-    let rows = matchBusServices(routeStr);
+    let rows = matchBusServices(routeStr).filter((x) => serviceCo(x) !== 'GMB' || x.gmb_route_id);
     try {
       const json = await api(`/api/gmb/lookup?route=${encodeURIComponent(n(routeStr))}`);
-      rows = [...rows, ...(json.data || [])];
+      const extra = json.data || [];
+      const seen = new Set(rows.map((x) => String(x.gmb_route_id || '')));
+      for (const row of extra) {
+        if (row.gmb_route_id && seen.has(String(row.gmb_route_id))) continue;
+        rows.push(row);
+        if (row.gmb_route_id) seen.add(String(row.gmb_route_id));
+      }
     } catch {}
+    if (n(routeStr)) pushRecent('routes', n(routeStr));
     if (!rows.length) return { error: 'noRoute' };
     const info = await Promise.all(rows.map(async (x) => {
       let seq = [];
@@ -387,14 +411,14 @@ export default function TransitApp() {
     const keep = info.filter((z) => z.live.length > 0 && z.seq.length);
     if (!keep.length) return { error: info.some((z) => z.seq.length) ? 'noLiveNow' : 'routeUnavailable' };
     const merged = mergeLiveChoices(keep);
-    const payloadKeep = merged.map((z) => ({
+    const payloadKeep = sortLiveChoices(routeStr, merged.map((z) => ({
       service: z.x,
       live: z.live,
       companies: z.companies,
       shortDests: z.shortDests || [],
       note: (z.shortDests || []).length ? t('shortWorking', z.shortDests.join(lang === 'zh' ? '、' : ', ')) : '',
       hasVariants: false
-    }));
+    })));
     return {
       keep: payloadKeep,
       auto: payloadKeep.length === 1 ? payloadKeep[0].service : null
@@ -410,6 +434,13 @@ export default function TransitApp() {
     setFetchedStops({});
     setOpenStopKey(null);
     setArrivalGroups(groups(await fetchStops(s)));
+    try {
+      const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
+      const json = await api(`/api/fares?${qs}`);
+      setArrivalFares(json.fare || null);
+    } catch {
+      setArrivalFares(null);
+    }
   }, [api, lang, routes]); // groups depends on lang
 
   const showArrival = useCallback(async (service, groupsList, index, destIndex) => {
@@ -441,8 +472,16 @@ export default function TransitApp() {
     setFirstChoices(null);
     setFirstBoxHidden(restore.keepBoxHidden !== false);
     setFirstGroups(groups(await fetchStops(s)));
-    if (restore.board != null) setBoardIndex(restore.board);
-    if (restore.inter != null) setInterchangeIndex(restore.inter);
+    try {
+      const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
+      const json = await api(`/api/fares?${qs}`);
+      setFirstFares(json.fare || null);
+    } catch {
+      setFirstFares(null);
+    }
+    if (restore.board != null) setBoardIndex(String(restore.board));
+    if (restore.inter != null && (restore.board == null || +restore.inter >= +restore.board)) setInterchangeIndex(String(restore.inter));
+    else if (restore.inter != null) setInterchangeIndex('');
   }, [api, lang]);
 
   function searchDest(q) {
@@ -477,6 +516,10 @@ export default function TransitApp() {
           <b>{clk(x.eta)}</b>
           <span className="mins">{t('minutes', mins(x.eta))}</span>
         </div>
+        {x.arrive ? (
+          <div className="muted">{clk(x.arrive)} {t('rideArrives')} {loc(x.to)}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}{x.totalMinutes != null ? ` · ${t('totalMins', x.totalMinutes)}` : ''}</div>
+        ) : null}
+        {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
         {x.kind === 'transfer' && x.waitAfterFirstMinutes != null ? (
           <div className="muted">{t('waitAfter', x.waitAfterFirstMinutes)}</div>
         ) : null}
@@ -485,6 +528,7 @@ export default function TransitApp() {
           <div className="muted"><span className="badge">{t('octopusDiscount')}</span> {lang === 'zh' ? x.discount.notes_zh : x.discount.notes_en} {t('discountNote')}</div>
         ) : null}
         {opts.pickHint ? <div className="muted">{t('pickConnection')}</div> : null}
+        {!opts.onPick ? renderStopTimes(`xfer-${x.kind}-${x.route}-${x.eta}`, x.stops) : null}
       </>
     );
     if (opts.onPick) {
@@ -515,6 +559,11 @@ export default function TransitApp() {
     if ((opts.boardIndex ?? boardIndex) === '') {
       setTransferResult(null);
       setTransferMessage(t('needBoard'));
+      return;
+    }
+    if (Number(interVal) < Number(boardVal)) {
+      setTransferResult(null);
+      setTransferMessage(t('needFields'));
       return;
     }
     const phase = opts.phase
@@ -603,10 +652,10 @@ export default function TransitApp() {
     const destCode = dest && dest !== sta ? dest : '';
     try {
       const r = await api(`/api/mtr/schedule?line=${encodeURIComponent(line)}&sta=${encodeURIComponent(sta)}${destCode ? `&dest=${encodeURIComponent(destCode)}` : ''}`);
-      setMtrResult(r);
+      setMtrResult({ ...r, line, sta });
       lastView.current = 'm';
     } catch {
-      setMtrResult({ trains: [], emptyReason: 'unavailable' });
+      setMtrResult({ trains: [], emptyReason: 'unavailable', line, sta });
     }
   }, [api, currentLineKey, currentSta, mtrDest]);
 
@@ -616,11 +665,35 @@ export default function TransitApp() {
       if (!x.eta) continue;
       const destZh = x.dest_tc || x.dest_en || '';
       const destEn = x.dest_en || x.dest_tc || '';
-      const k = [n(x.route), destZh].join('|');
-      if (!m.has(k)) m.set(k, { route: x.route, dest: { zh: destZh, en: destEn }, times: [] });
+      const k = [serviceCo(x), n(x.route), destZh, x.gmb_route_id || '', x.nlb_route_id || ''].join('|');
+      if (!m.has(k)) {
+        m.set(k, {
+          route: x.route,
+          dest: { zh: destZh, en: destEn },
+          times: [],
+          co: serviceCo(x),
+          dir: x.dir,
+          gmb_route_id: x.gmb_route_id,
+          gmb_route_seq: x.gmb_route_seq,
+          gmb_region: x.gmb_region,
+          nlb_route_id: x.nlb_route_id,
+          remark: x.remark_tc || x.remark_en || '',
+          wheelchair: !!x.wheelchair
+        });
+      }
       m.get(k).times.push(x.eta);
     }
     return [...m.values()].map((g) => ({ ...g, times: cluster(g.times) }));
+  }
+
+  async function loadNearbyAt(lat, lng, userPos) {
+    try {
+      const json = await api(`/api/stops/nearby?lat=${lat}&lng=${lng}&radius=600&limit=80`);
+      setNearbyCenter({ lat, lng, userLat: userPos?.lat ?? lat, userLng: userPos?.lng ?? lng });
+      setNearbyList({ data: json.data || [], clusters: clusterOppositeStops(json.data || []) });
+    } catch (error) {
+      setNearbyList({ error: error.message || 'geoDenied' });
+    }
   }
 
   async function findNearbyStops() {
@@ -631,12 +704,7 @@ export default function TransitApp() {
     }
     setNearbyList({ loading: true });
     navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        const json = await api(`/api/stops/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&radius=250`);
-        setNearbyList({ data: json.data || [] });
-      } catch (error) {
-        setNearbyList({ error: error.message || 'geoDenied' });
-      }
+      await loadNearbyAt(pos.coords.latitude, pos.coords.longitude, { lat: pos.coords.latitude, lng: pos.coords.longitude });
     }, () => setNearbyList({ error: 'geoDenied' }), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
   }
 
@@ -644,24 +712,62 @@ export default function TransitApp() {
     const set = new Set((companies && companies.length ? companies : [serviceCo(service)]).map(String));
     const hasCtb = set.has('CTB');
     const hasGmb = set.has('GMB');
-    const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB');
+    const hasNlb = set.has('NLB');
+    const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB' && c !== 'NLB');
     if (hasCtb && hasFranchised) return t('coJoint');
-    if (hasGmb) return t('coGmb');
+    if (hasGmb) {
+      const region = service?.gmb_region === 'HKI' ? t('regionHki') : service?.gmb_region === 'KLN' ? t('regionKln') : service?.gmb_region === 'NT' ? t('regionNt') : '';
+      return region ? `${t('coGmb')} · ${region}` : t('coGmb');
+    }
+    if (hasNlb) return t('coNlb');
     if (hasCtb) return t('coCtb');
     if (set.has('LWB')) return t('coLwb');
     return t('coKmb');
   }
 
   async function pickNearbyStop(stop) {
+    const members = stop.members || [stop];
     setNearbyList((prev) => ({ ...(prev || {}), picked: stop }));
+    pushRecent('stops', { stop: stop.stop, name_tc: stop.name_tc, name_en: stop.name_en, co: stop.co });
     try {
-      const json = stop.co === 'CTB'
-        ? await api(`/api/citybus/stop-eta/${encodeURIComponent(stop.stop)}`)
-        : await api(`/api/kmb/stop-eta/${encodeURIComponent(stop.stop)}`);
-      setNearbyBoard({ stop, groups: groupStopEtas(json.data || []) });
+      const lists = await Promise.all(members.map((member) => {
+        const qs = new URLSearchParams({ stop: member.stop });
+        if (member.co) qs.set('co', member.co);
+        return api(`/api/stops/eta?${qs}`).catch(() => ({ data: [] }));
+      }));
+      const rows = lists.flatMap((json) => json.data || []);
+      setNearbyBoard({ stop, groups: groupStopEtas(rows) });
     } catch {
       setNearbyBoard({ stop, groups: [] });
     }
+  }
+
+  async function followNearbyGroup(stop, group) {
+    const hits = routes.filter((row) => {
+      if (n(row.route) !== n(group.route)) return false;
+      if (group.gmb_route_id) return String(row.gmb_route_id) === String(group.gmb_route_id);
+      if (group.nlb_route_id) return String(row.nlb_route_id) === String(group.nlb_route_id);
+      if (group.co && serviceCo(row) !== group.co && !(group.co === 'KMB' && (serviceCo(row) === 'KMB' || serviceCo(row) === 'LWB'))) return false;
+      if (group.dir && row.bound && row.bound !== group.dir) return false;
+      return true;
+    });
+    const destKey = stopNameKey({ name_tc: group.dest?.zh, name_en: group.dest?.en });
+    const service = hits.find((row) => servicePlaceKey(row, 'dest') === destKey) || hits[0];
+    if (!service) {
+      setArrivalRoute(String(group.route || ''));
+      return;
+    }
+    const seq = await fetchStops(service);
+    const list = groups(seq);
+    const idx = list.findIndex((g) => g.stops.some((row) => String(row.stop) === String(stop.stop)));
+    setTab('arrivals');
+    setArrivalService(service);
+    setArrivalChoices(null);
+    setArrivalGroups(list);
+    setArrivalDestIndex('');
+    const boardIdx = idx >= 0 ? String(idx) : '';
+    setArrivalStopIndex(boardIdx);
+    if (boardIdx !== '') await showArrival(service, list, boardIdx, '');
   }
 
   const renderHome = useCallback(async () => {
@@ -752,6 +858,7 @@ export default function TransitApp() {
   useEffect(() => {
     const stored = localStorage.getItem('tb-lang');
     if (stored === 'en' || stored === 'zh') setLang(stored);
+    setRecents(readRecents());
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
@@ -791,7 +898,8 @@ export default function TransitApp() {
       } catch (error) {
         if (!cancelled) {
           setDirCount(-1);
-          setOffline(true);
+          const network = error?.name === 'TypeError' || /fetch|network|Failed to fetch|Load failed/i.test(String(error?.message || ''));
+          setOffline(network);
         }
       }
       if (!cancelled) renderHome();
@@ -804,6 +912,14 @@ export default function TransitApp() {
     if (!entries.length) return;
     if (!mtrLine) setMtrLine(entries[0][0]);
   }, [lines, mtrLine]);
+
+  useEffect(() => {
+    const first = currentLine?.stations?.[0]?.[0];
+    if (!first) return;
+    if (!mtrStation || !(currentLine.stations || []).some((row) => row[0] === mtrStation)) {
+      setMtrStation(first);
+    }
+  }, [currentLine, mtrStation]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -856,15 +972,21 @@ export default function TransitApp() {
   }, [tab, renderHome]);
 
   function resolvedStops(id, stops) {
-    if (Array.isArray(stops) && stops.length) return stops;
     const extra = fetchedStops[id];
-    return Array.isArray(extra) ? extra : extra === 'loading' ? extra : [];
+    if (stops?.terminus || extra?.terminus) return { terminus: true };
+    if (extra === 'loading') return extra;
+    if (Array.isArray(extra) && extra.length > 1) return extra;
+    if (Array.isArray(stops) && stops.length > 1) return stops;
+    if (Array.isArray(extra) && extra.length) return extra;
+    if (Array.isArray(stops) && stops.length) return stops;
+    return [];
   }
 
   function renderStopTimes(id, stops, fetchStops) {
     const list = resolvedStops(id, stops);
+    const terminus = !!list?.terminus;
     const loading = fetchedStops[id] === 'loading';
-    const canOpen = (Array.isArray(list) && list.length > 1) || loading || fetchStops;
+    const canOpen = terminus || (Array.isArray(list) && list.length > 1) || loading || fetchStops;
     if (!canOpen) return null;
     const open = openStopKey === id;
     return (
@@ -878,12 +1000,13 @@ export default function TransitApp() {
               return;
             }
             setOpenStopKey(id);
-            if ((!Array.isArray(list) || list.length < 2) && fetchStops) await fetchStops();
+            if (!terminus && (!Array.isArray(list) || list.length < 2) && fetchStops) await fetchStops();
           }}
         >
           {open ? t('hideStopTimes') : t('showStopTimes')}
         </button>
         {open && loading ? <p className="muted mt-2">{t('stopTimesLoading')}</p> : null}
+        {open && !loading && terminus ? <p className="muted mt-2">{t('stopTimesTerminus')}</p> : null}
         {open && Array.isArray(list) && list.length > 1 ? (
           <ol className="stop-times">
             {list.map((stop, i) => (
@@ -894,7 +1017,7 @@ export default function TransitApp() {
             ))}
           </ol>
         ) : null}
-        {open && !loading && Array.isArray(list) && list.length <= 1 ? <p className="muted mt-2">{t('stopTimesEmpty')}</p> : null}
+        {open && !loading && !terminus && Array.isArray(list) && list.length <= 1 ? <p className="muted mt-2">{t('stopTimesEmpty')}</p> : null}
       </>
     );
   }
@@ -927,17 +1050,30 @@ export default function TransitApp() {
   }, [api, arrivalGroups, arrivalService, arrivalStopIndex, fetchedStops]);
 
   const loadMtrStops = useCallback(async (train) => {
-    const key = `mtr-${train.line || mtrLine}-${train.time}`;
+    const line = train.line || currentLineKey;
+    const sta = mtrResult?.sta || currentSta;
+    const destCode = String(train.destCode || '').trim().toUpperCase();
+    const key = `mtr-${line}-${sta}-${destCode}-${train.time}`;
+    if (train.terminus || destCode === sta) {
+      setFetchedStops((prev) => ({ ...prev, [key]: { terminus: true } }));
+      return { terminus: true };
+    }
     if (Array.isArray(train.stops) && train.stops.length > 1) return train.stops;
-    if (Array.isArray(fetchedStops[key]) || fetchedStops[key] === 'loading') return fetchedStops[key];
-    const destCode = train.destCode;
-    if (!destCode) return [];
+    if (fetchedStops[key] === 'loading' || fetchedStops[key]?.terminus || (Array.isArray(fetchedStops[key]) && fetchedStops[key].length)) {
+      return fetchedStops[key];
+    }
+    if (!line || !sta || !destCode) {
+      setFetchedStops((prev) => ({ ...prev, [key]: [] }));
+      return [];
+    }
     setFetchedStops((prev) => ({ ...prev, [key]: 'loading' }));
     try {
-      const json = await api(`/api/mtr/schedule?line=${encodeURIComponent(train.line || mtrLine)}&sta=${encodeURIComponent(mtrStation)}&dest=${encodeURIComponent(destCode)}`);
-      const hit = (json.trains || []).find((row) => row.destCode === destCode && Math.abs(new Date(row.time) - new Date(train.time)) <= 90 * 1000)
-        || (json.trains || []).find((row) => row.destCode === destCode)
-        || (json.trains || [])[0];
+      const json = await api(`/api/mtr/schedule?line=${encodeURIComponent(line)}&sta=${encodeURIComponent(sta)}&dest=${encodeURIComponent(destCode)}&sameLine=1`);
+      const hit = pickFollowedTrain(json.trains || [], { ...train, line, destCode });
+      if (hit?.terminus || destCode === sta) {
+        setFetchedStops((prev) => ({ ...prev, [key]: { terminus: true } }));
+        return { terminus: true };
+      }
       const stops = hit?.stops || [];
       setFetchedStops((prev) => ({ ...prev, [key]: stops }));
       return stops;
@@ -945,7 +1081,7 @@ export default function TransitApp() {
       setFetchedStops((prev) => ({ ...prev, [key]: [] }));
       return [];
     }
-  }, [api, fetchedStops, mtrLine, mtrStation]);
+  }, [api, currentLineKey, currentSta, fetchedStops, mtrResult]);
 
   const etaList = (input, opts = {}) => {
     const isRide = input && !Array.isArray(input);
@@ -957,7 +1093,7 @@ export default function TransitApp() {
     if (!trips.length) return <p className="muted">{t(isRide ? 'noLiveNow' : 'noEta')}</p>;
     const rows = trips.map((x, i) => {
       const board = x.board || x;
-      const wait = destLabel && x.arrive ? mins(x.arrive) : mins(board);
+      const wait = x.arrive ? mins(x.arrive) : mins(board);
       if (wait == null) return null;
       const service = x.route
         ? <><span className="badge">{coLabel(x)}</span> <b>{x.route}</b>{loc(x.dest) ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</div> : null}</>
@@ -968,11 +1104,11 @@ export default function TransitApp() {
           <div className="eta">
             <div>
               {destLabel && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}{service}
-              {destLabel ? <div className="muted">{clk(board)} {t('rideDeparts')}</div> : null}
-              {destLabel && x.arrive ? (
-                <div className="muted">{clk(x.arrive)} {t('rideArrives')}{lang === 'zh' ? '' : ' '}{destLabel}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
+              {x.route ? <div className="muted">{clk(board)} {t('rideDeparts')}</div> : null}
+              {x.arrive ? (
+                <div className="muted">{clk(x.arrive)} {t('rideArrives')}{destLabel ? `${lang === 'zh' ? '' : ' '}${destLabel}` : ''}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
               ) : null}
-              {destLabel && x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+              {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
             </div>
             <span className="mins">{t('minutes', wait)}</span>
           </div>
@@ -983,18 +1119,40 @@ export default function TransitApp() {
     return rows.length ? rows : <p className="muted">{t(isRide ? 'noLiveNow' : 'noEta')}</p>;
   };
 
+  function fareChip(n) {
+    if (n == null || !Number.isFinite(Number(n))) return '';
+    return `$${Number(n).toFixed(1)}`;
+  }
+
+  function odFare(fromGroup, toGroup, fares) {
+    const on = Number(fromGroup?.stops?.[0]?.seq);
+    const off = Number(toGroup?.stops?.[0]?.seq);
+    if (!on || !off || off <= on) return null;
+    return fares?.fares_from_board?.[off - on - 1] ?? null;
+  }
+
+  function fareLabel(group, extra) {
+    const chip = fareChip(extra);
+    return chip ? `${group.label}  ${chip}` : group.label;
+  }
+
+  function terminusFareForGroup(fares, group) {
+    const seq = Number(group?.stops?.[0]?.seq);
+    if (!fares?.terminus_fares || !Number.isFinite(seq) || seq < 1) return null;
+    return fares.terminus_fares[seq - 1] ?? null;
+  }
+
   function fareNote(x, opts = {}) {
-    if (!x || (x.full_fare_hkd == null && x.journey_time_minutes == null && x.section_fare_hkd == null && !(x.section_prices || []).length)) return null;
+    if (!x) return null;
     const parts = [];
     if (x.section_fare_hkd != null) parts.push(t('sectionFare', x.section_fare_hkd));
     else if (x.full_fare_hkd != null) parts.push(t('fullFare', x.full_fare_hkd));
     if (x.section_fare_hkd != null && x.full_fare_hkd != null && Number(x.section_fare_hkd) !== Number(x.full_fare_hkd)) {
       parts.push(t('fullFare', x.full_fare_hkd));
     }
-    if (x.section_fare_hkd == null && (x.section_prices || []).length > 1) {
-      parts.push(t('sectionList', x.section_prices.map((n) => `$${Number(n).toFixed(1)}`).join(' / ')));
-    }
-    if (x.journey_time_minutes != null && !opts.hideScheduled && !(x.rideMinutes > 0)) parts.push(t('scheduledMins', x.journey_time_minutes));
+    if (x.rideMinutes > 0) parts.push(t('rideMins', x.rideMinutes));
+    else if (x.totalMinutes > 0) parts.push(t('totalMins', x.totalMinutes));
+    else if (x.journey_time_minutes != null && !opts.hideScheduled) parts.push(t('scheduledMins', x.journey_time_minutes));
     if (!parts.length) return null;
     return <div className="muted">{parts.join(' · ')}</div>;
   }
@@ -1050,13 +1208,14 @@ export default function TransitApp() {
           >
             {t('langBtn')}
           </button>
+          <button className="tab" type="button" onClick={() => setTab('guide')}>{t('guideBtn')}</button>
           <select className="field" value={refreshSec} onChange={(e) => setRefreshSec(e.target.value)}>
             <option value="15">{t('refresh15')}</option>
             <option value="30">{t('refresh30')}</option>
           </select>
         </div>
       </header>
-      <div className="note">{dirCount == null ? t('loading') : dirCount < 0 ? (offline ? t('connectionRefused') : t('loadFail')) : t('ready', dirCount)}</div>
+      <div className="note">{dirCount == null ? t('loading') : dirCount < 0 ? (offline && showLocalDevHint() ? t('connectionRefused') : t('loadFail')) : t('ready', dirCount)}</div>
       {standaloneHint ? <p className="muted">{t('addHomeScreen')}</p> : null}
       <nav className="tabs my-5">
         {tabs.map(([id, label]) => (
@@ -1067,6 +1226,16 @@ export default function TransitApp() {
       <section className={`panel${tab === 'arrivals' ? ' active' : ''}`}>
         <div className="card">
           <h2 className="text-lg font-bold">{t('arrivalsHeading')}</h2>
+          {recents.routes.length ? (
+            <div className="mt-2">
+              <div className="muted">{t('recentRoutes')}</div>
+              <div className="row-actions">
+                {recents.routes.map((route) => (
+                  <button key={route} className="tab" type="button" onClick={() => setArrivalRoute(route)}>{route}</button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="search-row mt-3">
             <input className="field" placeholder={t('routePlaceholder')} value={arrivalRoute} onChange={(e) => setArrivalRoute(e.target.value)} aria-label={t('routePlaceholder')} />
               <button className="btn" type="button" aria-label={t('find')} onClick={async () => {
@@ -1077,27 +1246,51 @@ export default function TransitApp() {
               }}>{t('find')}</button>
           </div>
           <button className="tab btn-block mt-3" type="button" aria-label={t('nearbyStops')} onClick={findNearbyStops}>{t('nearbyStops')}</button>
+          {recents.stops.length && !nearbyList?.data?.length ? (
+            <div className="mt-2">
+              <div className="muted">{t('recentStops')}</div>
+              {recents.stops.map((stop) => (
+                <button key={`${stop.co || ''}-${stop.stop}`} className="item choice" type="button" onClick={() => pickNearbyStop(stop)}>
+                  <b>{lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc}</b>
+                  <div className="muted">{coLabel(stop)}</div>
+                </button>
+              ))}
+            </div>
+          ) : null}
           {nearbyList?.loading ? <div className="note">{t('locating')}</div> : null}
           {nearbyList?.error ? <p className="muted">{nearbyList.error === 'geoDenied' ? t('geoDenied') : nearbyList.error}</p> : null}
-          {nearbyList?.data?.length ? (
+          {nearbyCenter && nearbyList?.clusters ? (
+            <StopMap
+              center={[nearbyCenter.lat, nearbyCenter.lng]}
+              userLat={nearbyCenter.userLat}
+              userLng={nearbyCenter.userLng}
+              clusters={nearbyList.clusters}
+              onPick={pickNearbyStop}
+              onMove={(pos) => loadNearbyAt(pos.lat, pos.lng, { lat: nearbyCenter.userLat, lng: nearbyCenter.userLng })}
+            />
+          ) : null}
+          {nearbyList?.clusters?.length ? (
             <div className="mt-2">
-              {nearbyList.data.map((stop) => (
-                <button key={stop.stop} className="item choice" type="button" onClick={() => pickNearbyStop(stop)}>
-                  <b>{lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc}</b>
-                  <div className="muted">{coLabel(stop)} · {t('metres', stop.metres)}</div>
+              {nearbyList.clusters.map((stop) => (
+                <button key={`${stop.lat}-${stop.lng}-${stop.stop}`} className="item choice" type="button" onClick={() => pickNearbyStop(stop)}>
+                  <b>{displayStopName(stop, lang)}</b>
+                  <div className="muted">{t('metres', stop.metres)}{stop.members?.length > 1 ? ` · ${stop.members.length}` : ''}</div>
                 </button>
               ))}
             </div>
           ) : nearbyList?.data && !nearbyList.data.length ? <p className="muted">{t('noStops')}</p> : null}
           {nearbyBoard ? (
             <>
-              <h3 className="font-bold mt-3">{lang === 'zh' ? nearbyBoard.stop.name_tc || nearbyBoard.stop.name_en : nearbyBoard.stop.name_en || nearbyBoard.stop.name_tc}</h3>
+              <h3 className="font-bold mt-3">{displayStopName(nearbyBoard.stop, lang)}</h3>
               {nearbyBoard.groups.length
                 ? nearbyBoard.groups.map((g) => (
-                  <div className="item" key={g.route + loc(g.dest)}>
-                    <b>{g.route}</b>
+                  <div className="item" key={`${g.co}-${g.route}-${loc(g.dest)}-${g.gmb_route_id || g.nlb_route_id || ''}`}>
+                    <span className="badge">{coLabel(g)}</span> <b>{g.route}</b>
                     <div>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(g.dest)}</div>
+                    {g.remark ? <div className="muted">{g.remark === 'Scheduled' || g.remark === '預定班次' || g.remark === '未開出' ? t('scheduledTrip') : g.remark}</div> : null}
+                    {g.wheelchair ? <div className="muted">{t('wheelchair')}</div> : null}
                     {etaList(g.times)}
+                    <button className="tab mt-2" type="button" onClick={() => followNearbyGroup(nearbyBoard.stop, g)}>{t('followThis')}</button>
                   </div>
                 ))
                 : <p className="muted">{t('noLiveNow')}</p>}
@@ -1114,10 +1307,22 @@ export default function TransitApp() {
                   dest = '';
                   setArrivalDestIndex('');
                 }
+                if (v !== '' && arrivalService) {
+                  const g = arrivalGroups[+v];
+                  const seq = g?.stops?.[0]?.seq;
+                  try {
+                    const qs = new URLSearchParams({ route: arrivalService.route, co: serviceCo(arrivalService), bound: arrivalService.bound || '' });
+                    if (seq) qs.set('on', String(seq));
+                    const json = await api(`/api/fares?${qs}`);
+                    setArrivalFares(json.fare || null);
+                  } catch {}
+                }
                 await showArrival(arrivalService, arrivalGroups, v, dest);
               }}>
                 <option value="">{t('chooseStop')}</option>
-                {arrivalGroups.map((g, i) => <option key={g.label + i} value={i}>{g.label}</option>)}
+                {arrivalGroups.map((g, i) => (
+                  <option key={g.label + i} value={i}>{fareLabel(g, terminusFareForGroup(arrivalFares, g))}</option>
+                ))}
               </select>
               {arrivalStopIndex !== '' ? (
                 <label className="block mt-3">
@@ -1129,7 +1334,7 @@ export default function TransitApp() {
                   }}>
                     <option value="">{t('chooseRideDest')}</option>
                     {arrivalGroups.map((g, i) => (
-                      i > +arrivalStopIndex ? <option key={`d-${g.label}-${i}`} value={i}>{g.label}</option> : null
+                      i > +arrivalStopIndex ? <option key={`d-${g.label}-${i}`} value={i}>{fareLabel(g, odFare(arrivalGroups[+arrivalStopIndex], g, arrivalFares))}</option> : null
                     ))}
                   </select>
                 </label>
@@ -1198,15 +1403,23 @@ export default function TransitApp() {
           {firstService ? (
             <div className="md-grid-2 mt-4">
               <label>{t('boardStop')}
-                <select className="field mt-1" value={boardIndex} onChange={(e) => setBoardIndex(e.target.value)}>
+                <select className="field mt-1" value={boardIndex} onChange={(e) => {
+                  const v = e.target.value;
+                  setBoardIndex(v);
+                  if (interchangeIndex !== '' && (v === '' || +interchangeIndex < +v)) setInterchangeIndex('');
+                }}>
                   <option value="">{t('notSelected')}</option>
-                  {firstGroups.map((g, i) => <option key={`b-${g.label}-${i}`} value={i}>{g.label}</option>)}
+                  {firstGroups.map((g, i) => <option key={`b-${g.label}-${i}`} value={i}>{fareLabel(g, terminusFareForGroup(firstFares, g))}</option>)}
                 </select>
               </label>
               <label>{t('interchangeStop')}
                 <select className="field mt-1" value={interchangeIndex} onChange={(e) => setInterchangeIndex(e.target.value)}>
                   <option value="">{t('chooseInterchange')}</option>
-                  {firstGroups.map((g, i) => <option key={`i-${g.label}-${i}`} value={i}>{g.label}</option>)}
+                  {firstGroups.map((g, i) => (
+                    boardIndex !== '' && i >= +boardIndex
+                      ? <option key={`i-${g.label}-${i}`} value={i}>{fareLabel(g, odFare(firstGroups[+boardIndex], g, firstFares) || terminusFareForGroup(firstFares, g))}</option>
+                      : null
+                  ))}
                 </select>
               </label>
             </div>
@@ -1299,6 +1512,8 @@ export default function TransitApp() {
                               <b>{clk(row.eta)}</b>
                               <span className="mins">{t('minutes', mins(row.eta))}</span>
                             </div>
+                            {row.arrive ? <div className="muted">{clk(row.arrive)} {t('rideArrives')}{row.rideMinutes != null ? ` · ${t('rideMins', row.rideMinutes)}` : ''}</div> : null}
+                            {row.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
                             <div className="muted">{t('pickDeparture')}</div>
                           </button>
                         );
@@ -1325,6 +1540,7 @@ export default function TransitApp() {
                             <b>{clk(x.eta)}</b>
                             <span className="mins">{t('minutes', mins(x.eta))}</span>
                           </div>
+                          {x.arrive ? <div className="muted">{clk(x.arrive)} {t('rideArrives')} {loc(x.to)}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div> : null}
                         </button>
                       ))
                       : <p className="muted">{t('noDirect')}</p>}
@@ -1423,8 +1639,9 @@ export default function TransitApp() {
           <label className="block mt-3">
             <span>{t('mtrLineLabel')}</span>
             <select className="field mt-1" value={currentLineKey} onChange={(e) => {
-              setMtrLine(e.target.value);
-              setMtrStation('');
+              const next = e.target.value;
+              setMtrLine(next);
+              setMtrStation(lines[next]?.stations?.[0]?.[0] || '');
               setMtrDest('');
             }}>
               {lineEntries.map(([k, v]) => <option key={k} value={k}>{lineName(v)}</option>)}
@@ -1461,12 +1678,15 @@ export default function TransitApp() {
                     const plat = x.platform ? t('platform', x.platform) : '';
                     const destName = loc(mtrResult.dest);
                     const lineLabel = loc(x.lineName);
-                    const stopId = `mtr-${x.line || mtrLine}-${x.time}`;
+                    const boarding = mtrResult?.sta || currentSta;
+                    const terminus = !!(x.terminus || (x.destCode && String(x.destCode).toUpperCase() === String(boarding).toUpperCase()));
+                    const stopId = `mtr-${x.line || currentLineKey}-${boarding}-${x.destCode}-${x.time}`;
                     return (
                       <div className="item" key={`${x.line || ''}-${loc(x.dest)}-${x.time}-${i}`}>
                         <div className="eta">
                           <div>
                             {destName && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}
+                            {x.route ? <span className="badge">{x.route}</span> : null}
                             {lineLabel ? <span className="badge">{lineLabel}</span> : null}
                             <b>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</b>
                             {when || plat ? <div className="muted">{[when, plat].filter(Boolean).join(' · ')}{destName ? ` · ${t('rideDeparts')}` : ''}</div> : null}
@@ -1477,7 +1697,7 @@ export default function TransitApp() {
                           </div>
                           <span className="mins">{wait == null ? '' : t('minutes', wait)}</span>
                         </div>
-                        {renderStopTimes(stopId, x.stops, x.stops?.length > 1 ? null : () => loadMtrStops(x))}
+                        {x.line !== 'LRT' ? renderStopTimes(stopId, terminus ? { terminus: true } : x.stops, terminus || x.stops?.length > 1 ? null : () => loadMtrStops(x)) : null}
                       </div>
                     );
                   })
@@ -1529,6 +1749,12 @@ export default function TransitApp() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className={`panel${tab === 'guide' ? ' active' : ''}`}>
+        <div className="card">
+          <UserGuide lang={lang} />
         </div>
       </section>
     </main>

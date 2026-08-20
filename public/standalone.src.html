@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="轉乘助手">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="format-detection" content="telephone=no">
-  <title>巴士實時到站與轉乘助手</title>
+  <title>巴士／小巴實時到站與轉乘助手</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
 </head>
@@ -17,11 +17,12 @@
   <main class="shell">
     <header class="app-header mb-4">
       <div>
-        <h1 id="appTitle" class="text-xl font-bold">巴士實時到站與轉乘助手</h1>
-        <p id="appSubtitle" class="muted app-tagline">九巴／龍運實時到站與轉車時間</p>
+        <h1 id="appTitle" class="text-xl font-bold">巴士／小巴實時到站與轉乘助手</h1>
+        <p id="appSubtitle" class="muted app-tagline">九巴／龍運／城巴／嶼巴／專線小巴，港鐵及輕鐵</p>
       </div>
       <div class="app-controls">
         <button id="langBtn" class="tab" type="button">English</button>
+        <button id="guideBtn" class="tab" type="button">使用說明</button>
         <select id="refresh" class="field">
           <option value="15">15 秒</option>
           <option value="30" selected>30 秒</option>
@@ -31,20 +32,21 @@
     <div id="status" class="note">正在載入路線資料…</div>
     <p id="a2hs" class="muted"></p>
     <nav class="tabs my-5">
-      <button class="tab active" data-tab="arrivals">巴士到站</button>
+      <button class="tab active" data-tab="arrivals">巴士／小巴</button>
       <button class="tab" data-tab="transfer">轉乘助手</button>
-      <button class="tab" data-tab="mtr">港鐵到站</button>
+      <button class="tab" data-tab="mtr">港鐵／輕鐵</button>
       <button class="tab" data-tab="home">我的回家路線</button>
     </nav>
 
     <section id="arrivals" class="panel active">
       <div class="card">
-        <h2 id="arrivalsHeading" class="text-lg font-bold">九巴／龍運實時到站</h2>
+        <h2 id="arrivalsHeading" class="text-lg font-bold">九巴／龍運／城巴／嶼巴／專線小巴實時到站</h2>
         <div class="search-row mt-3">
-          <input id="arrivalRoute" class="field" placeholder="路線，例如 286C">
+          <input id="arrivalRoute" class="field" placeholder="路線，例如 286C、962、11 或 811">
           <button id="arrivalFind" class="btn">查詢</button>
         </div>
         <button id="nearbyFind" class="tab btn-block mt-3" type="button">附近車站</button>
+        <div id="nearbyMap" class="stop-map hidden"></div>
         <div id="nearbyStops"></div>
         <div id="nearbyOutput"></div>
         <div id="arrivalVariants"></div>
@@ -66,9 +68,9 @@
           </select>
         </label>
         <div id="firstBox" class="mt-4">
-          <b id="firstRouteLabel">第一程巴士路線</b>
+          <b id="firstRouteLabel">第一程路線</b>
           <div class="search-row mt-1">
-            <input id="firstRoute" class="field" placeholder="路線，例如 286C">
+            <input id="firstRoute" class="field" placeholder="路線，例如 286C、962 或 811">
             <button id="firstFind" class="btn">查詢</button>
           </div>
           <div id="firstVariants"></div>
@@ -91,7 +93,7 @@
 
     <section id="mtr" class="panel">
       <div class="card">
-        <h2 id="mtrHeading" class="text-lg font-bold">港鐵下班車</h2>
+        <h2 id="mtrHeading" class="text-lg font-bold">港鐵／輕鐵下班車</h2>
         <label class="block mt-3"><span id="mtrLineLabel">路綫</span>
           <select id="mtrLine" class="field mt-1"></select>
         </label>
@@ -109,9 +111,13 @@
     <section id="home" class="panel">
       <div class="card">
         <h2 id="homeHeading" class="text-lg font-bold">我的回家路線</h2>
-        <p id="homeHelp" class="muted">可從巴士、轉乘或港鐵頁面儲存，方便下次直接開啟。</p>
+        <p id="homeHelp" class="muted">無需登入。儲存在這部裝置上，可從巴士／小巴、轉乘或港鐵頁面按儲存。換瀏覽器或清除網站資料後就不會再見到。</p>
         <div id="homeOutput"></div>
       </div>
+    </section>
+
+    <section id="guide" class="panel">
+      <div class="card" id="guideCard"></div>
     </section>
   </main>
   <!-- standalone-bundle -->

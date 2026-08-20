@@ -4,6 +4,8 @@
  * If this prints ECONNREFUSED, nothing is listening on port 3001 —
  * run `npm run dev` in this folder, then retry. That is not a frontend bug.
  */
+import { compareRouteMatches } from '../lib/routeSearch.js';
+
 const BASE = process.env.SMOKE_BASE || 'http://127.0.0.1:3001';
 
 async function get(path) {
@@ -32,6 +34,10 @@ function fail(msg) {
 }
 
 try {
+  if (compareRouteMatches('81', '81', '81A') >= 0) fail('search rank: live-first exact 81 should sort above 81A');
+  else if (compareRouteMatches('81', '81A', '181') >= 0) fail('search rank: 81A should sort above 181 for query 81');
+  else console.log('ok route search rank 81 > 81A > 181');
+
   const status = await get('/api/status');
   if (!status.ok || !status.json.routes) fail(`/api/status ${status.status} ${JSON.stringify(status.json)}`);
   else console.log('ok status', status.json.routes, 'routes', status.json.stops, 'stops', status.json.citybusStops || 0, 'citybusStops');
@@ -76,6 +82,30 @@ try {
     else console.log('ok MTR HOK dest TSY', trains.length, 'trains', ael ? `AEL ${ael.rideMinutes} min` : 'no AEL', tcl ? `TCL ${tcl.rideMinutes} min` : 'no TCL');
   }
 
+  const kowHok = await get('/api/mtr/schedule?line=AEL&sta=KOW&dest=HOK');
+  if (!kowHok.ok) fail(`MTR KOW dest HOK HTTP ${kowHok.status}`);
+  else {
+    const ael = (kowHok.json.trains || []).filter((train) => train.line === 'AEL' && train.destCode === 'HOK');
+    if (ael.length && ael.some((train) => !Array.isArray(train.stops) || train.stops.length !== 2)) {
+      fail(`MTR AEL KOW dest HOK should be 2 stations, got ${JSON.stringify(ael.map((train) => (train.stops || []).map((stop) => stop.stop)))}`);
+    } else console.log('ok MTR KOW dest HOK', (kowHok.json.trains || []).length, 'trains', ael[0] ? `AEL ${(ael[0].stops || []).map((stop) => stop.stop).join('-')}` : 'no AEL now');
+  }
+
+  const kowAwe = await get('/api/mtr/schedule?line=AEL&sta=KOW&dest=AWE');
+  if (!kowAwe.ok) fail(`MTR KOW dest AWE HTTP ${kowAwe.status}`);
+  else {
+    const ael = (kowAwe.json.trains || []).filter((train) => train.line === 'AEL' && train.destCode === 'AWE');
+    if (ael.length && ael.some((train) => !Array.isArray(train.stops) || train.stops.length !== 4)) {
+      fail(`MTR AEL KOW dest AWE should be 4 stations, got ${JSON.stringify(ael.map((train) => (train.stops || []).map((stop) => stop.stop)))}`);
+    } else console.log('ok MTR KOW dest AWE', (kowAwe.json.trains || []).length, 'trains', ael[0] ? `AEL ${(ael[0].stops || []).map((stop) => stop.stop).join('-')}` : 'no AEL now');
+  }
+
+  const hokHok = await get('/api/mtr/schedule?line=AEL&sta=HOK&dest=HOK');
+  if (!hokHok.ok) fail(`MTR HOK dest HOK HTTP ${hokHok.status}`);
+  else if ((hokHok.json.trains || []).some((train) => !train.terminus || (train.stops || []).length > 1)) {
+    fail(`MTR HOK dest HOK should be terminus-only, got ${JSON.stringify(hokHok.json.trains)}`);
+  } else console.log('ok MTR HOK dest HOK terminus', (hokHok.json.trains || []).length, 'trains', hokHok.json.emptyReason || 'terminus');
+
   const eta = await get('/api/kmb/route-eta/1/1');
   if (!eta.ok) fail(`KMB route-eta ${eta.status}`);
   else console.log('ok KMB route 1 etas', (eta.json.data || []).length);
@@ -83,7 +113,25 @@ try {
   const nearby = await get('/api/stops/nearby?lat=22.2975&lng=114.1722&radius=250');
   if (!nearby.ok) fail(`nearby ${nearby.status}`);
   else if (!(nearby.json.data || []).length) fail('nearby TST returned no stops');
-  else console.log('ok nearby TST', nearby.json.data.length, 'stops', nearby.json.data[0]?.name_en || nearby.json.data[0]?.name_tc);
+  const nearbyWide = await get('/api/stops/nearby?lat=22.2975&lng=114.1722&radius=600&limit=80');
+  if (!nearbyWide.ok) fail(`nearby wide ${nearbyWide.status}`);
+  else console.log('ok nearby wide TST', nearbyWide.json.data.length, 'stops');
+
+  const nlbStops = await get('/api/nlb/route-stop/1');
+  if (!nlbStops.ok) fail(`nlb route-stop HTTP ${nlbStops.status}`);
+  else if (!(nlbStops.json.data || []).length) fail('nlb 1 returned no stops');
+  else console.log('ok NLB 1', nlbStops.json.data.length, 'stops', nlbStops.json.data[0]?.name_tc || nlbStops.json.data[0]?.name_en);
+
+  const lrt = await get('/api/mtr/schedule?line=LRT&sta=1');
+  if (!lrt.ok) fail(`LRT HTTP ${lrt.status}`);
+  else if (!(lrt.json.trains || []).length && lrt.json.emptyReason !== 'empty' && lrt.json.emptyReason !== 'unavailable') fail(`LRT unexpected ${JSON.stringify(lrt.json)}`);
+  else console.log('ok Light Rail Tuen Mun Ferry Pier', (lrt.json.trains || []).length, 'trains', lrt.json.emptyReason || 'live');
+
+  const gmbLookup = await get('/api/gmb/lookup?route=811');
+  if (!gmbLookup.ok) fail(`gmb 811 HTTP ${gmbLookup.status}`);
+  else if (!(gmbLookup.json.data || []).length) fail('gmb 811 lookup empty');
+  else if ((gmbLookup.json.data || []).some((row) => row.co !== 'GMB')) fail('gmb 811 mislabelled');
+  else console.log('ok GMB 811', gmbLookup.json.data.length, 'services', gmbLookup.json.data[0]?.gmb_region, gmbLookup.json.data[0]?.orig_tc, '→', gmbLookup.json.data[0]?.dest_tc);
 
   const discounts = await get('/api/discounts');
   if (!discounts.ok) fail(`discounts ${discounts.status}`);
@@ -108,6 +156,7 @@ try {
   if (!ctbStops.ok) fail(`citybus 962 HTTP ${ctbStops.status}`);
   else if (!(ctbStops.json.data || []).length) fail('citybus 962 returned no stops');
   else if (!(ctbStops.json.data[0].name_tc || ctbStops.json.data[0].name_en)) fail('citybus 962 stop has no name');
+  else if (ctbStops.json.data[0].name_tc && String(ctbStops.json.data[0].name_tc) === String(ctbStops.json.data[0].stop)) fail('citybus 962 stop still showing id as name');
   else console.log('ok citybus 962', ctbStops.json.data.length, 'stops', ctbStops.json.data[0].name_tc || ctbStops.json.data[0].name_en);
 
   const ctbEta = await get('/api/citybus/stop-eta/001939');
@@ -173,6 +222,22 @@ try {
   const html = await fetch(`${BASE}/standalone.html`);
   if (!html.ok) fail(`standalone ${html.status}`);
   else console.log('ok standalone', html.status);
+
+  const manual = await fetch(`${BASE}/user-manual.pdf`);
+  if (!manual.ok) fail(`user-manual.pdf ${manual.status}`);
+  else {
+    const buf = Buffer.from(await manual.arrayBuffer());
+    const sniff = buf.subarray(0, 5).toString();
+    if (!sniff.startsWith('%PDF')) fail(`user-manual.pdf not a PDF (${sniff})`);
+    else console.log('ok user-manual.pdf', buf.length, 'bytes');
+  }
+  const manualHtml = await fetch(`${BASE}/user-manual.html`);
+  if (!manualHtml.ok) fail(`user-manual.html ${manualHtml.status}`);
+  else {
+    const text = await manualHtml.text();
+    if (/localhost|127\.0\.0\.1|:3001/i.test(text)) fail('user-manual.html mentions localhost/3001');
+    else console.log('ok user-manual.html', text.length, 'chars');
+  }
 
   if (process.exitCode) console.error('Smoke finished with failures.');
   else console.log('Smoke passed.');

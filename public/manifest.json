@@ -1,5 +1,5 @@
 {
-  "name": "巴士實時到站與轉乘助手",
+  "name": "巴士／小巴實時到站與轉乘助手",
   "short_name": "轉乘助手",
   "start_url": "/",
   "display": "standalone",

@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 
-import { ensureCitybusStops } from '@/lib/directory.js';
+import { ensureNearbyStops } from '@/lib/directory.js';
 import { startGtfsLoad } from '@/lib/gtfs.js';
 import { json } from '@/lib/http.js';
 
@@ -13,7 +13,7 @@ export async function GET(request) {
     }
   }
   try {
-    const directory = await ensureCitybusStops();
+    const directory = await ensureNearbyStops();
     const gtfs = await startGtfsLoad();
     return json({
       ok: true,

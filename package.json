@@ -12,6 +12,7 @@
     "import-bus-fares": "node scripts/import-bus-fares.mjs",
     "test": "playwright test",
     "sync-i18n": "node scripts/sync-i18n.mjs",
+    "build-manual": "node scripts/build-manual.mjs",
     "bundle-standalone": "node scripts/sync-i18n.mjs && node scripts/bundle-standalone.mjs"
   },
   "dependencies": {
