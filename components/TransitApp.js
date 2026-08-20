@@ -16,6 +16,51 @@ function n(x) {
   return String(x || '').trim().toUpperCase();
 }
 
+function parseRouteToken(s) {
+  const raw = n(s);
+  const m = /^([A-Z]*)(\d+)([A-Z]*)$/.exec(raw);
+  if (m) return { raw, prefix: m[1], num: m[2], suffix: m[3] };
+  return { raw, prefix: raw.replace(/[^A-Z]/g, ''), num: raw.replace(/\D/g, ''), suffix: '' };
+}
+
+function routeMatchRank(query, route) {
+  const q = parseRouteToken(query);
+  const r = parseRouteToken(route);
+  if (!q.raw || !r.raw) return 99;
+  if (r.raw === q.raw) return 0;
+  if (q.num && r.num && q.num === r.num) return 1;
+  if (!q.num && q.raw && (r.prefix === q.raw || r.suffix === q.raw)) return 1;
+  if (q.num && r.num && r.num.startsWith(q.num) && r.raw.startsWith(q.raw)) return 2;
+  if (q.num && r.raw.startsWith(q.num)) return 2;
+  if (q.num && (r.num.includes(q.num) || r.raw.includes(q.num))) return 3;
+  if (q.raw.length >= 1 && r.raw.includes(q.raw)) return 4;
+  return 99;
+}
+
+function stopNameKey(x) {
+  return (x?.name_tc || x?.name_en || '').normalize('NFKC').replace(/\s*\([^)]*\)\s*/g, '').replace(/[\s–—_.,'"-]+/g, '').toLowerCase();
+}
+
+function serviceCo(row) {
+  if (row?.co) return String(row.co).toUpperCase();
+  if (row?.gmb_route_id) return 'GMB';
+  return 'KMB';
+}
+
+function servicePlaceKey(x, side) {
+  const tc = side === 'orig' ? (x.orig_tc || x.orig_en) : (x.dest_tc || x.dest_en);
+  const en = side === 'orig' ? (x.orig_en || x.orig_tc) : (x.dest_en || x.dest_tc);
+  return stopNameKey({ name_tc: tc, name_en: en });
+}
+
+function isShortWorking(shortSeq, fullSeq) {
+  if (!shortSeq?.length || !fullSeq?.length) return false;
+  if (shortSeq.length >= fullSeq.length * 0.92) return false;
+  const fullKeys = new Set(fullSeq.map(stopNameKey));
+  const hits = shortSeq.filter((s) => fullKeys.has(stopNameKey(s))).length;
+  return hits >= Math.max(3, Math.ceil(shortSeq.length * 0.85));
+}
+
 function cluster(a) {
   a = [...new Set(a)].sort((x, y) => new Date(x) - new Date(y));
   return a.filter((x, i) => !i || new Date(x) - new Date(a[i - 1]) > 90000);
@@ -24,9 +69,11 @@ function cluster(a) {
 function emptyReasonKey(reason) {
   if (reason === 'no_first_bus') return 'noFirstBus';
   if (reason === 'no_connection') return 'noConnection';
+  if (reason === 'no_departure') return 'noDeparture';
   if (reason === 'timeout') return 'timeout';
   if (reason === 'incomplete') return 'incomplete';
   if (reason === 'need_board') return 'needBoard';
+  if (reason === 'empty' || reason === 'no_departure') return 'noLiveNow';
   return 'none';
 }
 
@@ -45,9 +92,9 @@ export default function TransitApp() {
   const [arrivalService, setArrivalService] = useState(null);
   const [arrivalGroups, setArrivalGroups] = useState([]);
   const [arrivalStopIndex, setArrivalStopIndex] = useState('');
+  const [arrivalDestIndex, setArrivalDestIndex] = useState('');
   const [arrivalTimes, setArrivalTimes] = useState(null);
 
-  const [journeyState, setJourneyState] = useState('wait');
   const [nearby, setNearby] = useState(true);
   const [radius, setRadius] = useState('250');
   const [firstRoute, setFirstRoute] = useState('');
@@ -63,10 +110,17 @@ export default function TransitApp() {
   const [destBoxHidden, setDestBoxHidden] = useState(false);
   const [transferResult, setTransferResult] = useState(null);
   const [transferMessage, setTransferMessage] = useState('');
+  const [transferPhase, setTransferPhase] = useState(null);
+  const [selectedDeparture, setSelectedDeparture] = useState(null);
+  const [selectedConnection, setSelectedConnection] = useState(null);
+  const [chosenDirect, setChosenDirect] = useState(null);
 
   const [mtrLine, setMtrLine] = useState('');
   const [mtrStation, setMtrStation] = useState('');
+  const [mtrDest, setMtrDest] = useState('');
   const [mtrResult, setMtrResult] = useState(null);
+  const [openStopKey, setOpenStopKey] = useState(null);
+  const [fetchedStops, setFetchedStops] = useState({});
 
   const [homes, setHomes] = useState([]);
   const [homeError, setHomeError] = useState('');
@@ -150,27 +204,45 @@ export default function TransitApp() {
     return [...m.values()].map((g) => ({ ...g, label: areaName(g.stops[0]) }));
   }
 
-  function vars(r) {
+  function matchBusServices(r) {
+    const q = n(r);
+    if (!q) return [];
+    const byRoute = new Map();
+    for (const x of routes) {
+      if (serviceCo(x) === 'GMB') continue;
+      const rank = routeMatchRank(q, x.route);
+      if (rank >= 99) continue;
+      const route = n(x.route);
+      const cur = byRoute.get(route);
+      if (!cur || rank < cur.rank) byRoute.set(route, { rank, route });
+    }
+    const names = [...byRoute.values()].sort((a, b) => a.rank - b.rank || a.route.length - b.route.length || a.route.localeCompare(b.route));
     const seen = new Set();
-    return routes.filter((x) => n(x.route) === n(r)).filter((x) => {
-      const k = [x.bound, x.service_type, x.orig_en, x.dest_en].join('|');
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
+    const out = [];
+    for (const { route } of names) {
+      for (const x of routes) {
+        if (n(x.route) !== route) continue;
+        const k = [x.co || 'KMB', x.bound, x.service_type, x.orig_en, x.dest_en].join('|');
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(x);
+        if (out.length >= 20) return out;
+      }
+    }
+    return out;
   }
 
   async function fetchStops(s) {
-    const k = [s.co || 'KMB', s.route, s.bound, s.service_type, s.gmb_route_id || '', s.gmb_route_seq || ''].join('|');
+    const k = [serviceCo(s), s.route, s.bound, s.service_type, s.gmb_route_id || '', s.gmb_route_seq || ''].join('|');
     if (stopCache.current.has(k)) return stopCache.current.get(k);
-    if (s.co === 'CTB') {
+    if (serviceCo(s) === 'CTB') {
       const d = s.bound === 'I' ? 'inbound' : 'outbound';
       const json = await api(`/api/citybus/route-stop/${encodeURIComponent(s.route)}/${d}`);
       const rows = json.data || [];
       stopCache.current.set(k, rows);
       return rows;
     }
-    if (s.co === 'GMB' && s.gmb_route_id) {
+    if (serviceCo(s) === 'GMB' && s.gmb_route_id) {
       const json = await api(`/api/gmb/route-stop/${encodeURIComponent(s.gmb_route_id)}/${encodeURIComponent(s.gmb_route_seq || 1)}`);
       const rows = json.data || [];
       stopCache.current.set(k, rows);
@@ -183,96 +255,29 @@ export default function TransitApp() {
     return rows;
   }
 
-  async function routeLive(s) {
-    if (s.co === 'CTB' || s.co === 'GMB') return [{ eta: true, dir: s.bound }];
+  async function eta(stopId, s, stopSeq) {
     try {
-      const json = await api(`/api/kmb/route-eta/${encodeURIComponent(s.route)}/${s.service_type}`);
-      return (json.data || []).filter((x) => x.eta && x.dir === s.bound);
-    } catch {
-      return [];
-    }
-  }
-
-  function patternNote(v, base, sets) {
-    if (v === base) return t('standard', sets.get(v).length);
-    const a = sets.get(v);
-    const b = sets.get(base);
-    const skipped = b.filter((x) => !a.some((y) => y.stop === x.stop)).map(areaName).filter(Boolean);
-    const extra = a.filter((x) => !b.some((y) => y.stop === x.stop)).map(areaName).filter(Boolean);
-    const parts = [t('variant', a.length, b.length)];
-    const join = (arr) => arr.slice(0, 4).join(lang === 'zh' ? '、' : ', ') + (arr.length > 4 ? t('more', arr.length - 4) : '');
-    if (skipped.length) parts.push(t('skips', join(skipped)));
-    if (extra.length) parts.push(t('extras', join(extra)));
-    if (!skipped.length && !extra.length) parts.push(t('sameStops'));
-    return parts.join(' ');
-  }
-
-  async function loadChoices(routeStr) {
-    let rows = vars(routeStr);
-    if (!rows.length) {
-      try {
-        const json = await api(`/api/gmb/lookup?route=${encodeURIComponent(n(routeStr))}`);
-        rows = json.data || [];
-      } catch {
-        rows = [];
-      }
-    }
-    if (!rows.length) return { error: 'noRoute' };
-    const limited = rows.slice(0, 8);
-    const info = await Promise.all(limited.map(async (x) => {
-      let live = [];
-      let seq = [];
-      try { live = await routeLive(x); } catch {}
-      try { seq = await fetchStops(x); } catch {}
-      return { x, live, seq };
-    }));
-    let keep = info.filter((z) => String(z.x.service_type) === '1' || z.live.length > 0);
-    if (!keep.length) keep = info.filter((z) => z.seq.length);
-    if (!keep.length) return { error: 'routeUnavailable' };
-    if (keep.length === 1) {
-      return {
-        keep: [{
-          service: keep[0].x,
-          live: keep[0].live,
-          note: '',
-          hasVariants: false
-        }],
-        auto: keep[0].x
-      };
-    }
-    const byJourney = new Map();
-    keep.forEach((z) => {
-      const k = [z.x.bound, n(z.x.orig_en), n(z.x.dest_en)].join('|');
-      if (!byJourney.has(k)) byJourney.set(k, []);
-      byJourney.get(k).push(z);
-    });
-    const notes = new Map();
-    byJourney.forEach((list) => {
-      const base = list.find((z) => String(z.x.service_type) === '1') || list.slice().sort((a, b) => b.seq.length - a.seq.length)[0];
-      const sets = new Map(list.map((z) => [z.x, z.seq]));
-      list.forEach((z) => notes.set(z, patternNote(z.x, base.x, sets)));
-    });
-    return {
-      keep: keep.map((z) => ({
-        service: z.x,
-        live: z.live,
-        note: notes.get(z) || '',
-        hasVariants: (byJourney.get([z.x.bound, n(z.x.orig_en), n(z.x.dest_en)].join('|')) || []).length > 1
-      }))
-    };
-  }
-
-  async function eta(stop, s) {
-    try {
-      if (s.co === 'CTB') {
-        const json = await api(`/api/citybus/eta/${encodeURIComponent(stop)}/${encodeURIComponent(s.route)}`);
+      if (serviceCo(s) === 'CTB') {
+        const json = await api(`/api/citybus/eta/${encodeURIComponent(stopId)}/${encodeURIComponent(s.route)}`);
         return (json.data || []).filter((x) => x.eta).map((x) => ({ ...x, dir: s.bound, service_type: '1', route: s.route }));
       }
-      if (s.co === 'GMB') {
-        const json = await api(`/api/gmb/eta/${encodeURIComponent(stop)}`);
-        return (json.data || []).filter((x) => x.eta).map((x) => ({ ...x, dir: s.bound, service_type: '1', route: s.route }));
+      if (serviceCo(s) === 'GMB') {
+        const qs = new URLSearchParams();
+        if (s.gmb_route_id) qs.set('routeId', s.gmb_route_id);
+        if (s.gmb_route_seq) qs.set('routeSeq', s.gmb_route_seq);
+        if (stopSeq) qs.set('stopSeq', String(stopSeq));
+        if (s.route) qs.set('route', s.route);
+        const json = await api(`/api/gmb/eta/${encodeURIComponent(stopId)}${qs.toString() ? `?${qs}` : ''}`);
+        return (json.data || []).filter((x) => x.eta).map((x) => ({
+          ...x,
+          dir: x.dir || s.bound,
+          service_type: '1',
+          route: x.route || s.route,
+          dest_tc: x.dest_tc || s.dest_tc,
+          dest_en: x.dest_en || s.dest_en
+        }));
       }
-      const json = await api(`/api/kmb/stop-eta/${encodeURIComponent(stop)}`);
+      const json = await api(`/api/kmb/stop-eta/${encodeURIComponent(stopId)}`);
       return (json.data || []).filter((x) =>
         n(x.route) === n(s.route)
         && String(x.service_type) === String(s.service_type)
@@ -284,23 +289,152 @@ export default function TransitApp() {
     }
   }
 
+  async function routeLive(s, seq = []) {
+    if (serviceCo(s) === 'GMB') {
+      const probe = seq[0];
+      if (!probe) return [];
+      try { return await eta(probe.stop, s, probe.seq); } catch { return []; }
+    }
+    if (serviceCo(s) === 'CTB') {
+      const probes = [];
+      if (seq[0]) probes.push(seq[0]);
+      if (seq.length > 4) probes.push(seq[Math.floor(seq.length / 3)]);
+      for (const row of probes) {
+        try {
+          const rows = await eta(row.stop, s);
+          if (rows.length) return rows;
+        } catch {}
+      }
+      return [];
+    }
+    try {
+      const json = await api(`/api/kmb/route-eta/${encodeURIComponent(s.route)}/${s.service_type}`);
+      return (json.data || []).filter((x) => x.eta && x.dir === s.bound);
+    } catch {
+      return [];
+    }
+  }
+
+  function destName(x) {
+    return lang === 'zh' ? (x.dest_tc || x.dest_en || '') : (x.dest_en || x.dest_tc || '');
+  }
+
+  function mergeLiveChoices(keep) {
+    const byJourney = new Map();
+    for (const z of keep) {
+      const k = serviceCo(z.x) === 'GMB'
+        ? ['GMB', n(z.x.route), servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|')
+        : ['BUS', n(z.x.route), z.x.bound, servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|');
+      if (!byJourney.has(k)) byJourney.set(k, []);
+      byJourney.get(k).push(z);
+    }
+    const journeys = [];
+    for (const list of byJourney.values()) {
+      const ranked = list.slice().sort((a, b) => {
+        const aKmb = serviceCo(a.x) !== 'CTB' && serviceCo(a.x) !== 'GMB' ? 1 : 0;
+        const bKmb = serviceCo(b.x) !== 'CTB' && serviceCo(b.x) !== 'GMB' ? 1 : 0;
+        return (b.live.length - a.live.length) || (b.seq.length - a.seq.length) || (bKmb - aKmb);
+      });
+      const best = ranked[0];
+      journeys.push({
+        ...best,
+        companies: [...new Set(list.map((z) => serviceCo(z.x)))],
+        live: list.flatMap((z) => z.live)
+      });
+    }
+    const byRouteBound = new Map();
+    for (const z of journeys) {
+      const k = [serviceCo(z.x) === 'GMB' ? 'GMB' : 'BUS', n(z.x.route), z.x.bound].join('|');
+      if (!byRouteBound.has(k)) byRouteBound.set(k, []);
+      byRouteBound.get(k).push(z);
+    }
+    const out = [];
+    for (const list of byRouteBound.values()) {
+      const sorted = list.slice().sort((a, b) => b.seq.length - a.seq.length);
+      const used = new Set();
+      for (let i = 0; i < sorted.length; i += 1) {
+        if (used.has(i)) continue;
+        const full = sorted[i];
+        const shortDests = [];
+        for (let j = i + 1; j < sorted.length; j += 1) {
+          if (used.has(j)) continue;
+          if (isShortWorking(sorted[j].seq, full.seq)) {
+            used.add(j);
+            const name = destName(sorted[j].x);
+            if (name) shortDests.push(name);
+          }
+        }
+        out.push({ ...full, shortDests });
+      }
+    }
+    return out;
+  }
+
+  async function loadChoices(routeStr) {
+    let rows = matchBusServices(routeStr);
+    try {
+      const json = await api(`/api/gmb/lookup?route=${encodeURIComponent(n(routeStr))}`);
+      rows = [...rows, ...(json.data || [])];
+    } catch {}
+    if (!rows.length) return { error: 'noRoute' };
+    const info = await Promise.all(rows.map(async (x) => {
+      let seq = [];
+      let live = [];
+      try { seq = await fetchStops(x); } catch {}
+      try { live = await routeLive(x, seq); } catch {}
+      return { x, live, seq };
+    }));
+    const keep = info.filter((z) => z.live.length > 0 && z.seq.length);
+    if (!keep.length) return { error: info.some((z) => z.seq.length) ? 'noLiveNow' : 'routeUnavailable' };
+    const merged = mergeLiveChoices(keep);
+    const payloadKeep = merged.map((z) => ({
+      service: z.x,
+      live: z.live,
+      companies: z.companies,
+      shortDests: z.shortDests || [],
+      note: (z.shortDests || []).length ? t('shortWorking', z.shortDests.join(lang === 'zh' ? '、' : ', ')) : '',
+      hasVariants: false
+    }));
+    return {
+      keep: payloadKeep,
+      auto: payloadKeep.length === 1 ? payloadKeep[0].service : null
+    };
+  }
+
   const pickArrival = useCallback(async (s) => {
     setArrivalService(s);
     setArrivalChoices(null);
     setArrivalStopIndex('');
+    setArrivalDestIndex('');
     setArrivalTimes(null);
+    setFetchedStops({});
+    setOpenStopKey(null);
     setArrivalGroups(groups(await fetchStops(s)));
   }, [api, lang, routes]); // groups depends on lang
 
-  const showArrival = useCallback(async (service, groupsList, index) => {
+  const showArrival = useCallback(async (service, groupsList, index, destIndex) => {
     if (index === '' || !service) return;
     const g = groupsList[+index];
     if (!g) return;
-    let a = [];
-    for (const x of g.stops) a = a.concat(await eta(x.stop, service));
-    setArrivalTimes(cluster(a.map((x) => x.eta)));
+    setOpenStopKey(null);
+    setFetchedStops({});
+    const destVal = destIndex === undefined ? arrivalDestIndex : destIndex;
+    const destGroup = destVal !== '' && +destVal > +index ? groupsList[+destVal] : null;
+    try {
+      const json = await api('/api/ride', {
+        method: 'POST',
+        body: JSON.stringify({
+          first: service,
+          boardStops: stopIds(g),
+          destStops: destGroup ? stopIds(destGroup) : []
+        })
+      });
+      setArrivalTimes({ trips: json.trips || [], destLabel: destGroup?.label || null, emptyReason: json.emptyReason });
+    } catch {
+      setArrivalTimes({ trips: [], destLabel: destGroup?.label || null, emptyReason: 'empty' });
+    }
     lastView.current = 'a';
-  }, [api, lang]);
+  }, [api, arrivalDestIndex]);
 
   const pickFirst = useCallback(async (s, restore = {}) => {
     setFirstService(s);
@@ -330,6 +464,43 @@ export default function TransitApp() {
     return t('transferKind');
   }
 
+  function renderTransferItem(x, i, opts = {}) {
+    const dest = loc(x.dest);
+    const watching = opts.watching;
+    const badge = watching ? t('watchingConnection') : (x.recommended ? t('recommended') : (x.kind === 'transfer' || x.kind === 'stay') && transferPhase === 'connections' && i > 0 ? t('backup') : kindLabel(x.kind));
+    const body = (
+      <>
+        <span className="badge">{badge}</span> {serviceCo(x) !== 'KMB' ? <span className="badge">{coLabel(x)}</span> : null} <b>{x.route}</b>
+        {dest ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{dest}</div> : null}
+        <div>{loc(x.from)} → {loc(x.to)}</div>
+        <div className="eta">
+          <b>{clk(x.eta)}</b>
+          <span className="mins">{t('minutes', mins(x.eta))}</span>
+        </div>
+        {x.kind === 'transfer' && x.waitAfterFirstMinutes != null ? (
+          <div className="muted">{t('waitAfter', x.waitAfterFirstMinutes)}</div>
+        ) : null}
+        {fareNote(x)}
+        {x.discount ? (
+          <div className="muted"><span className="badge">{t('octopusDiscount')}</span> {lang === 'zh' ? x.discount.notes_zh : x.discount.notes_en} {t('discountNote')}</div>
+        ) : null}
+        {opts.pickHint ? <div className="muted">{t('pickConnection')}</div> : null}
+      </>
+    );
+    if (opts.onPick) {
+      return (
+        <button className="item choice" type="button" key={`${x.kind}-${x.route}-${x.eta}-${i}`} onClick={opts.onPick}>
+          {body}
+        </button>
+      );
+    }
+    return (
+      <div className="item" key={`${x.kind}-${x.route}-${x.eta}-${i}`}>
+        {body}
+      </div>
+    );
+  }
+
   const goTransfer = useCallback(async (opts = {}) => {
     const f = opts.firstService ?? firstService;
     const d = opts.destination ?? destination;
@@ -341,21 +512,34 @@ export default function TransitApp() {
       setTransferMessage(t('needFields'));
       return;
     }
-    const state = opts.journeyState ?? journeyState;
-    if (state === 'wait' && (opts.boardIndex ?? boardIndex) === '') {
+    if ((opts.boardIndex ?? boardIndex) === '') {
       setTransferResult(null);
       setTransferMessage(t('needBoard'));
       return;
     }
+    const phase = opts.phase
+      ?? (transferPhase === 'connections' && selectedDeparture ? 'connections' : 'departures');
+    const picked = Object.prototype.hasOwnProperty.call(opts, 'selectedDeparture')
+      ? opts.selectedDeparture
+      : (phase === 'connections' ? selectedDeparture : null);
+    const watched = Object.prototype.hasOwnProperty.call(opts, 'selectedConnection')
+      ? opts.selectedConnection
+      : (phase === 'connections' ? selectedConnection : null);
     const seq = ++transferSeq.current;
-    setTransferMessage(t('searching'));
-    setTransferResult(null);
+    const silent = !!opts.silent && !!transferResult;
+    if (!silent) {
+      setTransferMessage(phase === 'departures' ? t('searchingDepartures') : t('searching'));
+      setChosenDirect(null);
+      setTransferResult(null);
+    }
     try {
       const inter = fg[+interVal];
       const json = await api('/api/transfer', {
         method: 'POST',
         body: JSON.stringify({
-          state: opts.journeyState ?? journeyState,
+          phase,
+          selectedDeparture: picked || undefined,
+          selectedConnection: watched || undefined,
           nearby: opts.nearby ?? nearby,
           radius: +(opts.radius ?? radius),
           first: f,
@@ -366,17 +550,45 @@ export default function TransitApp() {
       });
       if (seq !== transferSeq.current) return;
       setTransferMessage('');
+      setTransferPhase(json.phase || phase);
+      if (phase === 'departures') {
+        setSelectedDeparture(null);
+        setSelectedConnection(null);
+      } else if (picked) setSelectedDeparture(picked);
+      if (Object.prototype.hasOwnProperty.call(opts, 'selectedConnection')) {
+        setSelectedConnection(opts.selectedConnection);
+      }
       setTransferResult({ json, inter });
       lastView.current = 't';
     } catch (e) {
       if (seq !== transferSeq.current) return;
-      setTransferResult(null);
-      setTransferMessage(e.message || t('none'));
+      if (!silent) {
+        setTransferResult(null);
+        setTransferMessage(e.message || t('none'));
+      }
     }
-  }, [api, firstService, destination, firstGroups, interchangeIndex, boardIndex, journeyState, nearby, radius, t]);
+  }, [api, firstService, destination, firstGroups, interchangeIndex, boardIndex, nearby, radius, t, transferPhase, selectedDeparture, selectedConnection, transferResult]);
 
   const lineName = (line) => loc(line.name) || line.name;
   const stationLabel = (row) => (lang === 'zh' ? row[1] : row[2]);
+  function rideDestStations(line, origin) {
+    const stations = line?.stations || [];
+    const routes = line?.routes;
+    if (!routes?.length) return stations.filter((row) => row[0] !== origin);
+    const seen = new Set();
+    const out = [];
+    const byCode = new Map(stations.map((row) => [row[0], row]));
+    for (const path of routes) {
+      const i = path.indexOf(origin);
+      if (i < 0) continue;
+      for (const code of path) {
+        if (code === origin || seen.has(code)) continue;
+        seen.add(code);
+        if (byCode.has(code)) out.push(byCode.get(code));
+      }
+    }
+    return out;
+  }
 
   const lineEntries = Object.entries(lines);
   const currentLine = lines[mtrLine] || lineEntries[0]?.[1];
@@ -386,16 +598,17 @@ export default function TransitApp() {
     ? mtrStation
     : (currentStations[0]?.[0] || '');
 
-  const showMtr = useCallback(async (line = currentLineKey, sta = currentSta) => {
+  const showMtr = useCallback(async (line = currentLineKey, sta = currentSta, dest = mtrDest) => {
     if (!line || !sta) return;
+    const destCode = dest && dest !== sta ? dest : '';
     try {
-      const r = await api(`/api/mtr/schedule?line=${encodeURIComponent(line)}&sta=${encodeURIComponent(sta)}`);
+      const r = await api(`/api/mtr/schedule?line=${encodeURIComponent(line)}&sta=${encodeURIComponent(sta)}${destCode ? `&dest=${encodeURIComponent(destCode)}` : ''}`);
       setMtrResult(r);
       lastView.current = 'm';
     } catch {
       setMtrResult({ trains: [], emptyReason: 'unavailable' });
     }
-  }, [api, currentLineKey, currentSta]);
+  }, [api, currentLineKey, currentSta, mtrDest]);
 
   function groupStopEtas(rows) {
     const m = new Map();
@@ -427,10 +640,24 @@ export default function TransitApp() {
     }, () => setNearbyList({ error: 'geoDenied' }), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
   }
 
+  function coLabel(service, companies) {
+    const set = new Set((companies && companies.length ? companies : [serviceCo(service)]).map(String));
+    const hasCtb = set.has('CTB');
+    const hasGmb = set.has('GMB');
+    const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB');
+    if (hasCtb && hasFranchised) return t('coJoint');
+    if (hasGmb) return t('coGmb');
+    if (hasCtb) return t('coCtb');
+    if (set.has('LWB')) return t('coLwb');
+    return t('coKmb');
+  }
+
   async function pickNearbyStop(stop) {
     setNearbyList((prev) => ({ ...(prev || {}), picked: stop }));
     try {
-      const json = await api(`/api/kmb/stop-eta/${encodeURIComponent(stop.stop)}`);
+      const json = stop.co === 'CTB'
+        ? await api(`/api/citybus/stop-eta/${encodeURIComponent(stop.stop)}`)
+        : await api(`/api/kmb/stop-eta/${encodeURIComponent(stop.stop)}`);
       setNearbyBoard({ stop, groups: groupStopEtas(json.data || []) });
     } catch {
       setNearbyBoard({ stop, groups: [] });
@@ -476,10 +703,11 @@ export default function TransitApp() {
       setArrivalGroups(g);
       const idx = String(item.payload.stopIndex);
       setArrivalStopIndex(idx);
-      await showArrival(s, g, idx);
+      const destIdx = item.payload.destIndex != null && item.payload.destIndex !== '' ? String(item.payload.destIndex) : '';
+      setArrivalDestIndex(destIdx);
+      await showArrival(s, g, idx, destIdx);
     } else if (item.type === 'transfer') {
       setTab('transfer');
-      setJourneyState(item.payload.state || 'wait');
       setNearby(item.payload.nearby !== false);
       setRadius(String(item.payload.radius || '250'));
       const s = item.payload.first;
@@ -498,21 +726,26 @@ export default function TransitApp() {
       };
       setDestination(dest);
       setDestBoxHidden(true);
+      setChosenDirect(null);
+      setSelectedDeparture(null);
+      setTransferPhase(null);
       await goTransfer({
         firstService: s,
         firstGroups: g,
         destination: dest,
         boardIndex: bIdx,
         interchangeIndex: iIdx,
-        journeyState: item.payload.state || 'wait',
         nearby: item.payload.nearby !== false,
-        radius: item.payload.radius || '250'
+        radius: item.payload.radius || '250',
+        phase: 'departures',
+        selectedDeparture: null
       });
     } else if (item.type === 'mtr') {
       setTab('mtr');
       setMtrLine(item.payload.line);
       setMtrStation(item.payload.station);
-      await showMtr(item.payload.line, item.payload.station);
+      setMtrDest(item.payload.dest || '');
+      await showMtr(item.payload.line, item.payload.station, item.payload.dest || '');
     }
   }
 
@@ -547,6 +780,14 @@ export default function TransitApp() {
         setStops(stopJson.data || []);
         setLines(lineJson.data || {});
         setDirCount(nextRoutes.length ? nextRoutes.length : -1);
+        setTimeout(async () => {
+          if (cancelled) return;
+          try {
+            const later = await api('/api/kmb/stops');
+            const nextStops = later.data || [];
+            if (nextStops.length > (stopJson.data || []).length) setStops(nextStops);
+          } catch {}
+        }, 12000);
       } catch (error) {
         if (!cancelled) {
           setDirCount(-1);
@@ -569,11 +810,11 @@ export default function TransitApp() {
       if (lastView.current === 'a' && arrivalService && arrivalStopIndex !== '') {
         showArrival(arrivalService, arrivalGroups, arrivalStopIndex);
       }
-      if (lastView.current === 't') goTransfer();
+      if (lastView.current === 't' && !chosenDirect) goTransfer({ silent: true });
       if (lastView.current === 'm') showMtr();
     }, +refreshSec * 1000);
     return () => clearInterval(id);
-  }, [refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, showArrival, goTransfer, showMtr]);
+  }, [refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, showMtr, chosenDirect, mtrDest]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -614,33 +855,166 @@ export default function TransitApp() {
     if (tab === 'home') renderHome();
   }, [tab, renderHome]);
 
-  const etaList = (times) => {
-    if (!times.length) return <p className="muted">{t('noEta')}</p>;
-    const rows = times.map((x) => {
-      const wait = mins(x);
+  function resolvedStops(id, stops) {
+    if (Array.isArray(stops) && stops.length) return stops;
+    const extra = fetchedStops[id];
+    return Array.isArray(extra) ? extra : extra === 'loading' ? extra : [];
+  }
+
+  function renderStopTimes(id, stops, fetchStops) {
+    const list = resolvedStops(id, stops);
+    const loading = fetchedStops[id] === 'loading';
+    const canOpen = (Array.isArray(list) && list.length > 1) || loading || fetchStops;
+    if (!canOpen) return null;
+    const open = openStopKey === id;
+    return (
+      <>
+        <button
+          className="tab mt-2"
+          type="button"
+          onClick={async () => {
+            if (open) {
+              setOpenStopKey(null);
+              return;
+            }
+            setOpenStopKey(id);
+            if ((!Array.isArray(list) || list.length < 2) && fetchStops) await fetchStops();
+          }}
+        >
+          {open ? t('hideStopTimes') : t('showStopTimes')}
+        </button>
+        {open && loading ? <p className="muted mt-2">{t('stopTimesLoading')}</p> : null}
+        {open && Array.isArray(list) && list.length > 1 ? (
+          <ol className="stop-times">
+            {list.map((stop, i) => (
+              <li key={`${stop.stop || stop.name?.zh || i}-${stop.time || i}`}>
+                <span>{loc(stop.name)}</span>
+                <span>{clk(stop.time)}{stop.estimated ? ` · ${t('stopTimeEst')}` : ''}</span>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        {open && !loading && Array.isArray(list) && list.length <= 1 ? <p className="muted mt-2">{t('stopTimesEmpty')}</p> : null}
+      </>
+    );
+  }
+
+  const loadArrivalStops = useCallback(async (trip) => {
+    const key = `arrival-${trip.board}`;
+    if (Array.isArray(trip.stops) && trip.stops.length > 1) return trip.stops;
+    if (Array.isArray(fetchedStops[key]) || fetchedStops[key] === 'loading') return fetchedStops[key];
+    const g = arrivalGroups[+arrivalStopIndex];
+    if (!arrivalService || !g) return [];
+    setFetchedStops((prev) => ({ ...prev, [key]: 'loading' }));
+    try {
+      const json = await api('/api/ride', {
+        method: 'POST',
+        body: JSON.stringify({
+          first: arrivalService,
+          boardStops: stopIds(g),
+          destStops: []
+        })
+      });
+      const hit = (json.trips || []).find((row) => Math.abs(new Date(row.board) - new Date(trip.board)) <= 90 * 1000)
+        || (json.trips || [])[0];
+      const stops = hit?.stops || [];
+      setFetchedStops((prev) => ({ ...prev, [key]: stops }));
+      return stops;
+    } catch {
+      setFetchedStops((prev) => ({ ...prev, [key]: [] }));
+      return [];
+    }
+  }, [api, arrivalGroups, arrivalService, arrivalStopIndex, fetchedStops]);
+
+  const loadMtrStops = useCallback(async (train) => {
+    const key = `mtr-${train.line || mtrLine}-${train.time}`;
+    if (Array.isArray(train.stops) && train.stops.length > 1) return train.stops;
+    if (Array.isArray(fetchedStops[key]) || fetchedStops[key] === 'loading') return fetchedStops[key];
+    const destCode = train.destCode;
+    if (!destCode) return [];
+    setFetchedStops((prev) => ({ ...prev, [key]: 'loading' }));
+    try {
+      const json = await api(`/api/mtr/schedule?line=${encodeURIComponent(train.line || mtrLine)}&sta=${encodeURIComponent(mtrStation)}&dest=${encodeURIComponent(destCode)}`);
+      const hit = (json.trains || []).find((row) => row.destCode === destCode && Math.abs(new Date(row.time) - new Date(train.time)) <= 90 * 1000)
+        || (json.trains || []).find((row) => row.destCode === destCode)
+        || (json.trains || [])[0];
+      const stops = hit?.stops || [];
+      setFetchedStops((prev) => ({ ...prev, [key]: stops }));
+      return stops;
+    } catch {
+      setFetchedStops((prev) => ({ ...prev, [key]: [] }));
+      return [];
+    }
+  }, [api, fetchedStops, mtrLine, mtrStation]);
+
+  const etaList = (input, opts = {}) => {
+    const isRide = input && !Array.isArray(input);
+    const trips = isRide
+      ? (input.trips || [])
+      : (input || []).map((time) => ({ board: time }));
+    const destLabel = isRide ? input.destLabel : null;
+    if (isRide && input.emptyReason === 'no_dest') return <p className="muted">{t('noRideDest')}</p>;
+    if (!trips.length) return <p className="muted">{t(isRide ? 'noLiveNow' : 'noEta')}</p>;
+    const rows = trips.map((x, i) => {
+      const board = x.board || x;
+      const wait = destLabel && x.arrive ? mins(x.arrive) : mins(board);
       if (wait == null) return null;
+      const service = x.route
+        ? <><span className="badge">{coLabel(x)}</span> <b>{x.route}</b>{loc(x.dest) ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</div> : null}</>
+        : <b>{clk(board)}</b>;
+      const stopId = `arrival-${board}`;
       return (
-        <div className="item eta" key={x}>
-          <b>{clk(x)}</b>
-          <span className="mins">{t('minutes', wait)}</span>
+        <div className="item" key={`${x.route || ''}-${board}-${i}`}>
+          <div className="eta">
+            <div>
+              {destLabel && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}{service}
+              {destLabel ? <div className="muted">{clk(board)} {t('rideDeparts')}</div> : null}
+              {destLabel && x.arrive ? (
+                <div className="muted">{clk(x.arrive)} {t('rideArrives')}{lang === 'zh' ? '' : ' '}{destLabel}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
+              ) : null}
+              {destLabel && x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+            </div>
+            <span className="mins">{t('minutes', wait)}</span>
+          </div>
+          {renderStopTimes(stopId, x.stops, opts.fetchStops ? () => loadArrivalStops(x) : null)}
         </div>
       );
     }).filter(Boolean);
-    return rows.length ? rows : <p className="muted">{t('noEta')}</p>;
+    return rows.length ? rows : <p className="muted">{t(isRide ? 'noLiveNow' : 'noEta')}</p>;
   };
+
+  function fareNote(x, opts = {}) {
+    if (!x || (x.full_fare_hkd == null && x.journey_time_minutes == null && x.section_fare_hkd == null && !(x.section_prices || []).length)) return null;
+    const parts = [];
+    if (x.section_fare_hkd != null) parts.push(t('sectionFare', x.section_fare_hkd));
+    else if (x.full_fare_hkd != null) parts.push(t('fullFare', x.full_fare_hkd));
+    if (x.section_fare_hkd != null && x.full_fare_hkd != null && Number(x.section_fare_hkd) !== Number(x.full_fare_hkd)) {
+      parts.push(t('fullFare', x.full_fare_hkd));
+    }
+    if (x.section_fare_hkd == null && (x.section_prices || []).length > 1) {
+      parts.push(t('sectionList', x.section_prices.map((n) => `$${Number(n).toFixed(1)}`).join(' / ')));
+    }
+    if (x.journey_time_minutes != null && !opts.hideScheduled && !(x.rideMinutes > 0)) parts.push(t('scheduledMins', x.journey_time_minutes));
+    if (!parts.length) return null;
+    return <div className="muted">{parts.join(' · ')}</div>;
+  }
 
   function renderChoiceList(payload, onPick) {
     if (!payload) return null;
     if (payload.loading) return <div className="note">{t('checking')}</div>;
     if (payload.error) return <p className="muted">{t(payload.error)}</p>;
-    return payload.keep.map((z, i) => (
-      <button key={`${z.service.route}-${z.service.bound}-${z.service.service_type}-${i}`} className="item choice" type="button" onClick={() => onPick(z.service)}>
-        <b>{z.service.route}</b>
-        <div>{rn(z.service)}</div>
-        {(z.hasVariants || String(z.service.service_type) !== '1') ? <div className="muted">{z.note}</div> : null}
-        {z.live.length === 0 ? <div className="muted">{t('inactive')}</div> : null}
-      </button>
-    ));
+    return (
+      <>
+        {payload.keep.map((z, i) => (
+          <button key={`${z.service.co || 'KMB'}-${z.service.route}-${z.service.bound}-${z.service.service_type}-${z.service.gmb_route_id || ''}-${i}`} className="item choice" type="button" onClick={() => onPick(z.service)}>
+            <span className="badge">{coLabel(z.service, z.companies)}</span> <b>{z.service.route}</b>
+            <div>{rn(z.service)}</div>
+            {fareNote(z.service)}
+            {z.note ? <div className="muted">{z.note}</div> : null}
+          </button>
+        ))}
+      </>
+    );
   }
 
   const tabs = [
@@ -650,18 +1024,20 @@ export default function TransitApp() {
     ['home', t('tabHome')]
   ];
 
-  const transferEmpty = transferResult?.json?.emptyReason && !transferResult.json.list?.length
+  const transferEmpty = transferResult?.json?.emptyReason && !(transferResult.json.list || []).length && !(transferResult.json.departures || []).length && !(transferResult.json.directs || []).length
     ? t(emptyReasonKey(transferResult.json.emptyReason))
     : '';
+  const findLabel = t('transferFind');
+  const resultPhase = chosenDirect ? 'direct' : (transferResult?.json?.phase || transferPhase);
 
   return (
     <main className="shell">
-      <header className="flex justify-between gap-3 mb-4 items-start">
+      <header className="app-header mb-4">
         <div>
           <h1 className="text-xl font-bold">{t('title')}</h1>
-          <p className="muted">{t('subtitle')}</p>
+          <p className="muted app-tagline">{t('subtitle')}</p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="app-controls">
           <button
             className="tab"
             type="button"
@@ -674,7 +1050,7 @@ export default function TransitApp() {
           >
             {t('langBtn')}
           </button>
-          <select className="field" style={{ width: 'auto' }} value={refreshSec} onChange={(e) => setRefreshSec(e.target.value)}>
+          <select className="field" value={refreshSec} onChange={(e) => setRefreshSec(e.target.value)}>
             <option value="15">{t('refresh15')}</option>
             <option value="30">{t('refresh30')}</option>
           </select>
@@ -682,7 +1058,7 @@ export default function TransitApp() {
       </header>
       <div className="note">{dirCount == null ? t('loading') : dirCount < 0 ? (offline ? t('connectionRefused') : t('loadFail')) : t('ready', dirCount)}</div>
       {standaloneHint ? <p className="muted">{t('addHomeScreen')}</p> : null}
-      <nav className="flex gap-2 flex-wrap my-5">
+      <nav className="tabs my-5">
         {tabs.map(([id, label]) => (
           <button key={id} className={`tab${tab === id ? ' active' : ''}`} type="button" onClick={() => setTab(id)}>{label}</button>
         ))}
@@ -691,7 +1067,7 @@ export default function TransitApp() {
       <section className={`panel${tab === 'arrivals' ? ' active' : ''}`}>
         <div className="card">
           <h2 className="text-lg font-bold">{t('arrivalsHeading')}</h2>
-          <div className="flex gap-2 mt-3">
+          <div className="search-row mt-3">
             <input className="field" placeholder={t('routePlaceholder')} value={arrivalRoute} onChange={(e) => setArrivalRoute(e.target.value)} aria-label={t('routePlaceholder')} />
               <button className="btn" type="button" aria-label={t('find')} onClick={async () => {
                 setArrivalChoices({ loading: true });
@@ -700,7 +1076,7 @@ export default function TransitApp() {
                 if (payload.auto) pickArrival(payload.auto);
               }}>{t('find')}</button>
           </div>
-          <button className="tab mt-3" type="button" aria-label={t('nearbyStops')} onClick={findNearbyStops}>{t('nearbyStops')}</button>
+          <button className="tab btn-block mt-3" type="button" aria-label={t('nearbyStops')} onClick={findNearbyStops}>{t('nearbyStops')}</button>
           {nearbyList?.loading ? <div className="note">{t('locating')}</div> : null}
           {nearbyList?.error ? <p className="muted">{nearbyList.error === 'geoDenied' ? t('geoDenied') : nearbyList.error}</p> : null}
           {nearbyList?.data?.length ? (
@@ -708,7 +1084,7 @@ export default function TransitApp() {
               {nearbyList.data.map((stop) => (
                 <button key={stop.stop} className="item choice" type="button" onClick={() => pickNearbyStop(stop)}>
                   <b>{lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc}</b>
-                  <div className="muted">{t('metres', stop.metres)}</div>
+                  <div className="muted">{coLabel(stop)} · {t('metres', stop.metres)}</div>
                 </button>
               ))}
             </div>
@@ -724,32 +1100,58 @@ export default function TransitApp() {
                     {etaList(g.times)}
                   </div>
                 ))
-                : <p className="muted">{t('noEta')}</p>}
+                : <p className="muted">{t('noLiveNow')}</p>}
             </>
           ) : null}
           <div>{renderChoiceList(arrivalChoices, pickArrival)}</div>
           {arrivalService ? (
-            <select className="field mt-3" value={arrivalStopIndex} onChange={async (e) => {
-              const v = e.target.value;
-              setArrivalStopIndex(v);
-              await showArrival(arrivalService, arrivalGroups, v);
-            }}>
-              <option value="">{t('chooseStop')}</option>
-              {arrivalGroups.map((g, i) => <option key={g.label + i} value={i}>{g.label}</option>)}
-            </select>
+            <>
+              <select className="field mt-3" value={arrivalStopIndex} onChange={async (e) => {
+                const v = e.target.value;
+                setArrivalStopIndex(v);
+                let dest = arrivalDestIndex;
+                if (dest !== '' && (v === '' || +dest <= +v)) {
+                  dest = '';
+                  setArrivalDestIndex('');
+                }
+                await showArrival(arrivalService, arrivalGroups, v, dest);
+              }}>
+                <option value="">{t('chooseStop')}</option>
+                {arrivalGroups.map((g, i) => <option key={g.label + i} value={i}>{g.label}</option>)}
+              </select>
+              {arrivalStopIndex !== '' ? (
+                <label className="block mt-3">
+                  <span>{t('rideDestLabel')}</span>
+                  <select className="field mt-1" value={arrivalDestIndex} onChange={async (e) => {
+                    const v = e.target.value;
+                    setArrivalDestIndex(v);
+                    await showArrival(arrivalService, arrivalGroups, arrivalStopIndex, v);
+                  }}>
+                    <option value="">{t('chooseRideDest')}</option>
+                    {arrivalGroups.map((g, i) => (
+                      i > +arrivalStopIndex ? <option key={`d-${g.label}-${i}`} value={i}>{g.label}</option> : null
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </>
           ) : null}
           {arrivalTimes && arrivalStopIndex !== '' ? (
             <>
-              <h3 className="font-bold mt-3">{arrivalGroups[+arrivalStopIndex]?.label}</h3>
-              {etaList(arrivalTimes)}
+              <h3 className="font-bold mt-3">{arrivalGroups[+arrivalStopIndex]?.label}{arrivalTimes.destLabel ? ` → ${arrivalTimes.destLabel}` : ''}</h3>
+              {fareNote(arrivalService, { hideScheduled: !!(arrivalTimes?.destLabel && arrivalTimes?.trips?.some((row) => row.rideMinutes > 0)) })}
+              {etaList(arrivalTimes, { fetchStops: true })}
               <div className="row-actions">
                 <button className="tab" type="button" onClick={() => {
                   const g = arrivalGroups[+arrivalStopIndex];
+                  const destG = arrivalDestIndex !== '' ? arrivalGroups[+arrivalDestIndex] : null;
                   saveHome({
                     type: 'arrival',
                     title: { zh: `${arrivalService.route}（${areaName(g.stops[0])}）`, en: `${arrivalService.route} at ${g.stops[0].name_en || g.stops[0].name_tc}` },
-                    subtitle: { zh: `${arrivalService.orig_tc || arrivalService.orig_en} → ${arrivalService.dest_tc || arrivalService.dest_en}`, en: `${arrivalService.orig_en || arrivalService.orig_tc} → ${arrivalService.dest_en || arrivalService.dest_tc}` },
-                    payload: { service: arrivalService, stopIndex: +arrivalStopIndex }
+                    subtitle: destG
+                      ? { zh: `${g.label} → ${destG.label}`, en: `${g.label} → ${destG.label}` }
+                      : { zh: `${arrivalService.orig_tc || arrivalService.orig_en} → ${arrivalService.dest_tc || arrivalService.dest_en}`, en: `${arrivalService.orig_en || arrivalService.orig_tc} → ${arrivalService.dest_en || arrivalService.dest_tc}` },
+                    payload: { service: arrivalService, stopIndex: +arrivalStopIndex, destIndex: arrivalDestIndex === '' ? '' : +arrivalDestIndex }
                   });
                 }}>{t('saveHome')}</button>
               </div>
@@ -761,13 +1163,6 @@ export default function TransitApp() {
       <section className={`panel${tab === 'transfer' ? ' active' : ''}`}>
         <div className="card">
           <h2 className="text-lg font-bold">{t('transferHeading')}</h2>
-          <label className="block mt-3">
-            <span>{t('stateLabel')}</span>
-            <select className="field mt-1" value={journeyState} onChange={(e) => setJourneyState(e.target.value)}>
-              <option value="wait">{t('wait')}</option>
-              <option value="onboard">{t('onboard')}</option>
-            </select>
-          </label>
           <label className="block mt-3">
             <input type="checkbox" checked={nearby} onChange={(e) => setNearby(e.target.checked)} /> <span>{t('nearbyLabel')}</span>
           </label>
@@ -781,7 +1176,7 @@ export default function TransitApp() {
           </label>
           <div className={`mt-4${firstBoxHidden ? ' hidden' : ''}`}>
             <b>{t('firstRouteLabel')}</b>
-            <div className="flex gap-2 mt-1">
+            <div className="search-row mt-1">
               <input className="field" placeholder={t('routePlaceholder')} value={firstRoute} onChange={(e) => setFirstRoute(e.target.value)} aria-label={t('firstRouteLabel')} />
               <button className="btn" type="button" aria-label={t('find')} onClick={async () => {
                 setFirstChoices({ loading: true });
@@ -796,12 +1191,13 @@ export default function TransitApp() {
             <div className="note">
               <b>{firstService.route}</b>
               <div>{rn(firstService)}</div>
+              {fareNote(firstService)}
               <button className="tab mt-2" type="button" onClick={() => setFirstBoxHidden(false)}>{t('change')}</button>
             </div>
           ) : null}
           {firstService ? (
             <div className="md-grid-2 mt-4">
-              <label>{journeyState === 'wait' ? t('boardStop') : t('boardOptional')}
+              <label>{t('boardStop')}
                 <select className="field mt-1" value={boardIndex} onChange={(e) => setBoardIndex(e.target.value)}>
                   <option value="">{t('notSelected')}</option>
                   {firstGroups.map((g, i) => <option key={`b-${g.label}-${i}`} value={i}>{g.label}</option>)}
@@ -817,7 +1213,7 @@ export default function TransitApp() {
           ) : null}
           <div className={`mt-4${destBoxHidden ? ' hidden' : ''}`}>
             <b>{t('destLabel')}</b>
-            <div className="flex gap-2 mt-1">
+            <div className="search-row mt-1">
               <input className="field" placeholder={t('destPlaceholder')} value={destinationInput} onChange={(e) => setDestinationInput(e.target.value)} />
               <button className="btn" type="button" aria-label={t('find')} onClick={() => searchDest(destinationInput)}>{t('find')}</button>
             </div>
@@ -841,46 +1237,164 @@ export default function TransitApp() {
               <button className="tab mt-2" type="button" onClick={() => setDestBoxHidden(false)}>{t('change')}</button>
             </div>
           ) : null}
-          <button className="btn mt-4" type="button" aria-label={t('transferFind')} onClick={() => goTransfer()}>{t('transferFind')}</button>
+          <button
+            className="btn btn-block mt-4"
+            type="button"
+            aria-label={findLabel}
+            onClick={() => {
+              setChosenDirect(null);
+              setSelectedDeparture(null);
+              setSelectedConnection(null);
+              setTransferPhase(null);
+              goTransfer({ phase: 'departures', selectedDeparture: null });
+            }}
+          >{findLabel}</button>
           <div>
             {transferMessage ? <div className="note">{transferMessage}</div> : null}
-            {transferResult ? (
+            {chosenDirect ? (
               <>
-                {transferResult.json.firstArrivalAtInterchange ? (
-                  <div className="note">
-                    <h3 className="font-bold">{t('firstArrival')}</h3>
-                    <div className="eta mt-2">
-                      <b>{clk(transferResult.json.firstArrivalAtInterchange)}</b>
-                      <span className="mins">{mins(transferResult.json.firstArrivalAtInterchange) == null ? '' : t('minutes', mins(transferResult.json.firstArrivalAtInterchange))}</span>
-                    </div>
-                    {transferResult.json.boardDeparture ? (
-                      <div className="muted mt-2">{t('boardAt')}：{clk(transferResult.json.boardDeparture)}</div>
-                    ) : null}
-                  </div>
-                ) : null}
-                <h3 className="font-bold mt-4">{t('combinedList')}</h3>
-                {(transferResult.json.list || []).length
-                  ? transferResult.json.list.map((x, i) => {
-                    const dest = loc(x.dest);
-                    return (
-                      <div className="item" key={`${x.kind}-${x.route}-${x.eta}-${i}`}>
-                        <span className="badge">{kindLabel(x.kind)}</span> <b>{x.route}</b>
-                        {dest ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{dest}</div> : null}
-                        <div>{loc(x.from)} → {loc(x.to)}</div>
-                        <div className="eta">
-                          <b>{clk(x.eta)}</b>
-                          <span className="mins">{t('minutes', mins(x.eta))}</span>
+                <div className="note">{t('chosenDirect')}</div>
+                {renderTransferItem(chosenDirect, 0)}
+                <button className="tab mt-2" type="button" onClick={() => {
+                  setChosenDirect(null);
+                  goTransfer({ phase: 'departures', selectedDeparture: null });
+                }}>{t('changeDeparture')}</button>
+                <div className="row-actions">
+                  <button className="tab" type="button" onClick={() => saveHome({
+                    type: 'transfer',
+                    title: { zh: `${firstService.route} → ${destination.label}`, en: `${firstService.route} → ${destination.label}` },
+                    subtitle: { zh: `${transferResult?.inter?.label || ''} 轉車`, en: `Transfer at ${transferResult?.inter?.label || ''}` },
+                    payload: {
+                      first: firstService,
+                      boardIndex,
+                      interchangeIndex,
+                      destLabel: destination.label,
+                      destStops: stopIds(destination),
+                      nearby,
+                      radius
+                    }
+                  })}>{t('saveHome')}</button>
+                </div>
+              </>
+            ) : null}
+            {!chosenDirect && transferResult ? (
+              <>
+                {resultPhase === 'departures' ? (
+                  <>
+                    <h3 className="font-bold mt-4">{t('firstDepartures')}</h3>
+                    {(transferResult.json.departures || []).length
+                      ? transferResult.json.departures.map((row, i) => {
+                        const dest = loc(row.dest);
+                        return (
+                          <button
+                            key={`${row.eta}-${i}`}
+                            className="item choice"
+                            type="button"
+                            onClick={() => goTransfer({ phase: 'connections', selectedDeparture: row.eta })}
+                          >
+                            <b>{firstService.route}</b>
+                            {dest ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{dest}</div> : null}
+                            {fareNote(transferResult.json.firstFare || firstService)}
+                            <div className="eta">
+                              <b>{clk(row.eta)}</b>
+                              <span className="mins">{t('minutes', mins(row.eta))}</span>
+                            </div>
+                            <div className="muted">{t('pickDeparture')}</div>
+                          </button>
+                        );
+                      })
+                      : <p className="muted">{t(emptyReasonKey(transferResult.json.emptyReason || 'no_departure'))}</p>}
+                    <h3 className="font-bold mt-4">{t('directHeading')}</h3>
+                    {(transferResult.json.directs || []).length
+                      ? transferResult.json.directs.map((x, i) => (
+                        <button
+                          key={`d-${x.route}-${x.eta}-${i}`}
+                          className="item choice"
+                          type="button"
+                          onClick={() => {
+                            setChosenDirect(x);
+                            setTransferPhase('direct');
+                            lastView.current = 't';
+                          }}
+                        >
+                          <span className="badge">{kindLabel(x.kind)}</span> <b>{x.route}</b>
+                          {loc(x.dest) ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</div> : null}
+                          <div>{loc(x.from)} → {loc(x.to)}</div>
+                          {fareNote(x)}
+                          <div className="eta">
+                            <b>{clk(x.eta)}</b>
+                            <span className="mins">{t('minutes', mins(x.eta))}</span>
+                          </div>
+                        </button>
+                      ))
+                      : <p className="muted">{t('noDirect')}</p>}
+                  </>
+                ) : (
+                  <>
+                    {transferResult.json.firstArrivalAtInterchange ? (
+                      <div className="note">
+                        <h3 className="font-bold">{t('firstArrival')}</h3>
+                        <div className="eta mt-2">
+                          <b>{clk(transferResult.json.firstArrivalAtInterchange)}</b>
+                          <span className="mins">{mins(transferResult.json.firstArrivalAtInterchange) == null ? '' : t('minutes', mins(transferResult.json.firstArrivalAtInterchange))}</span>
                         </div>
-                        {x.kind === 'transfer' && x.waitAfterFirstMinutes != null ? (
-                          <div className="muted">{t('waitAfter', x.waitAfterFirstMinutes)}</div>
+                        {fareNote(transferResult.json.firstFare || firstService)}
+                        {transferResult.json.boardDeparture ? (
+                          <div className="muted mt-2">{t('boardAt')}：{clk(transferResult.json.boardDeparture)}</div>
                         ) : null}
-                        {x.discount ? (
-                          <div className="muted"><span className="badge">{t('octopusDiscount')}</span> {lang === 'zh' ? x.discount.notes_zh : x.discount.notes_en} {t('discountNote')}</div>
+                        {transferResult.json.arrivalEstimated ? (
+                          <div className="muted mt-2">{t('firstArrivalGuessed')}</div>
                         ) : null}
+                        {renderStopTimes('transfer-first', transferResult.json.firstStops)}
                       </div>
-                    );
-                  })
-                  : <p className="muted">{transferEmpty}</p>}
+                    ) : null}
+                    <button className="tab mt-2" type="button" onClick={() => {
+                        setSelectedDeparture(null);
+                        setSelectedConnection(null);
+                        goTransfer({ phase: 'departures', selectedDeparture: null, selectedConnection: null });
+                      }}>{t('changeDeparture')}</button>
+                    {transferResult.json.watch?.selected || selectedConnection ? (
+                      <div className="note mt-4">
+                        <h3 className="font-bold">{t('watchingConnection')}</h3>
+                        <p className="muted mt-2">{t('watchingLive')}</p>
+                        {transferResult.json.watch?.selected ? renderTransferItem(transferResult.json.watch.selected, 0, { watching: true }) : null}
+                        <p className={transferResult.json.watch?.catchable ? 'mt-2' : 'muted mt-2'}>
+                          {transferResult.json.watch?.catchable ? t('stillCatchable') : t('missedConnection')}
+                        </p>
+                        {transferResult.json.watch?.earlier ? (
+                          <>
+                            <p className="mt-2">{t('earlierConnection')}</p>
+                            {renderTransferItem(transferResult.json.watch.earlier, 1, {
+                              onPick: () => goTransfer({
+                                phase: 'connections',
+                                selectedConnection: transferResult.json.watch.earlier,
+                                silent: true
+                              })
+                            })}
+                            <button className="tab mt-2" type="button" onClick={() => goTransfer({
+                              phase: 'connections',
+                              selectedConnection: transferResult.json.watch.earlier,
+                              silent: true
+                            })}>{t('switchToEarlier')}</button>
+                          </>
+                        ) : null}
+                        <button className="tab mt-2" type="button" onClick={() => {
+                          setSelectedConnection(null);
+                          goTransfer({ phase: 'connections', selectedConnection: null, silent: true });
+                        }}>{t('changeConnection')}</button>
+                      </div>
+                    ) : null}
+                    <h3 className="font-bold mt-4">{t('combinedList')}</h3>
+                    {(transferResult.json.list || []).length
+                      ? transferResult.json.list.map((x, i) => renderTransferItem(x, i, {
+                        watching: selectedConnection && String(selectedConnection.route).toUpperCase() === String(x.route).toUpperCase()
+                          && (selectedConnection.co || 'KMB') === (x.co || 'KMB'),
+                        pickHint: !selectedConnection,
+                        onPick: () => goTransfer({ phase: 'connections', selectedConnection: x, silent: true })
+                      }))
+                      : <p className="muted">{transferEmpty || t('noConnection')}</p>}
+                  </>
+                )}
                 <div className="row-actions">
                   <button className="tab" type="button" onClick={() => saveHome({
                     type: 'transfer',
@@ -892,7 +1406,6 @@ export default function TransitApp() {
                       interchangeIndex,
                       destLabel: destination.label,
                       destStops: stopIds(destination),
-                      state: journeyState,
                       nearby,
                       radius
                     }
@@ -912,46 +1425,75 @@ export default function TransitApp() {
             <select className="field mt-1" value={currentLineKey} onChange={(e) => {
               setMtrLine(e.target.value);
               setMtrStation('');
+              setMtrDest('');
             }}>
               {lineEntries.map(([k, v]) => <option key={k} value={k}>{lineName(v)}</option>)}
             </select>
           </label>
           <label className="block mt-3">
             <span>{t('mtrStationLabel')}</span>
-            <select className="field mt-1" value={currentSta} onChange={(e) => setMtrStation(e.target.value)}>
+            <select className="field mt-1" value={currentSta} onChange={(e) => {
+              const sta = e.target.value;
+              setMtrStation(sta);
+              if (mtrDest === sta) setMtrDest('');
+            }}>
               {currentStations.map((row) => <option key={row[0]} value={row[0]}>{stationLabel(row)}</option>)}
             </select>
           </label>
-          <button className="btn mt-4" type="button" aria-label={t('mtrFind')} onClick={() => showMtr()}>{t('mtrFind')}</button>
+          <label className="block mt-3">
+            <span>{t('mtrDestLabel')}</span>
+            <select className="field mt-1" value={mtrDest} onChange={(e) => setMtrDest(e.target.value)}>
+              <option value="">{t('chooseRideDest')}</option>
+              {rideDestStations(currentLine, currentSta).map((row) => (
+                <option key={row[0]} value={row[0]}>{stationLabel(row)}</option>
+              ))}
+            </select>
+          </label>
+          <button className="btn btn-block mt-4" type="button" aria-label={t('mtrFind')} onClick={() => showMtr()}>{t('mtrFind')}</button>
           <div>
             {mtrResult ? (
               <>
                 {mtrResult.delayed ? <div className="note">{t('mtrDelayed')}</div> : null}
                 {(mtrResult.trains || []).length
                   ? mtrResult.trains.map((x, i) => {
-                    const wait = x.minutes != null ? x.minutes : mins(x.time);
+                    const wait = x.arrive ? (x.arriveMinutes ?? mins(x.arrive)) : (x.minutes != null ? x.minutes : mins(x.time));
                     const when = x.time ? clk(x.time) : '';
                     const plat = x.platform ? t('platform', x.platform) : '';
+                    const destName = loc(mtrResult.dest);
+                    const lineLabel = loc(x.lineName);
+                    const stopId = `mtr-${x.line || mtrLine}-${x.time}`;
                     return (
-                      <div className="item eta" key={`${loc(x.dest)}-${x.time}-${i}`}>
-                        <div>
-                          <b>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</b>
-                          {when || plat ? <div className="muted">{[when, plat].filter(Boolean).join(' · ')}</div> : null}
+                      <div className="item" key={`${x.line || ''}-${loc(x.dest)}-${x.time}-${i}`}>
+                        <div className="eta">
+                          <div>
+                            {destName && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}
+                            {lineLabel ? <span className="badge">{lineLabel}</span> : null}
+                            <b>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</b>
+                            {when || plat ? <div className="muted">{[when, plat].filter(Boolean).join(' · ')}{destName ? ` · ${t('rideDeparts')}` : ''}</div> : null}
+                            {x.arrive && destName ? (
+                              <div className="muted">{clk(x.arrive)} {t('rideArrives')}{lang === 'zh' ? '' : ' '}{destName}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
+                            ) : null}
+                            {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+                          </div>
+                          <span className="mins">{wait == null ? '' : t('minutes', wait)}</span>
                         </div>
-                        <span className="mins">{wait == null ? '' : t('minutes', wait)}</span>
+                        {renderStopTimes(stopId, x.stops, x.stops?.length > 1 ? null : () => loadMtrStops(x))}
                       </div>
                     );
                   })
-                  : <p className="muted">{t(mtrResult.emptyReason === 'unavailable' ? 'mtrUnavailable' : mtrResult.emptyReason === 'racecourse' ? 'mtrRacecourse' : mtrResult.emptyReason === 'empty' ? 'mtrEmptyLine' : 'noTrains')}</p>}
+                  : <p className="muted">{t(mtrResult.emptyReason === 'unavailable' ? 'mtrUnavailable' : mtrResult.emptyReason === 'racecourse' ? 'mtrRacecourse' : mtrResult.emptyReason === 'empty' ? 'mtrEmptyLine' : mtrResult.emptyReason === 'no_dest' ? 'mtrNoTrainToDest' : 'noTrains')}</p>}
                 <div className="row-actions">
                   <button className="tab" type="button" onClick={() => {
                     const line = lines[currentLineKey];
                     const sta = (line?.stations || []).find((row) => row[0] === currentSta);
+                    const destRow = (line?.stations || []).find((row) => row[0] === mtrDest);
                     saveHome({
                       type: 'mtr',
                       title: { zh: `${lineName(line)} · ${sta?.[1]}`, en: `${line?.name.en} · ${sta?.[2]}` },
-                      subtitle: { zh: t('nextTrains'), en: 'Next trains' },
-                      payload: { line: currentLineKey, station: currentSta }
+                      subtitle: destRow
+                        ? { zh: `${sta?.[1]} → ${destRow[1]}`, en: `${sta?.[2]} → ${destRow[2]}` }
+                        : { zh: t('nextTrains'), en: 'Next trains' },
+                      payload: { line: currentLineKey, station: currentSta, dest: mtrDest || undefined }
                     });
                   }}>{t('saveHome')}</button>
                 </div>

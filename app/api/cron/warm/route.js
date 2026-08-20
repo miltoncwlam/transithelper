@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 
-import { getDirectory } from '@/lib/directory.js';
+import { ensureCitybusStops } from '@/lib/directory.js';
+import { startGtfsLoad } from '@/lib/gtfs.js';
 import { json } from '@/lib/http.js';
 
 export async function GET(request) {
@@ -12,11 +13,14 @@ export async function GET(request) {
     }
   }
   try {
-    const directory = await getDirectory();
+    const directory = await ensureCitybusStops();
+    const gtfs = await startGtfsLoad();
     return json({
       ok: true,
       routes: directory.routes.length,
-      stops: directory.stops.length
+      stops: directory.stops.length,
+      citybusStops: directory.stops.filter((stop) => stop.co === 'CTB').length,
+      gtfsTrips: gtfs?.rows?.length || 0
     });
   } catch (error) {
     return json({ error: error.message }, 502);

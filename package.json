@@ -8,8 +8,11 @@
     "build": "next build",
     "start": "next start -p 3001",
     "smoke": "node scripts/smoke.mjs",
+    "import-td-bus": "node scripts/import-td-bus.mjs",
+    "import-bus-fares": "node scripts/import-bus-fares.mjs",
     "test": "playwright test",
-    "sync-i18n": "cp lib/i18n.js public/i18n.js"
+    "sync-i18n": "node scripts/sync-i18n.mjs",
+    "bundle-standalone": "node scripts/sync-i18n.mjs && node scripts/bundle-standalone.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

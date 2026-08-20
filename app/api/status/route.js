@@ -8,7 +8,10 @@ export async function GET() {
     const directory = await getDirectory();
     return json({
       routes: directory.routes.length,
-      stops: directory.stops.length
+      stops: directory.stops.length,
+      citybusStops: directory.stops.filter((stop) => stop.co === 'CTB').length,
+      fareRoutes: directory.routes.filter((row) => row.full_fare_hkd != null).length,
+      sectionFareRoutes: directory.routes.filter((row) => (row.section_prices || []).length > 1).length
     });
   } catch (error) {
     return json({ error: error.message, routes: 0, stops: 0 }, 502);
