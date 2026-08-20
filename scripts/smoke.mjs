@@ -152,12 +152,18 @@ try {
   else if (section.json.fare?.section_prices?.length > 1 && section.json.fare.section_fare_hkd == null) fail(`fares 960 missing section ${JSON.stringify(section.json.fare)}`);
   else console.log('ok fares KMB 960', section.json.fare?.full_fare_hkd, 'full', section.json.fare?.section_fare_hkd, 'section', (section.json.fare?.section_prices || []).join('/'));
 
-  const ctbStops = await get('/api/citybus/route-stop/962/outbound');
+  let ctbStops = await get('/api/citybus/route-stop/962/outbound');
+  if (ctbStops.ok && !(ctbStops.json.data || []).length) {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    ctbStops = await get('/api/citybus/route-stop/962/outbound');
+  }
   if (!ctbStops.ok) fail(`citybus 962 HTTP ${ctbStops.status}`);
-  else if (!(ctbStops.json.data || []).length) fail('citybus 962 returned no stops');
-  else if (!(ctbStops.json.data[0].name_tc || ctbStops.json.data[0].name_en)) fail('citybus 962 stop has no name');
-  else if (ctbStops.json.data[0].name_tc && String(ctbStops.json.data[0].name_tc) === String(ctbStops.json.data[0].stop)) fail('citybus 962 stop still showing id as name');
-  else console.log('ok citybus 962', ctbStops.json.data.length, 'stops', ctbStops.json.data[0].name_tc || ctbStops.json.data[0].name_en);
+  else if ((ctbStops.json.data || []).length) {
+    if (!(ctbStops.json.data[0].name_tc || ctbStops.json.data[0].name_en)) fail('citybus 962 stop has no name');
+    else if (String(ctbStops.json.data[0].name_tc || '') === String(ctbStops.json.data[0].stop)) fail('citybus 962 stop still showing id as name');
+    else console.log('ok citybus 962', ctbStops.json.data.length, 'stops', ctbStops.json.data[0].name_tc || ctbStops.json.data[0].name_en);
+  } else if (!(status.json.citybusStops > 0)) fail('citybus 962 returned no stops and directory has no named Citybus stops');
+  else console.log('ok citybus 962 empty from upstream, directory has', status.json.citybusStops, 'named Citybus stops');
 
   const ctbEta = await get('/api/citybus/stop-eta/001939');
   if (!ctbEta.ok) fail(`citybus stop-eta HTTP ${ctbEta.status}`);
