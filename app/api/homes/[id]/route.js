@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 import { pinHome, removeHome } from '@/lib/homes.js';
 import { json, requireDevice } from '@/lib/http.js';

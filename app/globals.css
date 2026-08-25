@@ -4,8 +4,8 @@ html {
 }
 
 body {
-  background: #f4f7f7;
-  color: #172033;
+  background: #f3f3f3;
+  color: #111;
   margin: 0;
   overflow-x: hidden;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
@@ -30,8 +30,8 @@ button {
 
 .card {
   background: #fff;
-  border: 1px solid #dce7e7;
-  border-radius: 18px;
+  border: 1px solid #d0d0d0;
+  border-radius: 14px;
   padding: 16px;
 }
 
@@ -39,8 +39,8 @@ button {
   width: 100%;
   min-height: 44px;
   padding: 12px;
-  border: 1px solid #cfdcdc;
-  border-radius: 12px;
+  border: 1px solid #c8c8c8;
+  border-radius: 10px;
   background: #fff;
   box-sizing: border-box;
   max-width: 100%;
@@ -48,7 +48,7 @@ button {
 
 select.field {
   appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%23172033' d='M1 1l5 5 5-5'/></svg>");
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%23111' d='M1 1l5 5 5-5'/></svg>");
   background-repeat: no-repeat;
   background-position: right 12px center;
   padding-right: 36px;
@@ -58,7 +58,7 @@ select.field {
 .tab {
   padding: 12px 14px;
   min-height: 44px;
-  border-radius: 12px;
+  border-radius: 10px;
   font-weight: 700;
   border: 0;
   cursor: pointer;
@@ -67,13 +67,13 @@ select.field {
 
 .btn,
 .tab.active {
-  background: #287d75;
+  background: #111;
   color: #fff;
 }
 
 .tab {
-  background: #e7eff0;
-  color: #172033;
+  background: #ececec;
+  color: #111;
 }
 
 .btn-block {
@@ -91,9 +91,9 @@ select.field {
 .item {
   margin-top: 10px;
   padding: 12px;
-  border: 1px solid #dce7e7;
-  border-radius: 12px;
-  background: #fbfcfc;
+  border: 1px solid #d4d4d4;
+  border-radius: 10px;
+  background: #fafafa;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -103,12 +103,18 @@ select.field {
   text-align: left;
 }
 
+.choice.selected {
+  border-color: #111;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #111;
+}
+
 .stop-map {
   height: 240px;
   margin-top: 12px;
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
-  border: 1px solid #dce7e7;
+  border: 1px solid #d0d0d0;
   z-index: 0;
 }
 
@@ -118,15 +124,15 @@ select.field {
 
 .muted {
   font-size: .9rem;
-  color: #64748b;
+  color: #5c5c5c;
 }
 
 .note {
   margin-top: 12px;
   padding: 12px;
-  border-radius: 12px;
-  background: #eef7f5;
-  color: #17675f;
+  border-radius: 10px;
+  background: #f0f0f0;
+  color: #111;
   overflow-wrap: anywhere;
 }
 
@@ -139,7 +145,7 @@ select.field {
 
 .mins {
   font-weight: 800;
-  color: #17675f;
+  color: #111;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -149,8 +155,8 @@ select.field {
   font-weight: 800;
   border-radius: 99px;
   padding: 3px 7px;
-  background: #e1f3ef;
-  color: #17675f;
+  background: #111;
+  color: #fff;
   display: inline-block;
 }
 
@@ -165,13 +171,62 @@ select.field {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 0;
-  border-top: 1px solid #dce7e7;
+  border-top: 1px solid #e0e0e0;
   font-size: .9rem;
 }
 
 .stop-times li span:last-child {
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+.route-board {
+  display: grid;
+  gap: 12px;
+}
+
+.stop-scan {
+  max-height: 280px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.stop-scan .item {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stop-num-inline {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 99px;
+  border: 1px solid #111;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .75rem;
+  font-weight: 800;
+}
+
+.tb-stop-num {
+  background: #fff;
+  border: 2px solid #111;
+  border-radius: 99px;
+  color: #111;
+  font-weight: 800;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+}
+
+.tb-stop-num.selected {
+  background: #111;
+  color: #fff;
 }
 
 .hidden {
@@ -322,5 +377,16 @@ h1 { overflow-wrap: anywhere; }
   }
   .card {
     padding: 18px;
+  }
+  .route-board {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+  .route-board .stop-map {
+    margin-top: 0;
+    height: 320px;
+  }
+  .stop-scan {
+    max-height: 320px;
   }
 }

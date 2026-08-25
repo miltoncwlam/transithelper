@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 import { cache } from '@/lib/directory.js';
 import { attachFaresToRoutes } from '@/lib/fares.js';

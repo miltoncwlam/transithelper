@@ -2,6 +2,8 @@
 
 Hong Kong live bus, minibus (GMB), and MTR helper. Default language is Traditional Chinese. Local development always uses port **3001**.
 
+**Transfer Buddy, stop-time calculation, Light Rail, and MTR** — copyable core lives in [`00-required/`](00-required/README.md) (`/Users/milton/TransitBuddy/00-required`). Zip that folder to use the same code elsewhere.
+
 ## Stage 1 — Run locally
 
 ```bash

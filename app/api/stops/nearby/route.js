@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
-import { cache, ensureNearbyStops } from '@/lib/directory.js';
+import { getDirectory } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
 import { nearestStops } from '@/lib/kmb.js';
 
@@ -14,7 +15,7 @@ export async function GET(request) {
     return json({ error: 'lat and lng are required' }, 400);
   }
   try {
-    const directory = await ensureNearbyStops();
+    const directory = await getDirectory();
     const data = nearestStops(directory.stops, lat, lng, radius, limit);
     return json({ data });
   } catch (error) {

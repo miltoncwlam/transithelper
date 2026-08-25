@@ -1,0 +1,14 @@
+{
+  "name": "transitbuddy-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Transfer Buddy, stop-time follow-along, MTR, and Light Rail — copy this folder to use elsewhere.",
+  "exports": {
+    ".": "./index.js",
+    "./*": "./*"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

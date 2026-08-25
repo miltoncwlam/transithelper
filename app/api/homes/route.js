@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 import { addHome, listHomes } from '@/lib/homes.js';
 import { json, requireDevice } from '@/lib/http.js';
@@ -17,5 +18,9 @@ export async function POST(request) {
   if (!type || !title || !payload) {
     return json({ error: 'type, title and payload are required' }, 400);
   }
-  return json({ data: await addHome(id, { type, title, subtitle, payload }) }, 201);
+  try {
+    return json({ data: await addHome(id, { type, title, subtitle, payload }) }, 201);
+  } catch (err) {
+    return json({ error: err.message || 'local_only', localOnly: true }, 503);
+  }
 }

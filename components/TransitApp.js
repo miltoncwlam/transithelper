@@ -67,7 +67,7 @@ function emptyReasonKey(reason) {
   if (reason === 'no_first_bus') return 'noFirstBus';
   if (reason === 'no_connection') return 'noConnection';
   if (reason === 'no_departure') return 'noDeparture';
-  if (reason === 'timeout') return 'timeout';
+  if (reason === 'timeout') return 'transferTimeout';
   if (reason === 'incomplete') return 'incomplete';
   if (reason === 'need_board') return 'needBoard';
   if (reason === 'empty' || reason === 'no_departure') return 'noLiveNow';
@@ -81,6 +81,33 @@ function readRecents() {
   } catch {
     return { routes: [], stops: [] };
   }
+}
+
+const HOMES_KEY = 'tb-homes';
+
+function readLocalHomes() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(HOMES_KEY) || '[]');
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalHomes(rows) {
+  try { localStorage.setItem(HOMES_KEY, JSON.stringify((rows || []).slice(0, 40))); } catch {}
+}
+
+function sortHomes(rows) {
+  return [...rows].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+}
+
+function mergeHomes(remote, local) {
+  const map = new Map();
+  for (const row of [...(local || []), ...(remote || [])]) {
+    if (row?.id) map.set(row.id, row);
+  }
+  return sortHomes([...map.values()]);
 }
 
 export default function TransitApp() {
@@ -137,6 +164,7 @@ export default function TransitApp() {
   const [firstFares, setFirstFares] = useState(null);
   const [recents, setRecents] = useState({ routes: [], stops: [] });
   const [standaloneHint, setStandaloneHint] = useState(false);
+  const [routeNearNote, setRouteNearNote] = useState('');
 
   const stopCache = useRef(new Map());
   const lastView = useRef(null);
@@ -181,8 +209,11 @@ export default function TransitApp() {
   }, [lang]);
 
   const api = useCallback(async (path, options = {}) => {
+    const { timeoutMs: givenTimeout, ...fetchOpts } = options;
+    const heavy = path.startsWith('/api/transfer') || path.startsWith('/api/ride');
+    const timeoutMs = givenTimeout || (heavy ? 30000 : 12000);
     const ctrl = new AbortController();
-    const kill = setTimeout(() => ctrl.abort(), 12000);
+    const kill = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const res = await fetch(`${API_BASE}${path}`, {
         cache: 'no-store',
@@ -190,16 +221,23 @@ export default function TransitApp() {
         headers: {
           Accept: 'application/json',
           'X-Device-Id': deviceId(),
-          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-          ...(options.headers || {})
+          ...(fetchOpts.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(fetchOpts.headers || {})
         },
-        ...options
+        ...fetchOpts
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || t('none'));
+      if (!res.ok) {
+        const err = new Error(json.error || t('none'));
+        err.status = res.status;
+        err.payload = json;
+        throw err;
+      }
       return json;
     } catch (error) {
-      if (error.name === 'AbortError') throw new Error(t('timeout'));
+      if (error.name === 'AbortError') {
+        throw new Error(path.startsWith('/api/transfer') ? t('transferTimeout') : t('timeout'));
+      }
       throw error;
     } finally {
       clearTimeout(kill);
@@ -433,6 +471,7 @@ export default function TransitApp() {
     setArrivalTimes(null);
     setFetchedStops({});
     setOpenStopKey(null);
+    setRouteNearNote('');
     setArrivalGroups(groups(await fetchStops(s)));
     try {
       const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
@@ -466,6 +505,93 @@ export default function TransitApp() {
     }
     lastView.current = 'a';
   }, [api, arrivalDestIndex]);
+
+  const chooseArrivalStop = useCallback(async (index, destIndex) => {
+    const v = String(index);
+    setArrivalStopIndex(v);
+    let dest = destIndex === undefined ? arrivalDestIndex : destIndex;
+    if (dest !== '' && (v === '' || +dest <= +v)) {
+      dest = '';
+      setArrivalDestIndex('');
+    } else if (destIndex !== undefined) {
+      setArrivalDestIndex(String(dest));
+    }
+    if (v === '' || !arrivalService) return;
+    const g = arrivalGroups[+v];
+    const seq = g?.stops?.[0]?.seq;
+    try {
+      const qs = new URLSearchParams({ route: arrivalService.route, co: serviceCo(arrivalService), bound: arrivalService.bound || '' });
+      if (seq) qs.set('on', String(seq));
+      const json = await api(`/api/fares?${qs}`);
+      setArrivalFares(json.fare || null);
+    } catch {}
+    await showArrival(arrivalService, arrivalGroups, v, dest);
+  }, [api, arrivalDestIndex, arrivalGroups, arrivalService, showArrival]);
+
+  async function swapArrivalBound() {
+    if (!arrivalService) return;
+    const co = serviceCo(arrivalService);
+    const flipped = (routes || []).find((row) => {
+      if (String(row.route).toUpperCase() !== String(arrivalService.route).toUpperCase()) return false;
+      if (serviceCo(row) !== co) return false;
+      if (co === 'GMB') {
+        return String(row.gmb_route_id) === String(arrivalService.gmb_route_id)
+          && String(row.gmb_route_seq || '') !== String(arrivalService.gmb_route_seq || '');
+      }
+      if (co === 'NLB') {
+        return String(row.nlb_route_id) === String(arrivalService.nlb_route_id) && row.bound !== arrivalService.bound;
+      }
+      return String(row.service_type || '1') === String(arrivalService.service_type || '1') && row.bound !== arrivalService.bound;
+    }) || {
+      ...arrivalService,
+      bound: arrivalService.bound === 'I' ? 'O' : 'I',
+      orig_en: arrivalService.dest_en,
+      dest_en: arrivalService.orig_en,
+      orig_tc: arrivalService.dest_tc,
+      dest_tc: arrivalService.orig_tc
+    };
+    setRouteNearNote('');
+    await pickArrival(flipped);
+  }
+
+  function findNearestOnRoute() {
+    if (!arrivalGroups.length) return;
+    if (!navigator.geolocation) {
+      setRouteNearNote(t('geoDenied'));
+      return;
+    }
+    setRouteNearNote('');
+    navigator.geolocation.getCurrentPosition((pos) => {
+      let best = -1;
+      let bestD = Infinity;
+      arrivalGroups.forEach((g, i) => {
+        const stop = g.stops?.[0];
+        const lat = Number(stop?.lat);
+        const lng = Number(stop?.long);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        const d = Math.hypot((lat - pos.coords.latitude) * 111000, (lng - pos.coords.longitude) * 102000);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      });
+      if (best < 0) {
+        setRouteNearNote(t('noStops'));
+        return;
+      }
+      chooseArrivalStop(best, '');
+    }, () => setRouteNearNote(t('geoDenied')), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+  }
+
+  const routeMapStops = useMemo(() => (
+    arrivalGroups.map((g, i) => {
+      const stop = g.stops?.[0];
+      const lat = Number(stop?.lat);
+      const lng = Number(stop?.long);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { ...stop, lat, lng, long: lng, seq: i + 1, index: i };
+    }).filter(Boolean)
+  ), [arrivalGroups]);
 
   const pickFirst = useCallback(async (s, restore = {}) => {
     setFirstService(s);
@@ -771,9 +897,10 @@ export default function TransitApp() {
   }
 
   const renderHome = useCallback(async () => {
+    const local = readLocalHomes();
     try {
       const json = await api('/api/homes');
-      const rows = json.data || [];
+      const rows = mergeHomes(json.data || [], local);
       setHomes(rows);
       setHomeError('');
       if (!homeOpened.current && rows.length) {
@@ -781,13 +908,34 @@ export default function TransitApp() {
         setTab('home');
       }
     } catch (error) {
-      setHomeError(error.message);
+      const rows = sortHomes(local);
+      setHomes(rows);
+      setHomeError(rows.length ? '' : error.message);
+      if (!homeOpened.current && rows.length) {
+        homeOpened.current = true;
+        setTab('home');
+      }
     }
   }, [api]);
 
   async function saveHome(item) {
-    await api('/api/homes', { method: 'POST', body: JSON.stringify(item) });
+    const localRow = {
+      id: `local-${crypto.randomUUID()}`,
+      createdAt: new Date().toISOString(),
+      pinned: false,
+      ...item
+    };
+    writeLocalHomes([localRow, ...readLocalHomes().filter((row) => JSON.stringify(row.payload) !== JSON.stringify(item.payload))]);
     setTab('home');
+    try {
+      const json = await api('/api/homes', { method: 'POST', body: JSON.stringify(item) });
+      if (json.data?.id) {
+        writeLocalHomes([json.data, ...readLocalHomes().filter((row) => row.id !== localRow.id && row.id !== json.data.id)]);
+      }
+      setHomeError('');
+    } catch {
+      setHomeError(t('homeSaveLocal'));
+    }
     renderHome();
   }
 
@@ -1320,31 +1468,51 @@ export default function TransitApp() {
           <div>{renderChoiceList(arrivalChoices, pickArrival)}</div>
           {arrivalService ? (
             <>
-              <select className="field mt-3" value={arrivalStopIndex} onChange={async (e) => {
-                const v = e.target.value;
-                setArrivalStopIndex(v);
-                let dest = arrivalDestIndex;
-                if (dest !== '' && (v === '' || +dest <= +v)) {
-                  dest = '';
-                  setArrivalDestIndex('');
-                }
-                if (v !== '' && arrivalService) {
-                  const g = arrivalGroups[+v];
-                  const seq = g?.stops?.[0]?.seq;
-                  try {
-                    const qs = new URLSearchParams({ route: arrivalService.route, co: serviceCo(arrivalService), bound: arrivalService.bound || '' });
-                    if (seq) qs.set('on', String(seq));
-                    const json = await api(`/api/fares?${qs}`);
-                    setArrivalFares(json.fare || null);
-                  } catch {}
-                }
-                await showArrival(arrivalService, arrivalGroups, v, dest);
-              }}>
-                <option value="">{t('chooseStop')}</option>
-                {arrivalGroups.map((g, i) => (
-                  <option key={g.label + i} value={i}>{fareLabel(g, terminusFareForGroup(arrivalFares, g))}</option>
-                ))}
-              </select>
+              <h3 className="font-bold mt-3">{coLabel(arrivalService)} {arrivalService.route}</h3>
+              <div className="muted">{rn(arrivalService)}</div>
+              <div className="row-actions">
+                <button className="tab" type="button" onClick={swapArrivalBound}>{t('reverseBound')}</button>
+                <button className="tab" type="button" onClick={findNearestOnRoute}>{t('nearestStop')}</button>
+              </div>
+              {routeNearNote ? <p className="muted">{routeNearNote}</p> : null}
+              {routeMapStops.length >= 2 ? (
+                <div className="route-board mt-3">
+                  <StopMap
+                    mode="route"
+                    center={[routeMapStops[0].lat, routeMapStops[0].lng]}
+                    routeStops={routeMapStops}
+                    selectedIndex={arrivalStopIndex}
+                    onPick={(stop) => chooseArrivalStop(stop.index, '')}
+                  />
+                  <div className="stop-scan">
+                    {arrivalGroups.map((g, i) => (
+                      <button
+                        key={g.label + i}
+                        className={`item choice${arrivalStopIndex === String(i) ? ' selected' : ''}`}
+                        type="button"
+                        onClick={() => chooseArrivalStop(i, '')}
+                      >
+                        <span className="stop-num-inline">{i + 1}</span>
+                        {fareLabel(g, terminusFareForGroup(arrivalFares, g))}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="stop-scan mt-3">
+                  {arrivalGroups.map((g, i) => (
+                    <button
+                      key={g.label + i}
+                      className={`item choice${arrivalStopIndex === String(i) ? ' selected' : ''}`}
+                      type="button"
+                      onClick={() => chooseArrivalStop(i, '')}
+                    >
+                      <span className="stop-num-inline">{i + 1}</span>
+                      {fareLabel(g, terminusFareForGroup(arrivalFares, g))}
+                    </button>
+                  ))}
+                </div>
+              )}
               {arrivalStopIndex !== '' ? (
                 <label className="block mt-3">
                   <span>{t('rideDestLabel')}</span>
@@ -1750,7 +1918,7 @@ export default function TransitApp() {
           <p className="muted">{t('homeHelp')}</p>
           <div>
             {homeError ? <div className="note">{homeError}</div> : null}
-            {!homeError && !homes.length ? <p className="muted mt-3">{t('homeEmpty')}</p> : null}
+            {!homes.length ? <p className="muted mt-3">{t('homeEmpty')}</p> : null}
             {homes.map((item) => (
               <div className="item" key={item.id}>
                 <b>{loc(item.title)}</b>
@@ -1759,11 +1927,18 @@ export default function TransitApp() {
                 <div className="row-actions">
                   <button className="btn" type="button" onClick={() => openHome(item)}>{t('open')}</button>
                   <button className="tab" type="button" onClick={async () => {
-                    await api(`/api/homes/${item.id}`, { method: 'PATCH', body: JSON.stringify({ pinned: !item.pinned }) });
+                    const nextPinned = !item.pinned;
+                    writeLocalHomes(readLocalHomes().map((row) => row.id === item.id ? { ...row, pinned: nextPinned } : row));
+                    try {
+                      await api(`/api/homes/${item.id}`, { method: 'PATCH', body: JSON.stringify({ pinned: nextPinned }) });
+                    } catch {}
                     renderHome();
                   }}>{item.pinned ? t('unpin') : t('pin')}</button>
                   <button className="tab" type="button" onClick={async () => {
-                    await api(`/api/homes/${item.id}`, { method: 'DELETE' });
+                    writeLocalHomes(readLocalHomes().filter((row) => row.id !== item.id));
+                    try {
+                      await api(`/api/homes/${item.id}`, { method: 'DELETE' });
+                    } catch {}
                     renderHome();
                   }}>{t('remove')}</button>
                 </div>

@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
-import { ensureNearbyStops } from '@/lib/directory.js';
+import { warmDirectory } from '@/lib/directory.js';
 import { startGtfsLoad } from '@/lib/gtfs.js';
 import { json } from '@/lib/http.js';
 
@@ -13,13 +14,14 @@ export async function GET(request) {
     }
   }
   try {
-    const directory = await ensureNearbyStops();
+    const directory = await warmDirectory();
     const gtfs = await startGtfsLoad();
     return json({
       ok: true,
       routes: directory.routes.length,
       stops: directory.stops.length,
       citybusStops: directory.stops.filter((stop) => stop.co === 'CTB').length,
+      gmbStops: directory.stops.filter((stop) => stop.co === 'GMB').length,
       gtfsTrips: gtfs?.rows?.length || 0
     });
   } catch (error) {
