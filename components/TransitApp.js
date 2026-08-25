@@ -875,32 +875,53 @@ export default function TransitApp() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const [routeJson, stopJson, lineJson] = await Promise.all([
-          api('/api/kmb/routes'),
-          api('/api/kmb/stops'),
-          api('/api/mtr/lines')
-        ]);
-        if (cancelled) return;
-        const nextRoutes = routeJson.data || [];
-        setRoutes(nextRoutes);
-        setStops(stopJson.data || []);
-        setLines(lineJson.data || {});
-        setDirCount(nextRoutes.length ? nextRoutes.length : -1);
-        setTimeout(async () => {
-          if (cancelled) return;
-          try {
-            const later = await api('/api/kmb/stops');
-            const nextStops = later.data || [];
-            if (nextStops.length > (stopJson.data || []).length) setStops(nextStops);
-          } catch {}
-        }, 12000);
-      } catch (error) {
-        if (!cancelled) {
-          setDirCount(-1);
-          const network = error?.name === 'TypeError' || /fetch|network|Failed to fetch|Load failed/i.test(String(error?.message || ''));
-          setOffline(network);
+      const headers = { Accept: 'application/json', 'X-Device-Id': deviceId() };
+      async function pull(path, ms) {
+        const ctrl = new AbortController();
+        const kill = setTimeout(() => ctrl.abort(), ms);
+        try {
+          const res = await fetch(`${API_BASE}${path}`, { cache: 'no-store', signal: ctrl.signal, headers });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(json.error || 'fail');
+          return json;
+        } finally {
+          clearTimeout(kill);
         }
+      }
+      let lastError;
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt += 1) {
+        try {
+          const [routeJson, stopJson, lineJson] = await Promise.all([
+            pull('/api/kmb/routes', 25000),
+            pull('/api/kmb/stops', 25000),
+            pull('/api/mtr/lines', 25000)
+          ]);
+          if (cancelled) return;
+          const nextRoutes = routeJson.data || [];
+          setRoutes(nextRoutes);
+          setStops(stopJson.data || []);
+          setLines(lineJson.data || {});
+          setDirCount(nextRoutes.length ? nextRoutes.length : -1);
+          setOffline(false);
+          setTimeout(async () => {
+            if (cancelled) return;
+            try {
+              const later = await pull('/api/kmb/stops', 25000);
+              const nextStops = later.data || [];
+              if (nextStops.length > (stopJson.data || []).length) setStops(nextStops);
+            } catch {}
+          }, 12000);
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = error;
+          await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+        }
+      }
+      if (lastError && !cancelled) {
+        setDirCount(-1);
+        const network = lastError?.name === 'TypeError' || /fetch|network|Failed to fetch|Load failed/i.test(String(lastError?.message || ''));
+        setOffline(network);
       }
       if (!cancelled) renderHome();
     })();
