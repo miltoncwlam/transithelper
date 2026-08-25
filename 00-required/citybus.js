@@ -150,6 +150,20 @@ export async function citybusStop(cache, stopId) {
   }
 }
 
+export async function citybusRouteStopSeq(cache, service) {
+  const dir = service.bound === 'I' ? 'inbound' : 'outbound';
+  try {
+    const rows = await cityFetch(
+      `/route-stop/CTB/${encodeURIComponent(service.route)}/${dir}`,
+      cache,
+      ROUTE_STOP_TTL
+    );
+    return [...(rows || [])].sort((a, b) => a.seq - b.seq);
+  } catch {
+    return [];
+  }
+}
+
 export async function citybusRouteStops(cache, service, stopMap) {
   const dir = service.bound === 'I' ? 'inbound' : 'outbound';
   try {

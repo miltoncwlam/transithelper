@@ -271,12 +271,27 @@ try {
     console.log('ok directory companies', [...cos].sort().join(','), rows.length, 'services');
   }
 
+  async function checkSearch(route, expectCo, maxMs) {
+    const t0 = Date.now();
+    const res = await get(`/api/search-live?route=${encodeURIComponent(route)}`);
+    const ms = Date.now() - t0;
+    const keep = res.json.keep || [];
+    const cos = keep.map((z) => String(z.service?.co || '').toUpperCase());
+    if (!res.ok) fail(`search-live ${route} HTTP ${res.status} ${JSON.stringify(res.json)}`);
+    else if (!cos.includes(expectCo)) fail(`search-live ${route} missing ${expectCo} in ${cos.join(',') || 'empty'} ${JSON.stringify(keep.map((z) => z.service?.route))}`);
+    else if (ms > maxMs) fail(`search-live ${route} too slow ${ms}ms`);
+    else console.log('ok search-live', route, ms + 'ms', keep.length, 'choices', [...new Set(cos)].join(','));
+  }
+  await checkSearch('1', 'NLB', 12000);
+  await checkSearch('3M', 'NLB', 12000);
+  await checkSearch('A35', 'NLB', 12000);
+
   async function checkLine(label, body, expectColor) {
     const res = await fetch(BASE + '/api/route-line', {
       method: 'POST',
       headers: { 'X-Device-Id': 'smoke-device', Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(90000)
+      signal: AbortSignal.timeout(20000)
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) fail(`route-line ${label} HTTP ${res.status} ${JSON.stringify(json)}`);
@@ -284,7 +299,17 @@ try {
     else if (json.source !== 'straight' && !(json.coords || []).length) fail(`route-line ${label} empty coords for ${json.source}`);
     else if (json.source === 'straight' && (body.stops || []).length >= 2 && (json.coords || []).length < 2) fail(`route-line ${label} straight missing stop polyline`);
     else if (expectColor && json.color !== expectColor) fail(`route-line ${label} color ${json.color} != ${expectColor}`);
-    else console.log('ok route-line', label, json.source, (json.coords || []).length, 'pts', json.color);
+    else {
+      const coords = json.coords || [];
+      let jump = 0;
+      for (let i = 1; i < coords.length; i += 1) {
+        const a = coords[i - 1];
+        const b = coords[i];
+        jump = Math.max(jump, Math.hypot((a[0] - b[0]) * 111000, (a[1] - b[1]) * 102000));
+      }
+      if (json.source !== 'straight' && jump > 2500) fail(`route-line ${label} jump ${Math.round(jump)}m via ${json.source}`);
+      else console.log('ok route-line', label, json.source, coords.length, 'pts', json.color, 'maxJump', Math.round(jump) + 'm');
+    }
   }
 
   const kmbLineStops = (stopRows || []).slice(0, 8).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => p.lat && p.lng);
@@ -307,7 +332,7 @@ try {
     stops: ctbLineStops
   }, '#F5C400');
 
-  const nlbLineStops = ((nlbStops.json.data || []).slice(0, 8)).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
+  const nlbLineStops = ((nlbStops.json.data || [])).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
   await checkLine('NLB 1', {
     route: '1',
     co: 'NLB',

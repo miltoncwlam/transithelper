@@ -221,7 +221,7 @@ async function gmbStopCoords(cache, stopId) {
   }
 }
 
-export async function gmbRouteStops(cache, service) {
+export async function gmbRouteStops(cache, service, opts = {}) {
   if (!service?.gmb_route_id || !service?.gmb_route_seq) return [];
   try {
     const data = await gmbGet(
@@ -239,6 +239,7 @@ export async function gmbRouteStops(cache, service) {
       long: row.long || row.lng,
       co: 'GMB'
     }));
+    if (opts.skipCoords) return mapped;
     await mapPool(mapped, 8, async (row) => {
       if (Number.isFinite(Number(row.lat)) && Number.isFinite(Number(row.long))) return row;
       const coords = await gmbStopCoords(cache, row.stop);

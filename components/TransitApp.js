@@ -6,7 +6,6 @@ import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/a
 import { I18N } from '../lib/i18n.js';
 import { pickFollowedTrain } from '../lib/mtr.js';
 import { lineColorForCo } from '../lib/routeColors.js';
-import { collectMatchingServices, sortLiveChoices } from '../lib/routeSearch.js';
 import { clusterOppositeStops } from '../lib/stopCluster.js';
 import { displayStopName } from '../lib/stopName.js';
 import StopMap from './StopMap.js';
@@ -64,14 +63,6 @@ function servicePlaceKey(x, side) {
   const tc = side === 'orig' ? (x.orig_tc || x.orig_en) : (x.dest_tc || x.dest_en);
   const en = side === 'orig' ? (x.orig_en || x.orig_tc) : (x.dest_en || x.dest_tc);
   return stopNameKey({ name_tc: tc, name_en: en });
-}
-
-function isShortWorking(shortSeq, fullSeq) {
-  if (!shortSeq?.length || !fullSeq?.length) return false;
-  if (shortSeq.length >= fullSeq.length * 0.92) return false;
-  const fullKeys = new Set(fullSeq.map(stopNameKey));
-  const hits = shortSeq.filter((s) => fullKeys.has(stopNameKey(s))).length;
-  return hits >= Math.max(3, Math.ceil(shortSeq.length * 0.85));
 }
 
 function cluster(a) {
@@ -282,10 +273,6 @@ export default function TransitApp() {
     return [...m.values()].map((g) => ({ ...g, label: areaName(g.stops[0]) }));
   }
 
-  function matchBusServices(r) {
-    return collectMatchingServices(routes, r);
-  }
-
   async function fetchStops(s) {
     const k = [serviceCo(s), s.route, s.bound, s.service_type, s.gmb_route_id || '', s.gmb_route_seq || '', s.nlb_route_id || ''].join('|');
     if (stopCache.current.has(k)) return stopCache.current.get(k);
@@ -386,99 +373,24 @@ export default function TransitApp() {
     }
   }
 
-  function destName(x) {
-    return lang === 'zh' ? (x.dest_tc || x.dest_en || '') : (x.dest_en || x.dest_tc || '');
-  }
-
-  function mergeLiveChoices(keep) {
-    const byJourney = new Map();
-    for (const z of keep) {
-      const k = serviceCo(z.x) === 'GMB'
-        ? ['GMB', n(z.x.route), servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest'), z.x.gmb_region || '', z.x.gmb_route_id || ''].join('|')
-        : serviceCo(z.x) === 'NLB'
-          ? ['NLB', n(z.x.route), z.x.nlb_route_id || '', servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|')
-          : ['BUS', n(z.x.route), z.x.bound, servicePlaceKey(z.x, 'orig'), servicePlaceKey(z.x, 'dest')].join('|');
-      if (!byJourney.has(k)) byJourney.set(k, []);
-      byJourney.get(k).push(z);
-    }
-    const journeys = [];
-    for (const list of byJourney.values()) {
-      const ranked = list.slice().sort((a, b) => {
-        const aKmb = serviceCo(a.x) !== 'CTB' && serviceCo(a.x) !== 'GMB' && serviceCo(a.x) !== 'NLB' ? 1 : 0;
-        const bKmb = serviceCo(b.x) !== 'CTB' && serviceCo(b.x) !== 'GMB' && serviceCo(b.x) !== 'NLB' ? 1 : 0;
-        return (b.live.length - a.live.length) || (b.seq.length - a.seq.length) || (bKmb - aKmb);
-      });
-      const best = ranked[0];
-      journeys.push({
-        ...best,
-        companies: [...new Set(list.map((z) => serviceCo(z.x)))],
-        live: list.flatMap((z) => z.live)
-      });
-    }
-    const byRouteBound = new Map();
-    for (const z of journeys) {
-      const k = [serviceCo(z.x) === 'GMB' ? 'GMB' : serviceCo(z.x) === 'NLB' ? 'NLB' : 'BUS', n(z.x.route), z.x.bound, z.x.gmb_route_id || z.x.nlb_route_id || ''].join('|');
-      if (!byRouteBound.has(k)) byRouteBound.set(k, []);
-      byRouteBound.get(k).push(z);
-    }
-    const out = [];
-    for (const list of byRouteBound.values()) {
-      const sorted = list.slice().sort((a, b) => b.seq.length - a.seq.length);
-      const used = new Set();
-      for (let i = 0; i < sorted.length; i += 1) {
-        if (used.has(i)) continue;
-        const full = sorted[i];
-        const shortDests = [];
-        for (let j = i + 1; j < sorted.length; j += 1) {
-          if (used.has(j)) continue;
-          if (isShortWorking(sorted[j].seq, full.seq)) {
-            used.add(j);
-            const name = destName(sorted[j].x);
-            if (name) shortDests.push(name);
-          }
-        }
-        out.push({ ...full, shortDests });
-      }
-    }
-    return out;
-  }
-
   async function loadChoices(routeStr) {
-    let rows = matchBusServices(routeStr).filter((x) => serviceCo(x) !== 'GMB' || x.gmb_route_id);
+    const q = n(routeStr);
+    if (q) pushRecent('routes', q);
+    if (!q) return { error: 'noRoute' };
     try {
-      const json = await api(`/api/gmb/lookup?route=${encodeURIComponent(n(routeStr))}`);
-      const extra = json.data || [];
-      const seen = new Set(rows.map((x) => String(x.gmb_route_id || '')));
-      for (const row of extra) {
-        if (row.gmb_route_id && seen.has(String(row.gmb_route_id))) continue;
-        rows.push(row);
-        if (row.gmb_route_id) seen.add(String(row.gmb_route_id));
-      }
-    } catch {}
-    if (n(routeStr)) pushRecent('routes', n(routeStr));
-    if (!rows.length) return { error: 'noRoute' };
-    const info = await Promise.all(rows.map(async (x) => {
-      let seq = [];
-      let live = [];
-      try { seq = await fetchStops(x); } catch {}
-      try { live = await routeLive(x, seq); } catch {}
-      return { x, live, seq };
-    }));
-    const keep = info.filter((z) => z.live.length > 0 && z.seq.length);
-    if (!keep.length) return { error: info.some((z) => z.seq.length) ? 'noLiveNow' : 'routeUnavailable' };
-    const merged = mergeLiveChoices(keep);
-    const payloadKeep = sortLiveChoices(routeStr, merged.map((z) => ({
-      service: z.x,
-      live: z.live,
-      companies: z.companies,
-      shortDests: z.shortDests || [],
-      note: (z.shortDests || []).length ? t('shortWorking', z.shortDests.join(lang === 'zh' ? '、' : ', ')) : '',
-      hasVariants: false
-    })));
-    return {
-      keep: payloadKeep,
-      auto: payloadKeep.length === 1 ? payloadKeep[0].service : null
-    };
+      const json = await api(`/api/search-live?route=${encodeURIComponent(q)}`, { timeoutMs: 16000 });
+      if (json.error && !(json.keep || []).length) return { error: json.error };
+      const keep = (json.keep || []).map((z) => ({
+        ...z,
+        note: z.note || (z.live?.length ? '' : t('noLiveNow'))
+      }));
+      return {
+        keep,
+        auto: keep.length === 1 ? keep[0].service : json.auto || null
+      };
+    } catch {
+      return { error: 'timeout' };
+    }
   }
 
   const pickArrival = useCallback(async (s) => {
@@ -494,10 +406,20 @@ export default function TransitApp() {
     const seq = await fetchStops(s);
     setArrivalGroups(groups(seq));
     const lineId = ++routeLineSeq.current;
-    setRouteLine({ loading: true });
+    const straight = (seq || []).map((stop) => {
+      const lat = Number(stop.lat);
+      const lng = Number(stop.lng ?? stop.long);
+      return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+    }).filter(Boolean);
+    setRouteLine({
+      loading: true,
+      coords: straight,
+      source: 'straight',
+      color: lineColorForCo(serviceCo(s))
+    });
     api('/api/route-line', {
       method: 'POST',
-      timeoutMs: 28000,
+      timeoutMs: 12000,
       body: JSON.stringify({
         route: s.route,
         co: serviceCo(s),
@@ -507,9 +429,13 @@ export default function TransitApp() {
         stops: (seq || []).map((stop) => ({ lat: stop.lat, lng: stop.lng ?? stop.long }))
       })
     }).then((json) => {
-      if (lineId === routeLineSeq.current) setRouteLine(json);
+      if (lineId !== routeLineSeq.current) return;
+      if ((json.coords || []).length >= 2) setRouteLine(json);
+      else setRouteLine({ coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
     }).catch(() => {
-      if (lineId === routeLineSeq.current) setRouteLine({ coords: [], source: 'straight' });
+      if (lineId === routeLineSeq.current) {
+        setRouteLine({ coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
+      }
     });
     try {
       const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
@@ -1371,7 +1297,7 @@ export default function TransitApp() {
     return (
       <>
         {payload.keep.map((z, i) => (
-          <button key={`${z.service.co || 'KMB'}-${z.service.route}-${z.service.bound}-${z.service.service_type}-${z.service.gmb_route_id || ''}-${i}`} className={`item choice pg-choice ${coTone(z.service, z.companies)}`} type="button" onClick={() => onPick(z.service)}>
+          <button key={`${z.service.co || 'KMB'}-${z.service.route}-${z.service.bound}-${z.service.service_type}-${z.service.gmb_route_id || z.service.nlb_route_id || ''}-${i}`} className={`item choice pg-choice ${coTone(z.service, z.companies)}`} type="button" onClick={() => onPick(z.service)}>
             <span className="badge">{coLabel(z.service, z.companies)}</span> <b>{z.service.route}</b>
             <div>{rn(z.service)}</div>
             {fareNote(z.service)}

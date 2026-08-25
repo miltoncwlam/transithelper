@@ -30,13 +30,16 @@ test('product tabs stay available', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /我的回家路線|My travel home/ }).first()).toBeVisible();
 });
 
-test('search route 1 lists a live operator', async ({ page }) => {
-  test.setTimeout(120000);
+test('search lists NLB 1 and 3M', async ({ page }) => {
+  test.setTimeout(90000);
   await page.goto('/');
   await expect(page.locator('.note')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 30000 });
   await page.locator('.panel.active').getByLabel(/路線，例如|Route, for example/).fill('1');
   await page.locator('.panel.active').getByRole('button', { name: /^查詢$|^Find$/ }).click();
-  await expect(page.locator('.panel.active')).toContainText(/九巴|城巴|嶼巴|專線小巴|KMB|Citybus|NLB|Minibus|現時未有班次|no live/i, { timeout: 45000 });
+  await expect(page.getByRole('button', { name: /嶼巴 1|NLB 1/ }).first()).toBeVisible({ timeout: 20000 });
+  await page.locator('.panel.active').getByLabel(/路線，例如|Route, for example/).fill('3M');
+  await page.locator('.panel.active').getByRole('button', { name: /^查詢$|^Find$/ }).click();
+  await expect(page.getByRole('button', { name: /嶼巴 3M|NLB 3M/ }).first()).toBeVisible({ timeout: 20000 });
 });
 
 test('playground lists KMB Citybus NLB and draws a map', async ({ page }) => {

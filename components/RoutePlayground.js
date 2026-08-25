@@ -129,20 +129,32 @@ export default function RoutePlayground() {
         return { ...stop, lat, lng, long: lng, seq: i + 1, index: i };
       }).filter(Boolean);
       setRouteStops(mapped);
-      const json = await fetch('/api/route-line', {
-        method: 'POST',
-        cache: 'no-store',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          route: s.route,
-          co: serviceCo(s),
-          bound: s.bound || '',
-          orig: s.orig_tc || s.orig_en || '',
-          dest: s.dest_tc || s.dest_en || '',
-          stops: mapped.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
-        })
-      }).then((r) => r.json());
-      setLine(json);
+      const straight = mapped.map((stop) => [stop.lat, stop.lng]);
+      setLine({ loading: true, coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
+      const ctrl = new AbortController();
+      const kill = setTimeout(() => ctrl.abort(), 12000);
+      try {
+        const json = await fetch('/api/route-line', {
+          method: 'POST',
+          cache: 'no-store',
+          signal: ctrl.signal,
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            route: s.route,
+            co: serviceCo(s),
+            bound: s.bound || '',
+            orig: s.orig_tc || s.orig_en || '',
+            dest: s.dest_tc || s.dest_en || '',
+            stops: mapped.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
+          })
+        }).then((r) => r.json());
+        setLine((json.coords || []).length >= 2 ? json : { coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
+      } catch {
+        setLine({ coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
+        setNote(t('routeUnavailable'));
+      } finally {
+        clearTimeout(kill);
+      }
     } catch {
       setLine({ coords: [], source: 'straight' });
       setNote(t('routeUnavailable'));
