@@ -302,17 +302,26 @@ try {
     else {
       const coords = json.coords || [];
       let jump = 0;
+      let len = 0;
       for (let i = 1; i < coords.length; i += 1) {
         const a = coords[i - 1];
         const b = coords[i];
-        jump = Math.max(jump, Math.hypot((a[0] - b[0]) * 111000, (a[1] - b[1]) * 102000));
+        const d = Math.hypot((a[0] - b[0]) * 111000, (a[1] - b[1]) * 102000);
+        jump = Math.max(jump, d);
+        len += d;
+      }
+      let chain = 0;
+      const stops = body.stops || [];
+      for (let i = 1; i < stops.length; i += 1) {
+        chain += Math.hypot((stops[i].lat - stops[i - 1].lat) * 111000, (stops[i].lng - stops[i - 1].lng) * 102000);
       }
       if (json.source !== 'straight' && jump > 2500) fail(`route-line ${label} jump ${Math.round(jump)}m via ${json.source}`);
-      else console.log('ok route-line', label, json.source, coords.length, 'pts', json.color, 'maxJump', Math.round(jump) + 'm');
+      else if (json.source !== 'straight' && chain > 400 && len > chain * 2.55 + 900) fail(`route-line ${label} detour ${Math.round(len)}m vs stops ${Math.round(chain)}m`);
+      else console.log('ok route-line', label, json.source, coords.length, 'pts', json.color, 'maxJump', Math.round(jump) + 'm', 'ratio', chain ? (len / chain).toFixed(2) : 'n/a');
     }
   }
 
-  const kmbLineStops = (stopRows || []).slice(0, 8).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => p.lat && p.lng);
+  const kmbLineStops = (stopRows || []).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => p.lat && p.lng);
   await checkLine('KMB 1', {
     route: '1',
     co: 'KMB',
@@ -322,7 +331,17 @@ try {
     stops: kmbLineStops
   }, '#E1251B');
 
-  const ctbLineStops = ((ctb1.json.data || []).slice(0, 8)).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
+  const kmbInStops = ((kmbIn.json.data || [])).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => p.lat && p.lng);
+  await checkLine('KMB 1 inbound', {
+    route: '1',
+    co: 'KMB',
+    bound: 'I',
+    orig: (kmbIn.json.data || [])[0]?.name_tc || '',
+    dest: (kmbIn.json.data || []).at(-1)?.name_tc || '',
+    stops: kmbInStops
+  }, '#E1251B');
+
+  const ctbLineStops = ((ctb1.json.data || [])).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
   await checkLine('CTB 1', {
     route: '1',
     co: 'CTB',
@@ -342,7 +361,7 @@ try {
     stops: nlbLineStops
   }, '#2F6FED');
 
-  const lwbLineStops = ((lwbStops.json.data || []).slice(0, 8)).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
+  const lwbLineStops = ((lwbStops.json.data || [])).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
   await checkLine('LWB A31', {
     route: 'A31',
     co: 'LWB',
