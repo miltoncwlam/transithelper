@@ -6,7 +6,6 @@ import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/a
 import { I18N } from '../lib/i18n.js';
 import { pickFollowedTrain } from '../lib/mtr.js';
 import { lineColorForCo } from '../lib/routeColors.js';
-import { clusterOppositeStops } from '../lib/stopCluster.js';
 import { displayStopName } from '../lib/stopName.js';
 import StopMap from './StopMap.js';
 import UserGuide from './UserGuide.js';
@@ -164,9 +163,6 @@ export default function TransitApp() {
 
   const [homes, setHomes] = useState([]);
   const [homeError, setHomeError] = useState('');
-  const [nearbyList, setNearbyList] = useState(null);
-  const [nearbyBoard, setNearbyBoard] = useState(null);
-  const [nearbyCenter, setNearbyCenter] = useState(null);
   const [arrivalFares, setArrivalFares] = useState(null);
   const [firstFares, setFirstFares] = useState(null);
   const [recents, setRecents] = useState({ routes: [], stops: [] });
@@ -176,6 +172,9 @@ export default function TransitApp() {
 
   const stopCache = useRef(new Map());
   const routeLineSeq = useRef(0);
+  const arrivalSearchSeq = useRef(0);
+  const arrivalPickSeq = useRef(0);
+  const firstSearchSeq = useRef(0);
   const lastView = useRef(null);
   const transferSeq = useRef(0);
   const homeOpened = useRef(false);
@@ -378,7 +377,7 @@ export default function TransitApp() {
     if (q) pushRecent('routes', q);
     if (!q) return { error: 'noRoute' };
     try {
-      const json = await api(`/api/search-live?route=${encodeURIComponent(q)}`, { timeoutMs: 16000 });
+      const json = await api(`/api/search-live?route=${encodeURIComponent(q)}`, { timeoutMs: 8000 });
       if (json.error && !(json.keep || []).length) return { error: json.error };
       const keep = (json.keep || []).map((z) => ({
         ...z,
@@ -393,7 +392,80 @@ export default function TransitApp() {
     }
   }
 
+  function hideArrivalResults() {
+    arrivalSearchSeq.current += 1;
+    arrivalPickSeq.current += 1;
+    routeLineSeq.current += 1;
+    setArrivalService(null);
+    setArrivalGroups([]);
+    setArrivalStopIndex('');
+    setArrivalDestIndex('');
+    setArrivalTimes(null);
+    setArrivalFares(null);
+    setFetchedStops({});
+    setOpenStopKey(null);
+    setRouteNearNote('');
+    setRouteLine(null);
+    lastView.current = null;
+  }
+
+  function hideFirstService() {
+    firstSearchSeq.current += 1;
+    setFirstService(null);
+    setFirstGroups([]);
+    setFirstBoxHidden(false);
+    setBoardIndex('');
+    setInterchangeIndex('');
+    setFirstFares(null);
+    setTransferResult(null);
+    setTransferMessage('');
+    setTransferPhase(null);
+    setSelectedDeparture(null);
+    setSelectedConnection(null);
+    setChosenDirect(null);
+  }
+
+  function requestRouteLine(s, seq) {
+    const lineId = ++routeLineSeq.current;
+    setRouteLine({
+      loading: true,
+      coords: [],
+      source: '',
+      color: lineColorForCo(serviceCo(s))
+    });
+    api('/api/route-line', {
+      method: 'POST',
+      timeoutMs: 10000,
+      body: JSON.stringify({
+        route: s.route,
+        co: serviceCo(s),
+        bound: s.bound || '',
+        orig: s.orig_tc || s.orig_en || '',
+        dest: s.dest_tc || s.dest_en || '',
+        td_route_id: s.td_route_id || '',
+        stops: (seq || []).map((stop) => ({ lat: stop.lat, lng: stop.lng ?? stop.long }))
+      })
+    }).then((json) => {
+      if (lineId !== routeLineSeq.current) return;
+      setRouteLine({
+        coords: json.coords || [],
+        source: json.source || 'straight',
+        color: json.color || lineColorForCo(serviceCo(s)),
+        name: json.name || '',
+        from: json.from || '',
+        to: json.to || '',
+        loading: false
+      });
+    }).catch(() => {
+      if (lineId === routeLineSeq.current) {
+        setRouteLine({ coords: [], source: 'straight', color: lineColorForCo(serviceCo(s)), loading: false });
+      }
+    });
+  }
+
   const pickArrival = useCallback(async (s) => {
+    const searchToken = arrivalSearchSeq.current;
+    const pickToken = ++arrivalPickSeq.current;
     setArrivalService(s);
     setArrivalChoices(null);
     setArrivalStopIndex('');
@@ -402,49 +474,19 @@ export default function TransitApp() {
     setFetchedStops({});
     setOpenStopKey(null);
     setRouteNearNote('');
-    setRouteLine(null);
     const seq = await fetchStops(s);
+    if (searchToken !== arrivalSearchSeq.current || pickToken !== arrivalPickSeq.current) return;
     setArrivalGroups(groups(seq));
-    const lineId = ++routeLineSeq.current;
-    const straight = (seq || []).map((stop) => {
-      const lat = Number(stop.lat);
-      const lng = Number(stop.lng ?? stop.long);
-      return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
-    }).filter(Boolean);
-    setRouteLine({
-      loading: true,
-      coords: straight,
-      source: 'straight',
-      color: lineColorForCo(serviceCo(s))
-    });
-    api('/api/route-line', {
-      method: 'POST',
-      timeoutMs: 12000,
-      body: JSON.stringify({
-        route: s.route,
-        co: serviceCo(s),
-        bound: s.bound || '',
-        orig: s.orig_tc || s.orig_en || '',
-        dest: s.dest_tc || s.dest_en || '',
-        stops: (seq || []).map((stop) => ({ lat: stop.lat, lng: stop.lng ?? stop.long }))
-      })
-    }).then((json) => {
-      if (lineId !== routeLineSeq.current) return;
-      if ((json.coords || []).length >= 2) setRouteLine(json);
-      else setRouteLine({ coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
-    }).catch(() => {
-      if (lineId === routeLineSeq.current) {
-        setRouteLine({ coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
-      }
-    });
+    requestRouteLine(s, seq);
     try {
       const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
       const json = await api(`/api/fares?${qs}`);
+      if (searchToken !== arrivalSearchSeq.current || pickToken !== arrivalPickSeq.current) return;
       setArrivalFares(json.fare || null);
     } catch {
-      setArrivalFares(null);
+      if (searchToken === arrivalSearchSeq.current && pickToken === arrivalPickSeq.current) setArrivalFares(null);
     }
-  }, [api, lang, routes]); // groups depends on lang
+  }, [api, lang, routes]);
 
   const showArrival = useCallback(async (service, groupsList, index, destIndex) => {
     if (index === '' || !service) return;
@@ -473,6 +515,7 @@ export default function TransitApp() {
   const chooseArrivalStop = useCallback(async (index, destIndex) => {
     const v = String(index);
     setArrivalStopIndex(v);
+    setArrivalTimes(null);
     let dest = destIndex === undefined ? arrivalDestIndex : destIndex;
     if (dest !== '' && (v === '' || +dest <= +v)) {
       dest = '';
@@ -558,10 +601,18 @@ export default function TransitApp() {
   ), [arrivalGroups]);
 
   const pickFirst = useCallback(async (s, restore = {}) => {
+    const token = firstSearchSeq.current;
     setFirstService(s);
     setFirstChoices(null);
     setFirstBoxHidden(restore.keepBoxHidden !== false);
-    setFirstGroups(groups(await fetchStops(s)));
+    setTransferResult(null);
+    setTransferMessage('');
+    setChosenDirect(null);
+    setSelectedDeparture(null);
+    setSelectedConnection(null);
+    const seq = await fetchStops(s);
+    if (token !== firstSearchSeq.current) return;
+    setFirstGroups(groups(seq));
     try {
       const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
       const json = await api(`/api/fares?${qs}`);
@@ -749,55 +800,6 @@ export default function TransitApp() {
     }
   }, [api, currentLineKey, currentSta, mtrDest]);
 
-  function groupStopEtas(rows) {
-    const m = new Map();
-    for (const x of rows || []) {
-      if (!x.eta) continue;
-      const destZh = x.dest_tc || x.dest_en || '';
-      const destEn = x.dest_en || x.dest_tc || '';
-      const k = [serviceCo(x), n(x.route), destZh, x.gmb_route_id || '', x.nlb_route_id || ''].join('|');
-      if (!m.has(k)) {
-        m.set(k, {
-          route: x.route,
-          dest: { zh: destZh, en: destEn },
-          times: [],
-          co: serviceCo(x),
-          dir: x.dir,
-          gmb_route_id: x.gmb_route_id,
-          gmb_route_seq: x.gmb_route_seq,
-          gmb_region: x.gmb_region,
-          nlb_route_id: x.nlb_route_id,
-          remark: x.remark_tc || x.remark_en || '',
-          wheelchair: !!x.wheelchair
-        });
-      }
-      m.get(k).times.push(x.eta);
-    }
-    return [...m.values()].map((g) => ({ ...g, times: cluster(g.times) }));
-  }
-
-  async function loadNearbyAt(lat, lng, userPos) {
-    try {
-      const json = await api(`/api/stops/nearby?lat=${lat}&lng=${lng}&radius=600&limit=80`);
-      setNearbyCenter({ lat, lng, userLat: userPos?.lat ?? lat, userLng: userPos?.lng ?? lng });
-      setNearbyList({ data: json.data || [], clusters: clusterOppositeStops(json.data || []) });
-    } catch (error) {
-      setNearbyList({ error: error.message || 'geoDenied' });
-    }
-  }
-
-  async function findNearbyStops() {
-    setNearbyBoard(null);
-    if (!navigator.geolocation) {
-      setNearbyList({ error: 'geoDenied' });
-      return;
-    }
-    setNearbyList({ loading: true });
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      await loadNearbyAt(pos.coords.latitude, pos.coords.longitude, { lat: pos.coords.latitude, lng: pos.coords.longitude });
-    }, () => setNearbyList({ error: 'geoDenied' }), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
-  }
-
   function coLabel(service, companies) {
     const set = new Set((companies && companies.length ? companies : [serviceCo(service)]).map(String));
     const hasCtb = set.has('CTB');
@@ -813,51 +815,6 @@ export default function TransitApp() {
     if (hasCtb) return t('coCtb');
     if (set.has('LWB')) return t('coLwb');
     return t('coKmb');
-  }
-
-  async function pickNearbyStop(stop) {
-    const members = stop.members || [stop];
-    setNearbyList((prev) => ({ ...(prev || {}), picked: stop }));
-    pushRecent('stops', { stop: stop.stop, name_tc: stop.name_tc, name_en: stop.name_en, co: stop.co });
-    try {
-      const lists = await Promise.all(members.map((member) => {
-        const qs = new URLSearchParams({ stop: member.stop });
-        if (member.co) qs.set('co', member.co);
-        return api(`/api/stops/eta?${qs}`).catch(() => ({ data: [] }));
-      }));
-      const rows = lists.flatMap((json) => json.data || []);
-      setNearbyBoard({ stop, groups: groupStopEtas(rows) });
-    } catch {
-      setNearbyBoard({ stop, groups: [] });
-    }
-  }
-
-  async function followNearbyGroup(stop, group) {
-    const hits = routes.filter((row) => {
-      if (n(row.route) !== n(group.route)) return false;
-      if (group.gmb_route_id) return String(row.gmb_route_id) === String(group.gmb_route_id);
-      if (group.nlb_route_id) return String(row.nlb_route_id) === String(group.nlb_route_id);
-      if (group.co && serviceCo(row) !== group.co && !(group.co === 'KMB' && (serviceCo(row) === 'KMB' || serviceCo(row) === 'LWB'))) return false;
-      if (group.dir && row.bound && row.bound !== group.dir) return false;
-      return true;
-    });
-    const destKey = stopNameKey({ name_tc: group.dest?.zh, name_en: group.dest?.en });
-    const service = hits.find((row) => servicePlaceKey(row, 'dest') === destKey) || hits[0];
-    if (!service) {
-      setArrivalRoute(String(group.route || ''));
-      return;
-    }
-    const seq = await fetchStops(service);
-    const list = groups(seq);
-    const idx = list.findIndex((g) => g.stops.some((row) => String(row.stop) === String(stop.stop)));
-    setTab('arrivals');
-    setArrivalService(service);
-    setArrivalChoices(null);
-    setArrivalGroups(list);
-    setArrivalDestIndex('');
-    const boardIdx = idx >= 0 ? String(idx) : '';
-    setArrivalStopIndex(boardIdx);
-    if (boardIdx !== '') await showArrival(service, list, boardIdx, '');
   }
 
   const renderHome = useCallback(async () => {
@@ -917,8 +874,10 @@ export default function TransitApp() {
       const s = item.payload.service;
       setArrivalService(s);
       setArrivalChoices(null);
-      const g = groups(await fetchStops(s));
+      const seq = await fetchStops(s);
+      const g = groups(seq);
       setArrivalGroups(g);
+      requestRouteLine(s, seq);
       const idx = String(item.payload.stopIndex);
       setArrivalStopIndex(idx);
       const destIdx = item.payload.destIndex != null && item.payload.destIndex !== '' ? String(item.payload.destIndex) : '';
@@ -1066,30 +1025,42 @@ export default function TransitApp() {
   }, [refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, showMtr, chosenDirect, mtrDest]);
 
   useEffect(() => {
+    if (!arrivalRoute.trim()) {
+      hideArrivalResults();
+      setArrivalChoices(null);
+      return undefined;
+    }
+    hideArrivalResults();
+    const gen = arrivalSearchSeq.current;
+    setArrivalChoices({ loading: true });
     const handle = setTimeout(() => {
-      if (arrivalRoute.trim()) {
-        (async () => {
-          setArrivalChoices({ loading: true });
-          const payload = await loadChoices(arrivalRoute);
-          setArrivalChoices(payload);
-          if (payload.auto) pickArrival(payload.auto);
-        })();
-      }
-    }, 500);
+      (async () => {
+        const payload = await loadChoices(arrivalRoute);
+        if (gen !== arrivalSearchSeq.current) return;
+        setArrivalChoices(payload);
+        if (payload.auto) pickArrival(payload.auto);
+      })();
+    }, 400);
     return () => clearTimeout(handle);
   }, [arrivalRoute]);
 
   useEffect(() => {
+    if (!firstRoute.trim()) {
+      hideFirstService();
+      setFirstChoices(null);
+      return undefined;
+    }
+    hideFirstService();
+    const gen = firstSearchSeq.current;
+    setFirstChoices({ loading: true });
     const handle = setTimeout(() => {
-      if (firstRoute.trim()) {
-        (async () => {
-          setFirstChoices({ loading: true });
-          const payload = await loadChoices(firstRoute);
-          setFirstChoices(payload);
-          if (payload.auto) pickFirst(payload.auto);
-        })();
-      }
-    }, 500);
+      (async () => {
+        const payload = await loadChoices(firstRoute);
+        if (gen !== firstSearchSeq.current) return;
+        setFirstChoices(payload);
+        if (payload.auto) pickFirst(payload.auto);
+      })();
+    }, 400);
     return () => clearTimeout(handle);
   }, [firstRoute]);
 
@@ -1378,63 +1349,15 @@ export default function TransitApp() {
           <div className="search-row mt-3">
             <input className="field" placeholder={t('routePlaceholder')} value={arrivalRoute} onChange={(e) => setArrivalRoute(e.target.value)} aria-label={t('routePlaceholder')} />
               <button className="btn" type="button" aria-label={t('find')} onClick={async () => {
+                hideArrivalResults();
+                const gen = arrivalSearchSeq.current;
                 setArrivalChoices({ loading: true });
                 const payload = await loadChoices(arrivalRoute);
+                if (gen !== arrivalSearchSeq.current) return;
                 setArrivalChoices(payload);
                 if (payload.auto) pickArrival(payload.auto);
               }}>{t('find')}</button>
           </div>
-          <button className="tab btn-block mt-3 tab-nearby" type="button" aria-label={t('nearbyStops')} onClick={findNearbyStops}>{t('nearbyStops')}</button>
-          {recents.stops.length && !nearbyList?.data?.length ? (
-            <div className="mt-2">
-              <div className="muted">{t('recentStops')}</div>
-              {recents.stops.map((stop) => (
-                <button key={`${stop.co || ''}-${stop.stop}`} className="item choice pg-choice pg-stop" type="button" onClick={() => pickNearbyStop(stop)}>
-                  <b>{lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc}</b>
-                  <div className="muted">{coLabel(stop)}</div>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {nearbyList?.loading ? <div className="note">{t('locating')}</div> : null}
-          {nearbyList?.error ? <p className="muted">{nearbyList.error === 'geoDenied' ? t('geoDenied') : nearbyList.error}</p> : null}
-          {nearbyCenter && nearbyList?.clusters ? (
-            <StopMap
-              center={[nearbyCenter.lat, nearbyCenter.lng]}
-              userLat={nearbyCenter.userLat}
-              userLng={nearbyCenter.userLng}
-              clusters={nearbyList.clusters}
-              onPick={pickNearbyStop}
-              onMove={(pos) => loadNearbyAt(pos.lat, pos.lng, { lat: nearbyCenter.userLat, lng: nearbyCenter.userLng })}
-            />
-          ) : null}
-          {nearbyList?.clusters?.length ? (
-            <div className="mt-2">
-              {nearbyList.clusters.map((stop) => (
-                <button key={`${stop.lat}-${stop.lng}-${stop.stop}`} className="item choice pg-choice pg-stop" type="button" onClick={() => pickNearbyStop(stop)}>
-                  <b>{displayStopName(stop, lang)}</b>
-                  <div className="muted">{t('metres', stop.metres)}{stop.members?.length > 1 ? ` · ${stop.members.length}` : ''}</div>
-                </button>
-              ))}
-            </div>
-          ) : nearbyList?.data && !nearbyList.data.length ? <p className="muted">{t('noStops')}</p> : null}
-          {nearbyBoard ? (
-            <>
-              <h3 className="font-bold mt-3">{displayStopName(nearbyBoard.stop, lang)}</h3>
-              {nearbyBoard.groups.length
-                ? nearbyBoard.groups.map((g) => (
-                  <div className={`item ${coTone(g)}`} key={`${g.co}-${g.route}-${loc(g.dest)}-${g.gmb_route_id || g.nlb_route_id || ''}`}>
-                    <span className="badge">{coLabel(g)}</span> <b>{g.route}</b>
-                    <div>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(g.dest)}</div>
-                    {g.remark ? <div className="muted">{g.remark === 'Scheduled' || g.remark === '預定班次' || g.remark === '未開出' ? t('scheduledTrip') : g.remark}</div> : null}
-                    {g.wheelchair ? <div className="muted">{t('wheelchair')}</div> : null}
-                    {etaList(g.times)}
-                    <button className="tab mt-2" type="button" onClick={() => followNearbyGroup(nearbyBoard.stop, g)}>{t('followThis')}</button>
-                  </div>
-                ))
-                : <p className="muted">{t('noLiveNow')}</p>}
-            </>
-          ) : null}
           <div>{renderChoiceList(arrivalChoices, pickArrival)}</div>
           {arrivalService ? (
             <>
@@ -1459,6 +1382,7 @@ export default function TransitApp() {
                       onPick={(stop) => chooseArrivalStop(stop.index, '')}
                     />
                     {routeLine?.loading ? <p className="muted">{t('playgroundLoading')}</p> : null}
+                    {!routeLine?.loading && routeLine?.source === 'official' ? <p className="muted">{t('playgroundSourceOfficial')}</p> : null}
                     {!routeLine?.loading && routeLine?.source === 'osm' ? <p className="muted">{t('playgroundSourceOsm')}</p> : null}
                     {!routeLine?.loading && routeLine?.source === 'osrm' ? <p className="muted">{t('playgroundSourceRoad')}</p> : null}
                     {!routeLine?.loading && routeLine?.source === 'straight' ? <p className="muted">{t('playgroundSourceStraight')}</p> : null}
@@ -1552,8 +1476,11 @@ export default function TransitApp() {
             <div className="search-row mt-1">
               <input className="field" placeholder={t('routePlaceholder')} value={firstRoute} onChange={(e) => setFirstRoute(e.target.value)} aria-label={t('firstRouteLabel')} />
               <button className="btn" type="button" aria-label={t('find')} onClick={async () => {
+                hideFirstService();
+                const gen = firstSearchSeq.current;
                 setFirstChoices({ loading: true });
                 const payload = await loadChoices(firstRoute);
+                if (gen !== firstSearchSeq.current) return;
                 setFirstChoices(payload);
                 if (payload.auto) pickFirst(payload.auto);
               }}>{t('find')}</button>

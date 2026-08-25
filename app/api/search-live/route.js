@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic';
-export const maxDuration = 20;
+export const maxDuration = 8;
 
 import { cache, getDirectory } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';

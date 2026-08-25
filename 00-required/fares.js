@@ -161,6 +161,7 @@ export function fareFields(row, extra = {}) {
   const section = hasBoard ? sectionFareHkd(row, extra.on_seq, extra.off_seq) : null;
   const terminus = hasBoard ? sectionFareHkd(row, extra.on_seq, null) : null;
   return {
+    td_route_id: row.route_id || undefined,
     full_fare_hkd: row.full_fare_hkd == null ? null : Number(row.full_fare_hkd),
     journey_time_minutes: row.journey_time_minutes == null ? null : Number(row.journey_time_minutes),
     section_fare_hkd: extra.off_seq ? section : (terminus ?? section),

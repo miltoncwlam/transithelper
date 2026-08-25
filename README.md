@@ -104,11 +104,10 @@ In-app **使用說明 / Guide** is the header button (follows `tb-lang`). The fu
 
 ## Friend UI contract
 
-Keep `/api/*`. GPS stop-first is optional.
+Keep `/api/*`.
 
 - Language: `localStorage tb-lang` (`zh` default, or `en`).
 - Device: `localStorage tb-device`; send `X-Device-Id` on `/api/homes`.
-- `GET /api/stops/nearby?lat=&lng=&radius=250` — named stops with `metres`.
 - `GET /api/citybus/stop-eta/[stop]` — all Citybus arrivals at that stop.
 - `GET /api/kmb/stop-eta/[stop]` — arrivals at that stop (group by route + destination name, not bound codes).
 - `GET /api/discounts` — `{ count, pairs }`. `GET /api/discounts?from=960&to=961` — matching Octopus interchange rows.
@@ -120,7 +119,7 @@ Keep `/api/*`. GPS stop-first is optional.
 
 ## Stage 6 — Later extras already wired
 
-- Citybus routes (both directions) are in the directory; stop names are loaded with each route. Nearby and transfer also use Citybus after the stop list has been cached (first run hydrates in the background). GMB is looked up by route number.
+- Citybus routes (both directions) are in the directory; stop names are loaded with each route. Transfer also uses Citybus after the stop list has been cached (first run hydrates in the background). GMB is looked up by route number.
 - Transfer timing uses Transport Department GTFS scheduled trip length (scaled along the stop path) when the index is ready, otherwise urban/highway hop speeds from stop coordinates. Live interchange ETAs are only used if they fit that same first-bus trip.
 - Directory is cached under the OS temp dir; Vercel hits `/api/cron/warm` once a day.
 - Playwright: `npx playwright install chromium` then `npm test`.

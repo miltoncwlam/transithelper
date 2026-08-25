@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I18N } from '../lib/i18n.js';
 import { LINE_COLORS, lineColorForCo } from '../lib/routeColors.js';
 import { collectMatchingServices } from '../lib/routeSearch.js';
@@ -91,8 +91,9 @@ export default function RoutePlayground() {
   const [service, setService] = useState(null);
   const [routeStops, setRouteStops] = useState([]);
   const [line, setLine] = useState(null);
-  const [showStraight, setShowStraight] = useState(true);
+  const [showStraight, setShowStraight] = useState(false);
   const [note, setNote] = useState('');
+  const pickSeq = useRef(0);
 
   const t = useCallback((key, ...args) => {
     const value = (I18N[lang] || I18N.zh)[key];
@@ -109,6 +110,7 @@ export default function RoutePlayground() {
   }, []);
 
   const sourceLabel = useMemo(() => {
+    if (line?.source === 'official') return t('playgroundSourceOfficial');
     if (line?.source === 'osm') return t('playgroundSourceOsm');
     if (line?.source === 'osrm') return t('playgroundSourceRoad');
     if (line?.source === 'straight') return t('playgroundSourceStraight');
@@ -116,12 +118,15 @@ export default function RoutePlayground() {
   }, [line, t]);
 
   async function pickService(s) {
+    const token = ++pickSeq.current;
     setService(s);
     setChoices(null);
-    setLine({ loading: true });
+    setRouteStops([]);
+    setLine({ loading: true, coords: [], source: '', color: lineColorForCo(serviceCo(s)) });
     setNote('');
     try {
       const rows = await fetchStops(s);
+      if (token !== pickSeq.current) return;
       const mapped = (rows || []).map((stop, i) => {
         const lat = Number(stop.lat);
         const lng = Number(stop.lng ?? stop.long);
@@ -129,10 +134,8 @@ export default function RoutePlayground() {
         return { ...stop, lat, lng, long: lng, seq: i + 1, index: i };
       }).filter(Boolean);
       setRouteStops(mapped);
-      const straight = mapped.map((stop) => [stop.lat, stop.lng]);
-      setLine({ loading: true, coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
       const ctrl = new AbortController();
-      const kill = setTimeout(() => ctrl.abort(), 12000);
+      const kill = setTimeout(() => ctrl.abort(), 10000);
       try {
         const json = await fetch('/api/route-line', {
           method: 'POST',
@@ -145,23 +148,28 @@ export default function RoutePlayground() {
             bound: s.bound || '',
             orig: s.orig_tc || s.orig_en || '',
             dest: s.dest_tc || s.dest_en || '',
+            td_route_id: s.td_route_id || '',
             stops: mapped.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
           })
         }).then((r) => r.json());
-        setLine((json.coords || []).length >= 2 ? json : { coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
+        if (token !== pickSeq.current) return;
+        setLine((json.coords || []).length >= 2 ? json : { coords: [], source: json.source || 'straight', color: lineColorForCo(serviceCo(s)) });
       } catch {
-        setLine({ coords: straight, source: 'straight', color: lineColorForCo(serviceCo(s)) });
+        if (token !== pickSeq.current) return;
+        setLine({ coords: [], source: 'straight', color: lineColorForCo(serviceCo(s)) });
         setNote(t('routeUnavailable'));
       } finally {
         clearTimeout(kill);
       }
     } catch {
+      if (token !== pickSeq.current) return;
       setLine({ coords: [], source: 'straight' });
       setNote(t('routeUnavailable'));
     }
   }
 
   async function search() {
+    pickSeq.current += 1;
     setNote('');
     setService(null);
     setRouteStops([]);

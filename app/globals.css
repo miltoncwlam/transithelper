@@ -959,18 +959,6 @@ h3.font-bold {
   color: #fff;
 }
 
-.playground-ui .tab-nearby {
-  background: #f37021;
-  color: #fff;
-  box-shadow: 2px 2px 0 #9a3412;
-}
-
-.playground-ui .tab-nearby:hover,
-.playground-ui .tab-nearby:focus-visible {
-  background: #c2410c;
-  color: #fff;
-}
-
 .playground-ui .tabs .tab-arrivals {
   background: #fde8e6;
   color: #000;

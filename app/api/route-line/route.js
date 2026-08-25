@@ -12,6 +12,7 @@ function readQuery(request) {
     bound: url.searchParams.get('bound') || '',
     orig: url.searchParams.get('orig') || '',
     dest: url.searchParams.get('dest') || '',
+    td_route_id: url.searchParams.get('td_route_id') || '',
     stops: []
   };
 }
@@ -34,6 +35,7 @@ export async function POST(request) {
       bound: body.bound || query.bound,
       orig: body.orig || query.orig,
       dest: body.dest || query.dest,
+      td_route_id: body.td_route_id || query.td_route_id || '',
       stops: Array.isArray(body.stops) ? body.stops : []
     }));
   } catch (error) {

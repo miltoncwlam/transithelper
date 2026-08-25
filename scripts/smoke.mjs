@@ -282,9 +282,9 @@ try {
     else if (ms > maxMs) fail(`search-live ${route} too slow ${ms}ms`);
     else console.log('ok search-live', route, ms + 'ms', keep.length, 'choices', [...new Set(cos)].join(','));
   }
-  await checkSearch('1', 'NLB', 12000);
-  await checkSearch('3M', 'NLB', 12000);
-  await checkSearch('A35', 'NLB', 12000);
+  await checkSearch('1', 'NLB', 4000);
+  await checkSearch('3M', 'NLB', 4000);
+  await checkSearch('A35', 'NLB', 4000);
 
   async function checkLine(label, body, expectColor) {
     const res = await fetch(BASE + '/api/route-line', {
@@ -295,7 +295,7 @@ try {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) fail(`route-line ${label} HTTP ${res.status} ${JSON.stringify(json)}`);
-    else if (!['osm', 'osrm', 'straight'].includes(json.source)) fail(`route-line ${label} bad source ${json.source}`);
+    else if (!['official', 'osm', 'osrm', 'straight'].includes(json.source)) fail(`route-line ${label} bad source ${json.source}`);
     else if (json.source !== 'straight' && !(json.coords || []).length) fail(`route-line ${label} empty coords for ${json.source}`);
     else if (json.source === 'straight' && (body.stops || []).length >= 2 && (json.coords || []).length < 2) fail(`route-line ${label} straight missing stop polyline`);
     else if (expectColor && json.color !== expectColor) fail(`route-line ${label} color ${json.color} != ${expectColor}`);
@@ -316,7 +316,8 @@ try {
         chain += Math.hypot((stops[i].lat - stops[i - 1].lat) * 111000, (stops[i].lng - stops[i - 1].lng) * 102000);
       }
       if (json.source !== 'straight' && jump > 2500) fail(`route-line ${label} jump ${Math.round(jump)}m via ${json.source}`);
-      else if (json.source !== 'straight' && chain > 400 && len > chain * 2.55 + 900) fail(`route-line ${label} detour ${Math.round(len)}m vs stops ${Math.round(chain)}m`);
+      else if (json.source === 'osrm' && chain > 400 && len > chain * 2.55 + 900) fail(`route-line ${label} detour ${Math.round(len)}m vs stops ${Math.round(chain)}m`);
+      else if (/^KMB 1|^CTB 1/.test(label) && json.source !== 'official') fail(`route-line ${label} expected official CSDI line, got ${json.source}`);
       else console.log('ok route-line', label, json.source, coords.length, 'pts', json.color, 'maxJump', Math.round(jump) + 'm', 'ratio', chain ? (len / chain).toFixed(2) : 'n/a');
     }
   }

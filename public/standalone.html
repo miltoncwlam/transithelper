@@ -45,10 +45,6 @@
           <input id="arrivalRoute" class="field" placeholder="路線，例如 286C、962、11 或 811">
           <button id="arrivalFind" class="btn">查詢</button>
         </div>
-        <button id="nearbyFind" class="tab btn-block mt-3" type="button">附近車站</button>
-        <div id="nearbyMap" class="stop-map hidden"></div>
-        <div id="nearbyStops"></div>
-        <div id="nearbyOutput"></div>
         <div id="arrivalVariants"></div>
         <div id="arrivalStops"></div>
         <div id="arrivalDest"></div>
@@ -541,6 +537,7 @@ globalThis.I18N = {
     noFirstBus: '找不到第一程巴士到達轉車站的時間，因此未能計算轉車。',
     noConnection: '以第一程到達轉車站的時間計算，目前找不到可轉乘的巴士。',
     timeout: '查詢逾時，目前找不到巴士。',
+    transferTimeout: '轉乘查詢未完成。',
     none: '目前找不到巴士。',
     incomplete: '請選擇轉車站和終點。',
     stay: '繼續乘搭同一路線',
@@ -587,17 +584,26 @@ globalThis.I18N = {
     regionKln: '九龍',
     regionNt: '新界',
     shortWorking: (s) => `短途開往 ${s}`,
-    nearbyStops: '附近車站',
     recentRoutes: '最近查詢',
-    recentStops: '最近車站',
-    followThis: '跟這班車',
     scheduledTrip: '預定班次',
     wheelchair: '輪椅可上落',
-    locating: '正在定位附近車站…',
     geoDenied: '未能取得位置。請允許定位，或改為輸入路線。',
     addHomeScreen: '可加入主畫面，方便在車站一按開啟。',
-    metres: (n) => `${n} 米`,
+    reverseBound: '調轉方向',
+    nearestStop: '找最近站',
+    homeSaveLocal: '伺服器未能儲存，已保存在這部裝置。',
+    homeSaveFail: '未能儲存路線。',
     guideBtn: '使用說明',
+    playgroundBtn: '路線地圖',
+    playgroundHeading: '路線地圖練習場',
+    playgroundHelp: '用地圖畫出運輸署公布的巴士走線（與 hkbus.app 同一來源）。找不到官方走線時才改用站與站直線，不會編造路線。',
+    playgroundBack: '返回到站',
+    playgroundShowStraight: '對照站與站直線',
+    playgroundSourceOfficial: '運輸署公布走線（官方路線）',
+    playgroundSourceOsm: 'OpenStreetMap 巴士路線（沿道路）',
+    playgroundSourceRoad: '沿道路行車路徑',
+    playgroundSourceStraight: '未找到官方走線，暫用站與站直線',
+    playgroundLoading: '正在載入路線幾何…',
     totalMins: (n) => `全程約 ${n} 分鐘`
   },
   en: {
@@ -694,6 +700,7 @@ globalThis.I18N = {
     noFirstBus: 'The first bus arrival at the transfer stop was not found, so a transfer cannot be timed.',
     noConnection: 'No connecting bus was found after the first bus arrives at the transfer stop.',
     timeout: 'The search timed out. No bus was found.',
+    transferTimeout: 'The transfer search did not finish.',
     none: 'No bus was found.',
     incomplete: 'Choose a transfer stop and destination.',
     stay: 'Stay on this route',
@@ -740,17 +747,26 @@ globalThis.I18N = {
     regionKln: 'Kowloon',
     regionNt: 'New Territories',
     shortWorking: (s) => `Also short working to ${s}`,
-    nearbyStops: 'Nearby stops',
     recentRoutes: 'Recent routes',
-    recentStops: 'Recent stops',
-    followThis: 'Follow this trip',
     scheduledTrip: 'Scheduled',
     wheelchair: 'Wheelchair access',
-    locating: 'Finding nearby stops…',
     geoDenied: 'Location was not available. Allow location, or type a route instead.',
     addHomeScreen: 'Add this page to your Home Screen for one-tap use at the stop.',
-    metres: (n) => `${n} m`,
+    reverseBound: 'Reverse direction',
+    nearestStop: 'Nearest stop',
+    homeSaveLocal: 'Saved on this device. The server could not store it.',
+    homeSaveFail: 'Could not save this route.',
     guideBtn: 'Guide',
+    playgroundBtn: 'Route map',
+    playgroundHeading: 'Route map playground',
+    playgroundHelp: 'Draws the Transport Department official bus path (the same CSDI feed hkbus.app uses). Straight stop-to-stop lines only if that feed has no geometry — the path is never invented.',
+    playgroundBack: 'Back to arrivals',
+    playgroundShowStraight: 'Show stop-to-stop straight line',
+    playgroundSourceOfficial: 'Transport Department official route',
+    playgroundSourceOsm: 'OpenStreetMap bus route (follows roads)',
+    playgroundSourceRoad: 'Road-following drive path',
+    playgroundSourceStraight: 'No official line found; showing stop-to-stop straight line',
+    playgroundLoading: 'Loading route geometry…',
     totalMins: (n) => `About ${n} min total`
   }
 };
@@ -842,10 +858,9 @@ const GUIDE = {
         ]
       },
       {
-        h: '附近車站與地圖',
+        h: '路線地圖',
         p: [
-          '按「附近車站」後會用地圖顯示附近的站柱。馬路兩邊、同一地點的對面站會合成一個點。點一下即顯示該處所有營辦商的實時路線，可按「跟這班車」。',
-          '移動地圖會更新視野內的車站。沒有座標的站不會出現。'
+          '選好路線後，地圖會畫出運輸署公布的巴士走線（與 hkbus.app 同一來源），不是站與站直線，也不用推估行車路徑。可在「路線地圖」練習場對照。找不到官方走線時會說明，不會編造路徑。'
         ]
       },
       {
@@ -896,10 +911,9 @@ const GUIDE = {
         ]
       },
       {
-        h: 'Nearby stops and map',
+        h: 'Route map',
         p: [
-          'Nearby stops opens a street map of poles around you. Opposite stops at the same place are merged into one pin. Tap a pin for live routes at that place, then Follow this bus.',
-          'Panning the map refreshes stops in view. Poles without coordinates are omitted.'
+          'After you pick a service, the map draws the Transport Department official bus path (the same CSDI feed hkbus.app uses) — not a straight line between stops, and not a guessed drive path. The Route map playground lets you compare. If no official line exists, the app says so and does not invent a path.'
         ]
       },
       {
@@ -965,16 +979,7 @@ const MANUAL = {
         h: '到站、終點、各站時間',
         p: [
           '選路線後選上車站。可再選此程終點；終點只會列出上車之後的站，不能選已經過的站。終點可留空，此時會跟車至路線最後一站。',
-          '會顯示開出時間、到達時間、車程（分鐘）。可展開「查看各站時間」。標了估計的時間是沿途推算，不是營辦商逐站公布。',
-          '附近車站列表可按「跟這班車」，等同在到站頁選了該路線與該站。'
-        ]
-      },
-      {
-        h: '附近車站與地圖',
-        p: [
-          '按「附近車站」後會開啟街道地圖（OpenStreetMap），顯示大約附近的站柱。需要定位權限才知道你在哪；移動地圖會更新視野內的車站。',
-          '馬路兩邊、同一地點的對面站會合成一個點，避免同一個路口出現兩個幾乎重疊的針。點一下即合併顯示該處各營辦商的實時路線。',
-          '沒有座標的站不會出現在地圖上。點選後仍沒有班次，就會寫現在沒有車。'
+          '會顯示開出時間、到達時間、車程（分鐘）。可展開「查看各站時間」。標了估計的時間是沿途推算，不是營辦商逐站公布。'
         ]
       },
       {
@@ -1039,16 +1044,7 @@ const MANUAL = {
         h: 'Arrivals, destination, stop times',
         p: [
           'After a route, pick a boarding stop. You may pick a destination on the same trip; only later stops are offered. Leave destination empty to follow to the last stop.',
-          'You get departure, arrival, travel time, and expandable times at each stop. Times marked as estimates are inferred along the route, not stop-by-stop operator feeds.',
-          'From nearby results, Follow this bus opens that route and stop on the arrivals tab.'
-        ]
-      },
-      {
-        h: 'Nearby stops and map',
-        p: [
-          'Nearby stops opens an OpenStreetMap street map of poles around you. Location permission is used to place you; panning refreshes stops in view.',
-          'Opposite poles at the same place are merged into one pin so a junction does not show two overlapping markers. Tap a pin for live routes from every operator at that place.',
-          'Poles without coordinates are omitted. If nothing is running, the app says so.'
+          'You get departure, arrival, travel time, and expandable times at each stop. Times marked as estimates are inferred along the route, not stop-by-stop operator feeds.'
         ]
       },
       {
@@ -2140,10 +2136,6 @@ const MANUAL = {
     $('arrivalsHeading').textContent = t('arrivalsHeading');
     $('arrivalRoute').placeholder = t('routePlaceholder');
     $('arrivalFind').textContent = t('find');
-    if ($('nearbyFind')) {
-      $('nearbyFind').textContent = t('nearbyStops');
-      $('nearbyFind').setAttribute('aria-label', t('nearbyStops'));
-    }
     $('transferHeading').textContent = t('transferHeading');
     $('nearbyLabel').textContent = t('nearbyLabel');
     $('radiusLabel').textContent = t('radiusLabel');
@@ -3461,88 +3453,6 @@ const MANUAL = {
     return type;
   }
 
-  function groupStopEtas(rows) {
-    const m = new Map();
-    for (const x of rows || []) {
-      if (!x.eta) continue;
-      const destZh = x.dest_tc || x.dest_en || '';
-      const destEn = x.dest_en || x.dest_tc || '';
-      const k = [n(x.route), destZh].join('|');
-      if (!m.has(k)) m.set(k, { route: x.route, dest: { zh: destZh, en: destEn }, times: [] });
-      m.get(k).times.push(x.eta);
-    }
-    return [...m.values()].map((g) => ({ ...g, times: cluster(g.times) }));
-  }
-
-  async function findNearbyStops() {
-    put('nearbyOutput', '');
-    if (!navigator.geolocation) {
-      put('nearbyStops', `<p class="muted">${esc(t('geoDenied'))}</p>`);
-      return;
-    }
-    put('nearbyStops', `<div class="note">${esc(t('locating'))}</div>`);
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        let data = [];
-        if (await hasBackend()) {
-          const json = await api(`/api/stops/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&radius=600&limit=80`);
-          data = json.data || [];
-        } else {
-          data = (S.stops || [])
-            .map((stop) => {
-              const metres = Math.hypot(
-                (Number(stop.lat) - pos.coords.latitude) * 111000,
-                (Number(stop.long) - pos.coords.longitude) * 102000
-              );
-              return { ...stop, metres: Math.round(metres) };
-            })
-            .filter((stop) => Number.isFinite(stop.metres) && stop.metres <= 250)
-            .sort((a, b) => a.metres - b.metres)
-            .slice(0, 20);
-        }
-        if (!data.length) {
-          put('nearbyStops', `<p class="muted">${esc(t('noStops'))}</p>`);
-          return;
-        }
-        const clusters = typeof clusterOppositeStops === 'function' ? clusterOppositeStops(data) : data;
-        put('nearbyStops', clusters.map((stop, i) =>
-          `<button class="item choice" data-i="${i}"><b>${esc(S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc)}</b><div class="muted">${esc(t('metres', stop.metres))}</div></button>`
-        ).join(''));
-        $('nearbyStops').querySelectorAll('button').forEach((b) => {
-          b.onclick = () => pickNearbyStop(clusters[+b.dataset.i]);
-        });
-      } catch (error) {
-        put('nearbyStops', `<p class="muted">${esc(error.message || t('geoDenied'))}</p>`);
-      }
-    }, () => put('nearbyStops', `<p class="muted">${esc(t('geoDenied'))}</p>`), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
-  }
-
-  async function pickNearbyStop(stop) {
-    try {
-      const members = stop.members || [stop];
-      let rows = [];
-      if (await hasBackend()) {
-        const lists = await Promise.all(members.map(async (member) => {
-          const qs = new URLSearchParams({ stop: member.stop });
-          if (member.co) qs.set('co', member.co);
-          const json = await api(`/api/stops/eta?${qs}`).catch(() => ({ data: [] }));
-          return json.data || [];
-        }));
-        rows = lists.flat();
-      } else {
-        for (const member of members) rows.push(...(await stopAllEtas(member)));
-      }
-      const groups = groupStopEtas(rows);
-      const name = S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc;
-      const list = groups.length
-        ? groups.map((g) => `<div class="item"><b>${esc(g.route)}</b><div>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(loc(g.dest))}</div>${etaList(g.times)}</div>`).join('')
-        : `<p class="muted">${esc(t('noLiveNow'))}</p>`;
-      put('nearbyOutput', `<h3 class="font-bold mt-3">${esc(name)}</h3>${list}`);
-    } catch {
-      put('nearbyOutput', `<p class="muted">${esc(t('noLiveNow'))}</p>`);
-    }
-  }
-
   async function renderHome() {
     try {
       const rows = await hasBackend()
@@ -3658,7 +3568,6 @@ const MANUAL = {
   };
   if ($('guideBtn')) $('guideBtn').onclick = () => tabs('guide');
   $('arrivalFind').onclick = () => choices('arrivalVariants', $('arrivalRoute').value, pickA);
-  if ($('nearbyFind')) $('nearbyFind').onclick = findNearbyStops;
   $('firstFind').onclick = () => choices('firstVariants', $('firstRoute').value, pickF);
   $('destinationFind').onclick = dest;
   $('transferFind').onclick = go;

@@ -1047,10 +1047,6 @@
     $('arrivalsHeading').textContent = t('arrivalsHeading');
     $('arrivalRoute').placeholder = t('routePlaceholder');
     $('arrivalFind').textContent = t('find');
-    if ($('nearbyFind')) {
-      $('nearbyFind').textContent = t('nearbyStops');
-      $('nearbyFind').setAttribute('aria-label', t('nearbyStops'));
-    }
     $('transferHeading').textContent = t('transferHeading');
     $('nearbyLabel').textContent = t('nearbyLabel');
     $('radiusLabel').textContent = t('radiusLabel');
@@ -2368,88 +2364,6 @@
     return type;
   }
 
-  function groupStopEtas(rows) {
-    const m = new Map();
-    for (const x of rows || []) {
-      if (!x.eta) continue;
-      const destZh = x.dest_tc || x.dest_en || '';
-      const destEn = x.dest_en || x.dest_tc || '';
-      const k = [n(x.route), destZh].join('|');
-      if (!m.has(k)) m.set(k, { route: x.route, dest: { zh: destZh, en: destEn }, times: [] });
-      m.get(k).times.push(x.eta);
-    }
-    return [...m.values()].map((g) => ({ ...g, times: cluster(g.times) }));
-  }
-
-  async function findNearbyStops() {
-    put('nearbyOutput', '');
-    if (!navigator.geolocation) {
-      put('nearbyStops', `<p class="muted">${esc(t('geoDenied'))}</p>`);
-      return;
-    }
-    put('nearbyStops', `<div class="note">${esc(t('locating'))}</div>`);
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        let data = [];
-        if (await hasBackend()) {
-          const json = await api(`/api/stops/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&radius=600&limit=80`);
-          data = json.data || [];
-        } else {
-          data = (S.stops || [])
-            .map((stop) => {
-              const metres = Math.hypot(
-                (Number(stop.lat) - pos.coords.latitude) * 111000,
-                (Number(stop.long) - pos.coords.longitude) * 102000
-              );
-              return { ...stop, metres: Math.round(metres) };
-            })
-            .filter((stop) => Number.isFinite(stop.metres) && stop.metres <= 250)
-            .sort((a, b) => a.metres - b.metres)
-            .slice(0, 20);
-        }
-        if (!data.length) {
-          put('nearbyStops', `<p class="muted">${esc(t('noStops'))}</p>`);
-          return;
-        }
-        const clusters = typeof clusterOppositeStops === 'function' ? clusterOppositeStops(data) : data;
-        put('nearbyStops', clusters.map((stop, i) =>
-          `<button class="item choice" data-i="${i}"><b>${esc(S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc)}</b><div class="muted">${esc(t('metres', stop.metres))}</div></button>`
-        ).join(''));
-        $('nearbyStops').querySelectorAll('button').forEach((b) => {
-          b.onclick = () => pickNearbyStop(clusters[+b.dataset.i]);
-        });
-      } catch (error) {
-        put('nearbyStops', `<p class="muted">${esc(error.message || t('geoDenied'))}</p>`);
-      }
-    }, () => put('nearbyStops', `<p class="muted">${esc(t('geoDenied'))}</p>`), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
-  }
-
-  async function pickNearbyStop(stop) {
-    try {
-      const members = stop.members || [stop];
-      let rows = [];
-      if (await hasBackend()) {
-        const lists = await Promise.all(members.map(async (member) => {
-          const qs = new URLSearchParams({ stop: member.stop });
-          if (member.co) qs.set('co', member.co);
-          const json = await api(`/api/stops/eta?${qs}`).catch(() => ({ data: [] }));
-          return json.data || [];
-        }));
-        rows = lists.flat();
-      } else {
-        for (const member of members) rows.push(...(await stopAllEtas(member)));
-      }
-      const groups = groupStopEtas(rows);
-      const name = S.lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc;
-      const list = groups.length
-        ? groups.map((g) => `<div class="item"><b>${esc(g.route)}</b><div>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(loc(g.dest))}</div>${etaList(g.times)}</div>`).join('')
-        : `<p class="muted">${esc(t('noLiveNow'))}</p>`;
-      put('nearbyOutput', `<h3 class="font-bold mt-3">${esc(name)}</h3>${list}`);
-    } catch {
-      put('nearbyOutput', `<p class="muted">${esc(t('noLiveNow'))}</p>`);
-    }
-  }
-
   async function renderHome() {
     try {
       const rows = await hasBackend()
@@ -2565,7 +2479,6 @@
   };
   if ($('guideBtn')) $('guideBtn').onclick = () => tabs('guide');
   $('arrivalFind').onclick = () => choices('arrivalVariants', $('arrivalRoute').value, pickA);
-  if ($('nearbyFind')) $('nearbyFind').onclick = findNearbyStops;
   $('firstFind').onclick = () => choices('firstVariants', $('firstRoute').value, pickF);
   $('destinationFind').onclick = dest;
   $('transferFind').onclick = go;

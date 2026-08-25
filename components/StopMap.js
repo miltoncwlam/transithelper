@@ -137,7 +137,7 @@ export default function StopMap({
         if (showStraight && pts.length >= 2) {
           L.polyline(pts, { color: '#111111', weight: 2, dashArray: '5, 8', opacity: 0.45 }).addTo(layersRef.current);
         }
-      } else if (pts.length >= 2) {
+      } else if (showStraight && pts.length >= 2) {
         L.polyline(pts, { color: '#000000', weight: 3, dashArray: '6, 6', opacity: 0.55 }).addTo(layersRef.current);
       }
       const fitPts = road || pts;
