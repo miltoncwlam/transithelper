@@ -3,8 +3,8 @@
   "short_name": "轉乘助手",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f4f7f7",
-  "theme_color": "#287d75",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
   "lang": "zh-Hant",
   "icons": [
     {

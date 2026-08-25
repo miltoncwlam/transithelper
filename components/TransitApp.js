@@ -1,9 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/apiBase.js';
 import { I18N } from '../lib/i18n.js';
 import { pickFollowedTrain } from '../lib/mtr.js';
+import { lineColorForCo } from '../lib/routeColors.js';
 import { collectMatchingServices, sortLiveChoices } from '../lib/routeSearch.js';
 import { clusterOppositeStops } from '../lib/stopCluster.js';
 import { displayStopName } from '../lib/stopName.js';
@@ -42,6 +44,20 @@ function serviceCo(row) {
   if (row?.gmb_route_id) return 'GMB';
   if (row?.nlb_route_id) return 'NLB';
   return 'KMB';
+}
+
+function coTone(row, companies) {
+  const set = new Set((companies && companies.length ? companies : [serviceCo(row)]).map((c) => String(c).toUpperCase()));
+  const hasCtb = set.has('CTB');
+  const hasGmb = set.has('GMB');
+  const hasNlb = set.has('NLB');
+  const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB' && c !== 'NLB');
+  if (hasCtb && hasFranchised) return 'pg-co-joint';
+  if (hasGmb) return 'pg-co-gmb';
+  if (hasNlb) return 'pg-co-nlb';
+  if (hasCtb) return 'pg-co-ctb';
+  if (set.has('LWB')) return 'pg-co-lwb';
+  return 'pg-co-kmb';
 }
 
 function servicePlaceKey(x, side) {
@@ -165,8 +181,10 @@ export default function TransitApp() {
   const [recents, setRecents] = useState({ routes: [], stops: [] });
   const [standaloneHint, setStandaloneHint] = useState(false);
   const [routeNearNote, setRouteNearNote] = useState('');
+  const [routeLine, setRouteLine] = useState(null);
 
   const stopCache = useRef(new Map());
+  const routeLineSeq = useRef(0);
   const lastView = useRef(null);
   const transferSeq = useRef(0);
   const homeOpened = useRef(false);
@@ -472,7 +490,27 @@ export default function TransitApp() {
     setFetchedStops({});
     setOpenStopKey(null);
     setRouteNearNote('');
-    setArrivalGroups(groups(await fetchStops(s)));
+    setRouteLine(null);
+    const seq = await fetchStops(s);
+    setArrivalGroups(groups(seq));
+    const lineId = ++routeLineSeq.current;
+    setRouteLine({ loading: true });
+    api('/api/route-line', {
+      method: 'POST',
+      timeoutMs: 28000,
+      body: JSON.stringify({
+        route: s.route,
+        co: serviceCo(s),
+        bound: s.bound || '',
+        orig: s.orig_tc || s.orig_en || '',
+        dest: s.dest_tc || s.dest_en || '',
+        stops: (seq || []).map((stop) => ({ lat: stop.lat, lng: stop.lng ?? stop.long }))
+      })
+    }).then((json) => {
+      if (lineId === routeLineSeq.current) setRouteLine(json);
+    }).catch(() => {
+      if (lineId === routeLineSeq.current) setRouteLine({ coords: [], source: 'straight' });
+    });
     try {
       const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
       const json = await api(`/api/fares?${qs}`);
@@ -659,13 +697,13 @@ export default function TransitApp() {
     );
     if (opts.onPick) {
       return (
-        <button className="item choice" type="button" key={`${x.kind}-${x.route}-${x.eta}-${i}`} onClick={opts.onPick}>
+        <button className={`item choice pg-choice ${coTone(x)}`} type="button" key={`${x.kind}-${x.route}-${x.eta}-${i}`} onClick={opts.onPick}>
           {body}
         </button>
       );
     }
     return (
-      <div className="item" key={`${x.kind}-${x.route}-${x.eta}-${i}`}>
+      <div className={`item ${coTone(x)}`} key={`${x.kind}-${x.route}-${x.eta}-${i}`}>
         {body}
       </div>
     );
@@ -1269,7 +1307,7 @@ export default function TransitApp() {
         : <b>{clk(board)}</b>;
       const stopId = `arrival-${board}`;
       return (
-        <div className="item" key={`${x.route || ''}-${board}-${i}`}>
+        <div className={`item ${x.route ? coTone(x) : ''}`} key={`${x.route || ''}-${board}-${i}`}>
           <div className="eta">
             <div>
               {destLabel && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}{service}
@@ -1333,7 +1371,7 @@ export default function TransitApp() {
     return (
       <>
         {payload.keep.map((z, i) => (
-          <button key={`${z.service.co || 'KMB'}-${z.service.route}-${z.service.bound}-${z.service.service_type}-${z.service.gmb_route_id || ''}-${i}`} className="item choice" type="button" onClick={() => onPick(z.service)}>
+          <button key={`${z.service.co || 'KMB'}-${z.service.route}-${z.service.bound}-${z.service.service_type}-${z.service.gmb_route_id || ''}-${i}`} className={`item choice pg-choice ${coTone(z.service, z.companies)}`} type="button" onClick={() => onPick(z.service)}>
             <span className="badge">{coLabel(z.service, z.companies)}</span> <b>{z.service.route}</b>
             <div>{rn(z.service)}</div>
             {fareNote(z.service)}
@@ -1358,15 +1396,20 @@ export default function TransitApp() {
   const resultPhase = chosenDirect ? 'direct' : (transferResult?.json?.phase || transferPhase);
 
   return (
-    <main className="shell">
-      <header className="app-header mb-4">
-        <div>
-          <h1 className="text-xl font-bold">{t('title')}</h1>
-          <p className="muted app-tagline">{t('subtitle')}</p>
+    <div className="playground-page" style={{ '--pg-accent': arrivalService ? lineColorForCo(serviceCo(arrivalService)) : '#E1251B' }}>
+      <div className="pg-stripe" aria-hidden="true" />
+    <main className="shell playground-ui">
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-mark">HK</span>
+          <div>
+            <h1 className="text-xl pg-title">{t('title')}</h1>
+            <p className="brand-kicker app-tagline">{t('subtitle')}</p>
+          </div>
         </div>
         <div className="app-controls">
           <button
-            className="tab"
+            className="tab pg-lang"
             type="button"
             aria-label={t('langBtn')}
             onClick={() => {
@@ -1377,7 +1420,8 @@ export default function TransitApp() {
           >
             {t('langBtn')}
           </button>
-          <button className="tab" type="button" onClick={() => setTab('guide')}>{t('guideBtn')}</button>
+          <Link className="tab pg-map" href="/playground">{t('playgroundBtn')}</Link>
+          <button className={`tab pg-guide${tab === 'guide' ? ' active' : ''}`} type="button" onClick={() => setTab('guide')}>{t('guideBtn')}</button>
           <select className="field" value={refreshSec} onChange={(e) => setRefreshSec(e.target.value)}>
             <option value="15">{t('refresh15')}</option>
             <option value="30">{t('refresh30')}</option>
@@ -1388,7 +1432,7 @@ export default function TransitApp() {
       {standaloneHint ? <p className="muted">{t('addHomeScreen')}</p> : null}
       <nav className="tabs my-5">
         {tabs.map(([id, label]) => (
-          <button key={id} className={`tab${tab === id ? ' active' : ''}`} type="button" onClick={() => setTab(id)}>{label}</button>
+          <button key={id} className={`tab tab-${id}${tab === id ? ' active' : ''}`} type="button" onClick={() => setTab(id)}>{label}</button>
         ))}
       </nav>
 
@@ -1414,12 +1458,12 @@ export default function TransitApp() {
                 if (payload.auto) pickArrival(payload.auto);
               }}>{t('find')}</button>
           </div>
-          <button className="tab btn-block mt-3" type="button" aria-label={t('nearbyStops')} onClick={findNearbyStops}>{t('nearbyStops')}</button>
+          <button className="tab btn-block mt-3 tab-nearby" type="button" aria-label={t('nearbyStops')} onClick={findNearbyStops}>{t('nearbyStops')}</button>
           {recents.stops.length && !nearbyList?.data?.length ? (
             <div className="mt-2">
               <div className="muted">{t('recentStops')}</div>
               {recents.stops.map((stop) => (
-                <button key={`${stop.co || ''}-${stop.stop}`} className="item choice" type="button" onClick={() => pickNearbyStop(stop)}>
+                <button key={`${stop.co || ''}-${stop.stop}`} className="item choice pg-choice pg-stop" type="button" onClick={() => pickNearbyStop(stop)}>
                   <b>{lang === 'zh' ? stop.name_tc || stop.name_en : stop.name_en || stop.name_tc}</b>
                   <div className="muted">{coLabel(stop)}</div>
                 </button>
@@ -1441,7 +1485,7 @@ export default function TransitApp() {
           {nearbyList?.clusters?.length ? (
             <div className="mt-2">
               {nearbyList.clusters.map((stop) => (
-                <button key={`${stop.lat}-${stop.lng}-${stop.stop}`} className="item choice" type="button" onClick={() => pickNearbyStop(stop)}>
+                <button key={`${stop.lat}-${stop.lng}-${stop.stop}`} className="item choice pg-choice pg-stop" type="button" onClick={() => pickNearbyStop(stop)}>
                   <b>{displayStopName(stop, lang)}</b>
                   <div className="muted">{t('metres', stop.metres)}{stop.members?.length > 1 ? ` · ${stop.members.length}` : ''}</div>
                 </button>
@@ -1453,7 +1497,7 @@ export default function TransitApp() {
               <h3 className="font-bold mt-3">{displayStopName(nearbyBoard.stop, lang)}</h3>
               {nearbyBoard.groups.length
                 ? nearbyBoard.groups.map((g) => (
-                  <div className="item" key={`${g.co}-${g.route}-${loc(g.dest)}-${g.gmb_route_id || g.nlb_route_id || ''}`}>
+                  <div className={`item ${coTone(g)}`} key={`${g.co}-${g.route}-${loc(g.dest)}-${g.gmb_route_id || g.nlb_route_id || ''}`}>
                     <span className="badge">{coLabel(g)}</span> <b>{g.route}</b>
                     <div>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(g.dest)}</div>
                     {g.remark ? <div className="muted">{g.remark === 'Scheduled' || g.remark === '預定班次' || g.remark === '未開出' ? t('scheduledTrip') : g.remark}</div> : null}
@@ -1468,7 +1512,7 @@ export default function TransitApp() {
           <div>{renderChoiceList(arrivalChoices, pickArrival)}</div>
           {arrivalService ? (
             <>
-              <h3 className="font-bold mt-3">{coLabel(arrivalService)} {arrivalService.route}</h3>
+              <h3 className={`font-bold mt-3 pg-route ${coTone(arrivalService)}`}><span className="badge">{coLabel(arrivalService)}</span> {arrivalService.route}</h3>
               <div className="muted">{rn(arrivalService)}</div>
               <div className="row-actions">
                 <button className="tab" type="button" onClick={swapArrivalBound}>{t('reverseBound')}</button>
@@ -1477,18 +1521,27 @@ export default function TransitApp() {
               {routeNearNote ? <p className="muted">{routeNearNote}</p> : null}
               {routeMapStops.length >= 2 ? (
                 <div className="route-board mt-3">
-                  <StopMap
-                    mode="route"
-                    center={[routeMapStops[0].lat, routeMapStops[0].lng]}
-                    routeStops={routeMapStops}
-                    selectedIndex={arrivalStopIndex}
-                    onPick={(stop) => chooseArrivalStop(stop.index, '')}
-                  />
+                  <div>
+                    <StopMap
+                      mode="route"
+                      center={[routeMapStops[0].lat, routeMapStops[0].lng]}
+                      routeStops={routeMapStops}
+                      selectedIndex={arrivalStopIndex}
+                      path={routeLine?.coords}
+                      lineColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
+                      markerColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
+                      onPick={(stop) => chooseArrivalStop(stop.index, '')}
+                    />
+                    {routeLine?.loading ? <p className="muted">{t('playgroundLoading')}</p> : null}
+                    {!routeLine?.loading && routeLine?.source === 'osm' ? <p className="muted">{t('playgroundSourceOsm')}</p> : null}
+                    {!routeLine?.loading && routeLine?.source === 'osrm' ? <p className="muted">{t('playgroundSourceRoad')}</p> : null}
+                    {!routeLine?.loading && routeLine?.source === 'straight' ? <p className="muted">{t('playgroundSourceStraight')}</p> : null}
+                  </div>
                   <div className="stop-scan">
                     {arrivalGroups.map((g, i) => (
                       <button
                         key={g.label + i}
-                        className={`item choice${arrivalStopIndex === String(i) ? ' selected' : ''}`}
+                        className={`item choice pg-choice ${coTone(arrivalService)}${arrivalStopIndex === String(i) ? ' selected' : ''}`}
                         type="button"
                         onClick={() => chooseArrivalStop(i, '')}
                       >
@@ -1503,7 +1556,7 @@ export default function TransitApp() {
                   {arrivalGroups.map((g, i) => (
                     <button
                       key={g.label + i}
-                      className={`item choice${arrivalStopIndex === String(i) ? ' selected' : ''}`}
+                      className={`item choice pg-choice ${coTone(arrivalService)}${arrivalStopIndex === String(i) ? ' selected' : ''}`}
                       type="button"
                       onClick={() => chooseArrivalStop(i, '')}
                     >
@@ -1623,7 +1676,7 @@ export default function TransitApp() {
               {destinationResults
                 ? (destinationResults.length
                   ? destinationResults.map((x, i) => (
-                    <button key={x.label + i} className="item choice" type="button" onClick={() => {
+                    <button key={x.label + i} className="item choice pg-choice pg-stop" type="button" onClick={() => {
                       setDestination(x);
                       setDestBoxHidden(true);
                     }}>{x.label}</button>
@@ -1690,7 +1743,7 @@ export default function TransitApp() {
                         return (
                           <button
                             key={`${row.eta}-${i}`}
-                            className="item choice"
+                            className={`item choice pg-choice ${coTone(firstService)}`}
                             type="button"
                             onClick={() => goTransfer({ phase: 'connections', selectedDeparture: row.eta })}
                           >
@@ -1713,7 +1766,7 @@ export default function TransitApp() {
                       ? transferResult.json.directs.map((x, i) => (
                         <button
                           key={`d-${x.route}-${x.eta}-${i}`}
-                          className="item choice"
+                          className={`item choice pg-choice ${coTone(x)}`}
                           type="button"
                           onClick={() => {
                             setChosenDirect(x);
@@ -1871,7 +1924,7 @@ export default function TransitApp() {
                     const terminus = !!(x.terminus || (x.destCode && String(x.destCode).toUpperCase() === String(boarding).toUpperCase()));
                     const stopId = `mtr-${x.line || currentLineKey}-${boarding}-${x.destCode}-${x.time}`;
                     return (
-                      <div className="item" key={`${x.line || ''}-${loc(x.dest)}-${x.time}-${i}`}>
+                      <div className="item pg-co-nlb" key={`${x.line || ''}-${loc(x.dest)}-${x.time}-${i}`}>
                         <div className="eta">
                           <div>
                             {destName && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}
@@ -1920,7 +1973,7 @@ export default function TransitApp() {
             {homeError ? <div className="note">{homeError}</div> : null}
             {!homes.length ? <p className="muted mt-3">{t('homeEmpty')}</p> : null}
             {homes.map((item) => (
-              <div className="item" key={item.id}>
+              <div className={`item ${item.type === 'mtr' ? 'pg-co-nlb' : item.type === 'transfer' ? 'pg-co-lwb' : 'pg-co-kmb'}`} key={item.id}>
                 <b>{loc(item.title)}</b>
                 {item.pinned ? <span className="badge"> {t('pin')}</span> : null}
                 <div className="muted">{loc(item.subtitle)} · {typeLabel(item.type)}</div>
@@ -1954,5 +2007,6 @@ export default function TransitApp() {
         </div>
       </section>
     </main>
+    </div>
   );
 }

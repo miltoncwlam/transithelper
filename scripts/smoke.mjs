@@ -221,6 +221,143 @@ try {
     else console.log('ok ride', ride.json.trips.length, 'trips', ride.json.emptyReason || 'live');
   }
 
+  const kmbIn = await get('/api/kmb/route-stop/1/inbound/1');
+  if (!kmbIn.ok || !(kmbIn.json.data || []).length) fail(`KMB 1 inbound ${kmbIn.status} ${(kmbIn.json.data || []).length}`);
+  else if (!(kmbIn.json.data[0].name_tc || kmbIn.json.data[0].name_en)) fail('KMB 1 inbound stop has no name');
+  else console.log('ok KMB 1 inbound', kmbIn.json.data.length, 'stops', kmbIn.json.data[0].name_tc);
+
+  const lwbStops = await get('/api/kmb/route-stop/A31/outbound/1');
+  if (!lwbStops.ok) fail(`LWB A31 HTTP ${lwbStops.status}`);
+  else if (!(lwbStops.json.data || []).length) fail('LWB A31 returned no stops');
+  else console.log('ok LWB A31', lwbStops.json.data.length, 'stops', lwbStops.json.data[0]?.name_tc || lwbStops.json.data[0]?.name_en);
+
+  const lwbEta = await get('/api/kmb/route-eta/A31/1');
+  if (!lwbEta.ok) fail(`LWB A31 eta ${lwbEta.status}`);
+  else console.log('ok LWB A31 etas', (lwbEta.json.data || []).length);
+
+  const ctb1 = await get('/api/citybus/route-stop/1/inbound');
+  if (!ctb1.ok) fail(`citybus 1 inbound HTTP ${ctb1.status}`);
+  else if ((ctb1.json.data || []).length) {
+    const named = (ctb1.json.data || []).filter((row) => (row.name_tc || row.name_en) && String(row.name_tc || '') !== String(row.stop));
+    if (!named.length) fail('citybus 1 inbound all stops unnamed');
+    else console.log('ok citybus 1 inbound', ctb1.json.data.length, 'stops', named[0].name_tc || named[0].name_en);
+  } else console.log('ok citybus 1 inbound empty from upstream');
+
+  const gmb11 = await get('/api/gmb/lookup?route=11');
+  if (!gmb11.ok) fail(`gmb 11 HTTP ${gmb11.status}`);
+  else if (!(gmb11.json.data || []).length) fail('gmb 11 lookup empty');
+  else {
+    const row = gmb11.json.data[0];
+    if (row.co !== 'GMB' || !row.gmb_route_id) fail(`gmb 11 incomplete ${JSON.stringify(row)}`);
+    const gmbStops = await get(`/api/gmb/route-stop/${encodeURIComponent(row.gmb_route_id)}/${encodeURIComponent(row.gmb_route_seq || 1)}`);
+    if (!gmbStops.ok || !(gmbStops.json.data || []).length) fail(`gmb 11 stops ${gmbStops.status}`);
+    else console.log('ok GMB 11', gmbStops.json.data.length, 'stops', row.gmb_region, row.orig_tc, '→', row.dest_tc);
+  }
+
+  const nlbEta = await get('/api/nlb/eta/1/' + encodeURIComponent((nlbStops.json.data || [])[0]?.stop || ''));
+  if (!nlbEta.ok) fail(`nlb eta HTTP ${nlbEta.status}`);
+  else console.log('ok NLB 1 eta', (nlbEta.json.data || []).length);
+
+  const routesDir = await get('/api/kmb/routes');
+  if (!routesDir.ok || !(routesDir.json.data || []).length) fail(`directory routes ${routesDir.status}`);
+  else {
+    const rows = routesDir.json.data || [];
+    const cos = new Set(rows.map((row) => String(row.co || 'KMB').toUpperCase()));
+    for (const need of ['KMB', 'CTB', 'GMB', 'NLB']) {
+      if (!cos.has(need)) fail(`directory missing ${need}`);
+    }
+    const hasLwb = cos.has('LWB') || rows.some((row) => /^A\d+|E\d+|NA\d+|S\d+/i.test(String(row.route || '')) && String(row.co || '').toUpperCase() !== 'CTB');
+    if (!hasLwb) fail('directory missing LWB / Long Win airport routes');
+    console.log('ok directory companies', [...cos].sort().join(','), rows.length, 'services');
+  }
+
+  async function checkLine(label, body, expectColor) {
+    const res = await fetch(BASE + '/api/route-line', {
+      method: 'POST',
+      headers: { 'X-Device-Id': 'smoke-device', Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(90000)
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) fail(`route-line ${label} HTTP ${res.status} ${JSON.stringify(json)}`);
+    else if (!['osm', 'osrm', 'straight'].includes(json.source)) fail(`route-line ${label} bad source ${json.source}`);
+    else if (json.source !== 'straight' && !(json.coords || []).length) fail(`route-line ${label} empty coords for ${json.source}`);
+    else if (json.source === 'straight' && (body.stops || []).length >= 2 && (json.coords || []).length < 2) fail(`route-line ${label} straight missing stop polyline`);
+    else if (expectColor && json.color !== expectColor) fail(`route-line ${label} color ${json.color} != ${expectColor}`);
+    else console.log('ok route-line', label, json.source, (json.coords || []).length, 'pts', json.color);
+  }
+
+  const kmbLineStops = (stopRows || []).slice(0, 8).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => p.lat && p.lng);
+  await checkLine('KMB 1', {
+    route: '1',
+    co: 'KMB',
+    bound: 'O',
+    orig: stopRows[0]?.name_tc || '',
+    dest: stopRows[stopRows.length - 1]?.name_tc || '',
+    stops: kmbLineStops
+  }, '#E1251B');
+
+  const ctbLineStops = ((ctb1.json.data || []).slice(0, 8)).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
+  await checkLine('CTB 1', {
+    route: '1',
+    co: 'CTB',
+    bound: 'I',
+    orig: (ctb1.json.data || [])[0]?.name_tc || '跑馬地',
+    dest: (ctb1.json.data || []).at(-1)?.name_tc || '中環',
+    stops: ctbLineStops
+  }, '#F5C400');
+
+  const nlbLineStops = ((nlbStops.json.data || []).slice(0, 8)).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
+  await checkLine('NLB 1', {
+    route: '1',
+    co: 'NLB',
+    bound: 'O',
+    orig: (nlbStops.json.data || [])[0]?.name_tc || '',
+    dest: (nlbStops.json.data || []).at(-1)?.name_tc || '',
+    stops: nlbLineStops
+  }, '#2F6FED');
+
+  const lwbLineStops = ((lwbStops.json.data || []).slice(0, 8)).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
+  await checkLine('LWB A31', {
+    route: 'A31',
+    co: 'LWB',
+    bound: 'O',
+    orig: (lwbStops.json.data || [])[0]?.name_tc || '',
+    dest: (lwbStops.json.data || []).at(-1)?.name_tc || '',
+    stops: lwbLineStops
+  }, '#F37021');
+
+  const gmbLineRow = (gmb11.json.data || [])[0];
+  const gmbLineStopsRaw = gmbLineRow
+    ? (await get(`/api/gmb/route-stop/${encodeURIComponent(gmbLineRow.gmb_route_id)}/${encodeURIComponent(gmbLineRow.gmb_route_seq || 1)}`)).json.data || []
+    : [];
+  const gmbLineStops = gmbLineStopsRaw.slice(0, 8).map((stop) => ({ lat: stop.lat, lng: stop.long ?? stop.lng })).filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
+  await checkLine('GMB 11', {
+    route: '11',
+    co: 'GMB',
+    bound: String(gmbLineRow?.bound || 'O'),
+    orig: gmbLineRow?.orig_tc || '',
+    dest: gmbLineRow?.dest_tc || '',
+    stops: gmbLineStops
+  }, '#00A651');
+
+  const playground = await fetch(`${BASE}/playground`);
+  if (!playground.ok) fail(`playground ${playground.status}`);
+  else {
+    const html = await playground.text();
+    if (!/路線地圖練習場|Route map playground/.test(html)) fail('playground missing heading');
+    else console.log('ok playground', playground.status);
+  }
+
+  const homesNoId = await fetch(`${BASE}/api/homes`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+  const homesNoJson = await homesNoId.json().catch(() => ({}));
+  if (homesNoId.status !== 400) fail(`homes missing device ${homesNoId.status} ${JSON.stringify(homesNoJson)}`);
+  else console.log('ok homes require device id');
+
+  const homes = await get('/api/homes');
+  if (!homes.ok || !Array.isArray(homes.json.data)) fail(`homes GET ${homes.status} ${JSON.stringify(homes.json)}`);
+  else console.log('ok homes list', homes.json.data.length);
+
   const home = await fetch(`${BASE}/`);
   if (!home.ok) fail(`home ${home.status}`);
   else console.log('ok home', home.status);

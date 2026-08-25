@@ -16,7 +16,7 @@ export const metadata = {
 };
 
 export const viewport = {
-  themeColor: '#111111',
+  themeColor: '#E1251B',
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover'
@@ -25,7 +25,7 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="zh-Hant">
-      <body>{children}</body>
+      <body className="playground-page">{children}</body>
     </html>
   );
 }

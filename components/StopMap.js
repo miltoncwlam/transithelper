@@ -25,13 +25,33 @@ function loadLeaflet() {
   return leafletPromise;
 }
 
-function numberedIcon(L, n, selected) {
+function numberedIcon(L, n, selected, color) {
+  const fill = selected ? '#fff' : (color || '#000');
+  const ink = selected ? (color || '#000') : '#fff';
+  const edge = selected ? (color || '#000') : '#fff';
   return L.divIcon({
-    className: `tb-stop-num${selected ? ' selected' : ''}`,
-    html: `<span>${n}</span>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12]
+    className: `tb-stop-num${selected ? ' selected' : ''}${color ? ' colored' : ''}`,
+    html: `<span class="tb-stop-num-inner" style="background:${fill};color:${ink};border-color:${edge}">${n}</span>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11]
   });
+}
+
+function drawCasedLine(L, layer, coords, color) {
+  L.polyline(coords, {
+    color: '#111111',
+    weight: 8,
+    opacity: 0.9,
+    lineJoin: 'round',
+    lineCap: 'round'
+  }).addTo(layer);
+  L.polyline(coords, {
+    color: color || '#E1251B',
+    weight: 5,
+    opacity: 1,
+    lineJoin: 'round',
+    lineCap: 'round'
+  }).addTo(layer);
 }
 
 export default function StopMap({
@@ -43,12 +63,18 @@ export default function StopMap({
   userLng,
   mode = 'nearby',
   routeStops,
-  selectedIndex
+  selectedIndex,
+  path,
+  lineColor,
+  markerColor,
+  showStraight = false,
+  className = ''
 }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
   const layersRef = useRef(null);
   const moveTimer = useRef(null);
+  const fittedKey = useRef('');
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
@@ -58,9 +84,10 @@ export default function StopMap({
       if (cancelled || !elRef.current || !L || mapRef.current) return;
       L.Icon.Default.imagePath = 'https://unpkg.com/leaflet@1.9.4/dist/images/';
       const map = L.map(elRef.current, { scrollWheelZoom: true, zoomControl: true });
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
-        attribution: '&copy; OpenStreetMap'
+        subdomains: 'abcd',
+        attribution: '&copy; OpenStreetMap &copy; CARTO'
       }).addTo(map);
       const lat = Number(center?.[0]) || 22.3;
       const lng = Number(center?.[1]) || 114.17;
@@ -75,6 +102,7 @@ export default function StopMap({
       });
       mapRef.current = map;
       layersRef.current = L.layerGroup().addTo(map);
+      setTimeout(() => map.invalidateSize(), 200);
     }).catch(() => {});
     return () => {
       cancelled = true;
@@ -96,39 +124,48 @@ export default function StopMap({
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
         pts.push([lat, lng]);
         const marker = L.marker([lat, lng], {
-          icon: numberedIcon(L, stop.seq || i + 1, String(selectedIndex) === String(stop.index ?? i)),
+          icon: numberedIcon(L, stop.seq || i + 1, String(selectedIndex) === String(stop.index ?? i), markerColor),
           keyboard: true
         });
         marker.on('click', () => onPick?.(stop));
         marker.bindTooltip(stop.name_tc || stop.name_en || String(stop.seq || i + 1), { direction: 'top' });
         marker.addTo(layersRef.current);
       });
-      if (pts.length >= 2) {
-        L.polyline(pts, { color: '#111', weight: 3, dashArray: '7 8', opacity: 0.85 }).addTo(layersRef.current);
+      const road = Array.isArray(path) && path.length >= 2 ? path : null;
+      if (road) {
+        drawCasedLine(L, layersRef.current, road, lineColor);
+        if (showStraight && pts.length >= 2) {
+          L.polyline(pts, { color: '#111111', weight: 2, dashArray: '5, 8', opacity: 0.45 }).addTo(layersRef.current);
+        }
+      } else if (pts.length >= 2) {
+        L.polyline(pts, { color: '#000000', weight: 3, dashArray: '6, 6', opacity: 0.55 }).addTo(layersRef.current);
       }
-      if (pts.length) {
-        map.fitBounds(pts, { padding: [28, 28], maxZoom: 16 });
+      const fitPts = road || pts;
+      const key = `${fitPts.length}:${fitPts[0]?.join(',') || ''}:${fitPts[fitPts.length - 1]?.join(',') || ''}`;
+      if (fitPts.length && fittedKey.current !== key) {
+        fittedKey.current = key;
+        map.fitBounds(fitPts, { padding: [28, 28], maxZoom: 16 });
       }
       return;
     }
 
     if (Number.isFinite(Number(userLat)) && Number.isFinite(Number(userLng))) {
-      L.circleMarker([userLat, userLng], { radius: 7, color: '#111', fillColor: '#111', fillOpacity: 1 }).addTo(layersRef.current);
+      L.circleMarker([userLat, userLng], { radius: 7, color: '#000', fillColor: '#2F6FED', fillOpacity: 1, weight: 2 }).addTo(layersRef.current);
     }
     for (const cluster of clusters || []) {
       if (!Number.isFinite(Number(cluster.lat)) || !Number.isFinite(Number(cluster.lng))) continue;
       const marker = L.circleMarker([cluster.lat, cluster.lng], {
         radius: 9,
-        color: '#111',
-        fillColor: '#fff',
-        fillOpacity: 0.95,
+        color: '#000',
+        fillColor: '#F5C400',
+        fillOpacity: 1,
         weight: 2
       });
       marker.on('click', () => onPick?.(cluster));
       marker.bindTooltip(cluster.name_tc || cluster.name_en || '', { direction: 'top' });
       marker.addTo(layersRef.current);
     }
-  }, [clusters, onPick, userLat, userLng, mode, routeStops, selectedIndex]);
+  }, [clusters, onPick, userLat, userLng, mode, routeStops, selectedIndex, path, lineColor, markerColor, showStraight]);
 
   useEffect(() => {
     if (mode === 'route') return;
@@ -141,5 +178,5 @@ export default function StopMap({
     if (Math.hypot(here.lat - lat, here.lng - lng) > 0.0008) map.setView([lat, lng], map.getZoom());
   }, [center, mode]);
 
-  return <div ref={elRef} className="stop-map" role="application" />;
+  return <div ref={elRef} className={`stop-map${className ? ` ${className}` : ''}`} role="application" />;
 }
