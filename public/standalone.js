@@ -8,10 +8,11 @@
   const NLB = 'https://rt.data.gov.hk/v2/transport/nlb';
   const MTR_API = 'https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php';
   const HOME_KEY = 'tb-homes';
+  const MTR_PREF_KEY = 'tb-mtr';
   const API_BASE = '';
 
   const $ = (id) => document.getElementById(id);
-  const S = { routes: [], stops: [], map: new Map(), cache: new Map(), last: null, lines: globalThis.TB_MTR_LINES || {}, lang: localStorage.getItem('tb-lang') || 'zh', openStops: {}, fetchedStops: {}, direct: false };
+  const S = { routes: [], stops: [], map: new Map(), cache: new Map(), last: null, tab: 'arrivals', lines: globalThis.TB_MTR_LINES || {}, lang: localStorage.getItem('tb-lang') || 'zh', openStops: {}, fetchedStops: {}, direct: false };
   let timer;
   let deb;
   let transferSeq = 0;
@@ -123,7 +124,7 @@
       return false;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/status`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+      const res = await fetch(`${API_BASE}/api/status`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
       backend = res.ok;
     } catch {
       backend = false;
@@ -2179,7 +2180,11 @@
     return S.lang === 'zh' ? row[1] : row[2];
   }
 
-  function rideDestStations(line, origin) {
+  function rideDestStations(line, origin, lineKey) {
+    if (lineKey === 'LRT') {
+      const termini = globalThis.TB_LRT_TERMINI || [];
+      return termini.filter((row) => row[0] !== origin);
+    }
     const stations = line?.stations || [];
     const routes = line?.routes;
     if (!routes?.length) return stations.filter((row) => row[0] !== origin);
@@ -2198,19 +2203,50 @@
     return out;
   }
 
+  function mtrPref() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(MTR_PREF_KEY) || '{}');
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveMtrPref() {
+    try {
+      localStorage.setItem(MTR_PREF_KEY, JSON.stringify({
+        line: $('mtrLine')?.value || '',
+        station: $('mtrStation')?.value || '',
+        dest: $('mtrDest')?.value || ''
+      }));
+    } catch {}
+  }
+
+  function mtrLineEntries() {
+    return Object.entries(S.lines).sort(([a], [b]) => (a === 'LRT' ? -1 : b === 'LRT' ? 1 : 0));
+  }
+
   function mtrInit() {
-    const entries = Object.entries(S.lines);
+    const entries = mtrLineEntries();
     if (!entries.length) return;
     const currentLine = $('mtrLine').value;
     const currentSta = $('mtrStation').value;
     const currentDest = $('mtrDest')?.value;
+    const pref = mtrPref();
     put('mtrLine', entries.map(([k, v]) => `<option value="${k}">${esc(lineName(v))}</option>`).join(''));
-    if (currentLine) $('mtrLine').value = currentLine;
+    const pick = (currentLine && S.lines[currentLine] && currentLine)
+      || (pref.line && S.lines[pref.line] && pref.line)
+      || (S.lines.LRT ? 'LRT' : entries[0][0]);
+    $('mtrLine').value = pick;
     mtrStations();
-    if (currentSta) $('mtrStation').value = currentSta;
+    const staKeep = currentSta || pref.station;
+    if (staKeep && S.lines[pick]?.stations.some((row) => row[0] === staKeep)) $('mtrStation').value = staKeep;
     fillMtrDest();
-    if (currentDest) $('mtrDest').value = currentDest;
-    $('mtrLine').onchange = () => { mtrStations(); fillMtrDest(); mtr(); };
+    const destKeep = currentDest || pref.dest;
+    if (destKeep && $('mtrDest') && [...$('mtrDest').options].some((o) => o.value === destKeep)) {
+      $('mtrDest').value = destKeep;
+    }
+    $('mtrLine').onchange = () => { mtrStations(); fillMtrDest(); saveMtrPref(); mtr(); };
   }
 
   function mtrStations() {
@@ -2220,7 +2256,7 @@
     put('mtrStation', line.stations.map((row) => `<option value="${row[0]}">${esc(stationLabel(row))}</option>`).join(''));
     if (keep && line.stations.some((row) => row[0] === keep)) $('mtrStation').value = keep;
     else $('mtrStation').value = line.stations[0]?.[0] || '';
-    $('mtrStation').onchange = () => { fillMtrDest(); mtr(); };
+    $('mtrStation').onchange = () => { fillMtrDest(); saveMtrPref(); mtr(); };
     fillMtrDest();
   }
 
@@ -2228,18 +2264,23 @@
     const line = S.lines[$('mtrLine').value];
     const origin = $('mtrStation').value;
     const keep = $('mtrDest')?.value;
-    const rows = rideDestStations(line, origin);
+    const rows = rideDestStations(line, origin, $('mtrLine')?.value);
     put('mtrDest', `<option value="">${esc(t('chooseRideDest'))}</option>${rows.map((row) => `<option value="${row[0]}">${esc(stationLabel(row))}</option>`).join('')}`);
     if (keep && keep !== origin && rows.some((row) => row[0] === keep)) $('mtrDest').value = keep;
-    if ($('mtrDest')) $('mtrDest').onchange = mtr;
+    if ($('mtrDest')) $('mtrDest').onchange = () => { saveMtrPref(); mtr(); };
   }
 
   function paintMtr() {
-    const r = S.mtrResult;
-    if (!r) return;
     const l = $('mtrLine').value;
     const s = $('mtrStation').value;
     const d = $('mtrDest')?.value || '';
+    const r = S.mtrResult;
+    const match = r && r.line === l && r.sta === s;
+    const waitHtml = S.mtrLoading ? `<p class="muted">${esc(t('mtrWait'))}</p>` : '';
+    if (!match) {
+      if (S.mtrLoading) put('mtrOutput', waitHtml);
+      return;
+    }
     const a = r.trains || [];
     let empty = t('noTrains');
     if (r.emptyReason === 'unavailable') empty = t('mtrUnavailable');
@@ -2270,7 +2311,7 @@
         return `<div class="item"><div class="eta"><div>${earliest}${routeBadge}${lineBadge}<b>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(loc(x.dest))}</b>${clockLine ? `<div class="muted">${esc(clockLine)}${destRide ? ` · ${esc(t('rideDeparts'))}` : ''}</div>` : ''}${arrive}${guess}</div><span class="mins">${wait == null ? '' : esc(t('minutes', wait))}</span></div>${x.line === 'LRT' ? '' : stopTimesBlock(`mtr-${i}`, terminus ? { terminus: true } : x.stops, fetchable)}</div>`;
       }).join('') + (a[0]?.line === 'LRT' ? `<p class="muted">${esc(r.destRelaxed ? t('lrtDestNotTerminus') : t('lrtThisStop'))}</p>` : '')
       : `<p class="muted">${esc(empty)}</p>`;
-    put('mtrOutput', delay + list + `<div class="row-actions"><button id="saveMtr" class="tab">${esc(t('saveHome'))}</button></div>`);
+    put('mtrOutput', waitHtml + delay + list + `<div class="row-actions"><button id="saveMtr" class="tab">${esc(t('saveHome'))}</button></div>`);
     const destRow = d ? S.lines[l].stations.find((row) => row[0] === d) : null;
     $('saveMtr').onclick = () => saveHome({
       type: 'mtr',
@@ -2316,6 +2357,10 @@
     const l = $('mtrLine').value;
     const s = $('mtrStation').value;
     const d = $('mtrDest')?.value || '';
+    if (!l || !s) return;
+    saveMtrPref();
+    S.mtrLoading = true;
+    paintMtr();
     try {
       if (await hasBackend()) {
         S.mtrResult = await api(`/api/mtr/schedule?line=${encodeURIComponent(l)}&sta=${encodeURIComponent(s)}${d && d !== s ? `&dest=${encodeURIComponent(d)}` : ''}`);
@@ -2349,9 +2394,11 @@
         }
       }
       S.mtrResult = { ...S.mtrResult, line: l, sta: s };
+      S.mtrLoading = false;
       paintMtr();
       S.last = 'm';
     } catch {
+      S.mtrLoading = false;
       put('mtrOutput', `<p class="muted">${esc(t('mtrUnavailable'))}</p>`);
     }
   }
@@ -2385,10 +2432,6 @@
       const rows = await hasBackend()
         ? ((await api('/api/homes')).data || [])
         : localHomes().sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
-      if (!S.homeOpened && rows.length) {
-        S.homeOpened = true;
-        tabs('home');
-      }
       if (!rows.length) {
         put('homeOutput', `<p class="muted mt-3">${esc(t('homeEmpty'))}</p>`);
         return;
@@ -2463,6 +2506,7 @@
   }
 
   function tabs(id) {
+    S.tab = id;
     document.querySelectorAll('.tab').forEach((x) => {
       if (x.dataset.tab) x.classList.toggle('active', x.dataset.tab === id);
     });
@@ -2481,9 +2525,9 @@
   function auto() {
     clearInterval(timer);
     timer = setInterval(() => {
-      if (S.last === 'a' && $('arrivalStop') && $('arrivalStop').value !== '') showA();
-      if (S.last === 't' && !S.chosenDirect) startTransfer({ silent: true });
-      if (S.last === 'm') mtr();
+      if (S.tab === 'arrivals' && S.last === 'a' && $('arrivalStop') && $('arrivalStop').value !== '') showA();
+      if (S.tab === 'transfer' && S.last === 't' && !S.chosenDirect) startTransfer({ silent: true });
+      if (S.tab === 'mtr' && S.last === 'm') mtr();
     }, +$('refresh').value * 1000);
   }
 

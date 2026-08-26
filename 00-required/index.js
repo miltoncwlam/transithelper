@@ -13,6 +13,7 @@ export { bindAddStops } from './addStops.js';
 export {
   LRT_LINE,
   LRT_STATIONS,
+  LRT_TERMINI,
   fetchLrtSchedule,
   normalizeLrtSchedule,
   planLrt

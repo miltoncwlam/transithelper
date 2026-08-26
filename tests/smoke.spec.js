@@ -22,6 +22,48 @@ test('guide and user manual', async ({ page, request }) => {
   expect(pdf.headers()['content-type'] || '').toMatch(/pdf/);
 });
 
+test('saved homes do not steal the arrivals tab', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('tb-homes', JSON.stringify([{
+      id: 'local-test',
+      type: 'arrival',
+      title: { zh: '測試回家', en: 'Test home' },
+      subtitle: { zh: '測試', en: 'Test' },
+      payload: { route: '1' },
+      pinned: false,
+      createdAt: new Date().toISOString()
+    }]));
+  });
+  await page.goto('/');
+  await expect(page.locator('button.tab-arrivals')).toHaveClass(/active/);
+  await expect(page.getByRole('heading', { name: /九巴／龍運／城巴|Live arrivals|實時到站/ }).first()).toBeVisible();
+  await expect(page.locator('.note')).toContainText(/共 \d+ 條路線服務|Directory ready|無法載入/, { timeout: 30000 });
+  await expect(page.locator('button.tab-arrivals')).toHaveClass(/active/);
+  await expect(page.locator('button.tab-home')).not.toHaveClass(/active/);
+});
+
+test('Light Rail is first and dest is termini only', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /港鐵／輕鐵|MTR \/ Light Rail/ }).click();
+  const panel = page.locator('.panel.active');
+  const lineSelect = panel.getByLabel(/路綫|Line/);
+  await expect(lineSelect.locator('option').first()).toHaveText(/輕鐵|Light Rail/);
+  await expect(lineSelect).toHaveValue('LRT');
+  const destSelect = panel.getByLabel(/此程終點（可留空）|Destination on this ride/);
+  const destTexts = await destSelect.locator('option').allTextContents();
+  expect(destTexts.length).toBeLessThanOrEqual(9);
+  expect(destTexts.some((text) => /兆康|Siu Hong/.test(text))).toBeTruthy();
+  expect(destTexts.some((text) => /元朗|Yuen Long/.test(text))).toBeTruthy();
+  expect(destTexts.some((text) => /市中心|Town Centre/.test(text))).toBeFalsy();
+  await expect(panel).toContainText(/分鐘|min|沒有|no train|下班|Next|載入|Loading/i, { timeout: 20000 });
+  const mins = panel.locator('.mins');
+  const count = await mins.count();
+  for (let i = 0; i < count; i += 1) {
+    const text = (await mins.nth(i).innerText()).trim();
+    expect(text).toMatch(/^\d+|即將|min/i);
+  }
+});
+
 test('product tabs stay available', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: /巴士／小巴|Bus \/ minibus/ })).toBeVisible();

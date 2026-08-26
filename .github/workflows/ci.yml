@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Start app
+        run: |
+          npm run dev > /tmp/tb-dev.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:3001 >/dev/null; then
+              echo ready
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'dev server did not start'
+          tail -n 80 /tmp/tb-dev.log || true
+          exit 1
+      - run: npm test
+      - run: npm run smoke
+        env:
+          SMOKE_BASE: http://127.0.0.1:3001

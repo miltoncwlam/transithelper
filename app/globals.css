@@ -392,6 +392,7 @@ a.tab {
   color: #fff;
   display: inline-block;
   letter-spacing: .04em;
+  margin-inline-end: 0.4em;
 }
 
 .stop-times {

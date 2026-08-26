@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/apiBase.js';
 import { I18N } from '../lib/i18n.js';
 import { pickFollowedTrain, publicMtrLines } from '../00-required/mtr.js';
+import { LRT_TERMINI } from '../00-required/lightrail.js';
 import { mtrLineColor } from '../lib/mtrColors.js';
 import { lineColorForCo } from '../lib/routeColors.js';
 import { displayStopName } from '../00-required/stopName.js';
@@ -91,6 +92,28 @@ function readRecents() {
 }
 
 const HOMES_KEY = 'tb-homes';
+const MTR_PREF_KEY = 'tb-mtr';
+
+function readMtrPref() {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = JSON.parse(localStorage.getItem(MTR_PREF_KEY) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeMtrPref(next) {
+  try {
+    const cur = readMtrPref();
+    localStorage.setItem(MTR_PREF_KEY, JSON.stringify({
+      line: next.line ?? cur.line ?? '',
+      station: next.station ?? cur.station ?? '',
+      dest: next.dest ?? cur.dest ?? ''
+    }));
+  } catch {}
+}
 
 function readLocalHomes() {
   try {
@@ -155,10 +178,12 @@ export default function TransitApp() {
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [chosenDirect, setChosenDirect] = useState(null);
 
-  const [mtrLine, setMtrLine] = useState('');
+  const [mtrLine, setMtrLine] = useState('LRT');
   const [mtrStation, setMtrStation] = useState('');
   const [mtrDest, setMtrDest] = useState('');
   const [mtrResult, setMtrResult] = useState(null);
+  const [mtrLoading, setMtrLoading] = useState(false);
+  const [mtrPrefReady, setMtrPrefReady] = useState(false);
   const [openStopKey, setOpenStopKey] = useState(null);
   const [fetchedStops, setFetchedStops] = useState({});
 
@@ -181,7 +206,6 @@ export default function TransitApp() {
   const arrivalBoardRef = useRef(null);
   const arrivalLiveRef = useRef(null);
   const transferSeq = useRef(0);
-  const homeOpened = useRef(false);
   const transferPhaseRef = useRef(null);
   const selectedDepartureRef = useRef(null);
   const selectedConnectionRef = useRef(null);
@@ -832,7 +856,8 @@ export default function TransitApp() {
 
   const lineName = (line) => loc(line.name) || line.name;
   const stationLabel = (row) => (lang === 'zh' ? row[1] : row[2]);
-  function rideDestStations(line, origin) {
+  function rideDestStations(line, origin, lineKey) {
+    if (lineKey === 'LRT') return LRT_TERMINI.filter((row) => row[0] !== origin);
     const stations = line?.stations || [];
     const routes = line?.routes;
     if (!routes?.length) return stations.filter((row) => row[0] !== origin);
@@ -851,9 +876,9 @@ export default function TransitApp() {
     return out;
   }
 
-  const lineEntries = Object.entries(lines);
+  const lineEntries = Object.entries(lines).sort(([a], [b]) => (a === 'LRT' ? -1 : b === 'LRT' ? 1 : 0));
   const currentLine = lines[mtrLine] || lineEntries[0]?.[1];
-  const currentLineKey = lines[mtrLine] ? mtrLine : (lineEntries[0]?.[0] || '');
+  const currentLineKey = lines[mtrLine] ? mtrLine : (lineEntries[0]?.[0] || 'LRT');
   const currentStations = currentLine?.stations || [];
   const currentSta = currentStations.some((row) => row[0] === mtrStation)
     ? mtrStation
@@ -863,14 +888,18 @@ export default function TransitApp() {
     if (!line || !sta) return;
     const destCode = dest && dest !== sta ? dest : '';
     const seq = ++mtrSeq.current;
+    setMtrLoading(true);
     try {
       const r = await api(`/api/mtr/schedule?line=${encodeURIComponent(line)}&sta=${encodeURIComponent(sta)}${destCode ? `&dest=${encodeURIComponent(destCode)}` : ''}`);
       if (seq !== mtrSeq.current) return;
       setMtrResult({ ...r, line, sta });
       lastView.current = 'm';
+      writeMtrPref({ line, station: sta, dest: destCode });
     } catch {
       if (seq !== mtrSeq.current) return;
       setMtrResult({ trains: [], emptyReason: 'unavailable', line, sta });
+    } finally {
+      if (seq === mtrSeq.current) setMtrLoading(false);
     }
   }, [api, currentLineKey, currentSta, mtrDest]);
 
@@ -898,18 +927,10 @@ export default function TransitApp() {
       const rows = mergeHomes(json.data || [], local);
       setHomes(rows);
       setHomeError('');
-      if (!homeOpened.current && rows.length) {
-        homeOpened.current = true;
-        setTab('home');
-      }
     } catch (error) {
       const rows = sortHomes(local);
       setHomes(rows);
       setHomeError(rows.length ? '' : error.message);
-      if (!homeOpened.current && rows.length) {
-        homeOpened.current = true;
-        setTab('home');
-      }
     }
   }, [api]);
 
@@ -1069,29 +1090,41 @@ export default function TransitApp() {
   }, [tab]);
 
   useEffect(() => {
-    const entries = Object.entries(lines);
-    if (!entries.length) return;
-    if (!mtrLine) setMtrLine(entries[0][0]);
+    const p = readMtrPref();
+    if (p.line && lines[p.line]) setMtrLine(p.line);
+    if (p.station) setMtrStation(p.station);
+    if (p.dest) setMtrDest(p.dest);
+    setMtrPrefReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (mtrLine && lines[mtrLine]) return;
+    if (lines.LRT) setMtrLine('LRT');
+    else {
+      const first = Object.keys(lines)[0];
+      if (first) setMtrLine(first);
+    }
   }, [lines, mtrLine]);
 
   useEffect(() => {
+    if (!mtrPrefReady) return;
     const first = currentLine?.stations?.[0]?.[0];
     if (!first) return;
     if (!mtrStation || !(currentLine.stations || []).some((row) => row[0] === mtrStation)) {
       setMtrStation(first);
     }
-  }, [currentLine, mtrStation]);
+  }, [mtrPrefReady, currentLine, mtrStation]);
 
   useEffect(() => {
     const id = setInterval(() => {
-      if (lastView.current === 'a' && arrivalService && arrivalStopIndex !== '') {
+      if (tab === 'arrivals' && lastView.current === 'a' && arrivalService && arrivalStopIndex !== '') {
         showArrival(arrivalService, arrivalGroups, arrivalStopIndex);
       }
-      if (lastView.current === 't' && !chosenDirectRef.current) goTransfer({ silent: true });
-      if (lastView.current === 'm') showMtr();
+      if (tab === 'transfer' && lastView.current === 't' && !chosenDirectRef.current) goTransfer({ silent: true });
+      if (tab === 'mtr' && lastView.current === 'm') showMtr();
     }, +refreshSec * 1000);
     return () => clearInterval(id);
-  }, [refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, showMtr, chosenDirect, mtrDest]);
+  }, [tab, refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, showMtr, chosenDirect, mtrDest]);
 
   useEffect(() => {
     if (tab !== 'mtr' || !currentLineKey || !currentSta) return;
@@ -1834,9 +1867,11 @@ export default function TransitApp() {
               <span className="mtr-line-pip" style={{ background: mtrLineColor(currentLineKey) }} aria-hidden="true" />
               <select className="field" value={currentLineKey} onChange={(e) => {
                 const next = e.target.value;
+                const sta = lines[next]?.stations?.[0]?.[0] || '';
                 setMtrLine(next);
-                setMtrStation(lines[next]?.stations?.[0]?.[0] || '');
+                setMtrStation(sta);
                 setMtrDest('');
+                writeMtrPref({ line: next, station: sta, dest: '' });
               }} aria-label={t('mtrLineLabel')}>
                 {lineEntries.map(([k, v]) => <option key={k} value={k}>{lineName(v)}</option>)}
               </select>
@@ -1846,23 +1881,30 @@ export default function TransitApp() {
             <span>{t('mtrStationLabel')}</span>
             <select className="field mt-1" value={currentSta} onChange={(e) => {
               const sta = e.target.value;
+              const dest = mtrDest === sta ? '' : mtrDest;
               setMtrStation(sta);
               if (mtrDest === sta) setMtrDest('');
+              writeMtrPref({ line: currentLineKey, station: sta, dest });
             }}>
               {currentStations.map((row) => <option key={row[0]} value={row[0]}>{stationLabel(row)}</option>)}
             </select>
           </label>
           <label className="block mt-3">
             <span>{t('mtrDestLabel')}</span>
-            <select className="field mt-1" value={mtrDest} onChange={(e) => setMtrDest(e.target.value)}>
+            <select className="field mt-1" value={mtrDest} onChange={(e) => {
+              const dest = e.target.value;
+              setMtrDest(dest);
+              writeMtrPref({ line: currentLineKey, station: currentSta, dest });
+            }}>
               <option value="">{t('chooseRideDest')}</option>
-              {rideDestStations(currentLine, currentSta).map((row) => (
+              {rideDestStations(currentLine, currentSta, currentLineKey).map((row) => (
                 <option key={row[0]} value={row[0]}>{stationLabel(row)}</option>
               ))}
             </select>
           </label>
           <button className="btn btn-block mt-4" type="button" aria-label={t('mtrFind')} onClick={() => showMtr()}>{t('mtrFind')}</button>
           <div>
+            {tab === 'mtr' && mtrLoading ? <p className="muted mt-3">{t('mtrWait')}</p> : null}
             {mtrResult && mtrResult.line === currentLineKey && mtrResult.sta === currentSta ? (
               <>
                 {mtrResult.delayed ? <div className="note">{t('mtrDelayed')}</div> : null}

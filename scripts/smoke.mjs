@@ -38,9 +38,12 @@ try {
   else if (compareRouteMatches('81', '81A', '181') >= 0) fail('search rank: 81A should sort above 181 for query 81');
   else console.log('ok route search rank 81 > 81A > 181');
 
+  const statusT0 = Date.now();
   const status = await get('/api/status');
-  if (!status.ok || !status.json.routes) fail(`/api/status ${status.status} ${JSON.stringify(status.json)}`);
-  else console.log('ok status', status.json.routes, 'routes', status.json.stops, 'stops', status.json.citybusStops || 0, 'citybusStops');
+  const statusMs = Date.now() - statusT0;
+  if (!status.ok || typeof status.json.routes !== 'number') fail(`/api/status ${status.status} ${JSON.stringify(status.json)}`);
+  else if (statusMs > 8000) fail(`/api/status too slow ${statusMs}ms`);
+  else console.log('ok status', status.json.routes, 'routes', status.json.stops, 'stops', status.json.citybusStops || 0, 'citybusStops', statusMs + 'ms');
 
   const tst = await get('/api/mtr/schedule?line=TWL&sta=TST');
   if (!tst.ok) fail(`MTR TST HTTP ${tst.status}`);
@@ -125,7 +128,12 @@ try {
   const lrt = await get('/api/mtr/schedule?line=LRT&sta=1');
   if (!lrt.ok) fail(`LRT HTTP ${lrt.status}`);
   else if (!(lrt.json.trains || []).length && lrt.json.emptyReason !== 'empty' && lrt.json.emptyReason !== 'unavailable') fail(`LRT unexpected ${JSON.stringify(lrt.json)}`);
-  else console.log('ok Light Rail Tuen Mun Ferry Pier', (lrt.json.trains || []).length, 'trains', lrt.json.emptyReason || 'live');
+  else {
+    const trains = lrt.json.trains || [];
+    if (trains.some((train) => !train.time || train.minutes == null || Number.isNaN(Number(train.minutes)))) {
+      fail(`LRT missing time/minutes ${JSON.stringify(trains.slice(0, 2))}`);
+    } else console.log('ok Light Rail Tuen Mun Ferry Pier', trains.length, 'trains', lrt.json.emptyReason || 'live');
+  }
 
   const gmbLookup = await get('/api/gmb/lookup?route=811');
   if (!gmbLookup.ok) fail(`gmb 811 HTTP ${gmbLookup.status}`);
@@ -285,6 +293,14 @@ try {
   await checkSearch('1', 'NLB', 4000);
   await checkSearch('3M', 'NLB', 4000);
   await checkSearch('A35', 'NLB', 4000);
+
+  const search11 = await get('/api/search-live?route=11');
+  if (!search11.ok) fail(`search-live 11 HTTP ${search11.status}`);
+  else {
+    const keep = search11.json.keep || [];
+    const hasGmb = keep.some((z) => String(z.service?.co || '').toUpperCase() === 'GMB' && z.service?.gmb_route_id);
+    console.log('ok search-live 11', keep.length, 'choices', hasGmb ? 'includes GMB' : 'no GMB (honest empty)');
+  }
 
   async function checkLine(label, body, expectColor) {
     const res = await fetch(BASE + '/api/route-line', {

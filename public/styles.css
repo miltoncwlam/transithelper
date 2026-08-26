@@ -147,6 +147,7 @@ select.field {
   background: #e1f3ef;
   color: #17675f;
   display: inline-block;
+  margin-inline-end: 0.4em;
 }
 
 .stop-times {

@@ -72,6 +72,11 @@ export const LRT_STATIONS = [
   [920, '三聖', 'Sam Shing']
 ];
 
+const LRT_TERMINUS_IDS = [1, 100, 140, 275, 430, 550, 600, 920];
+export const LRT_TERMINI = LRT_STATIONS
+  .filter((row) => LRT_TERMINUS_IDS.includes(row[0]))
+  .map((row) => [String(row[0]), row[1], row[2]]);
+
 export const LRT_LINE = {
   name: { zh: '輕鐵', en: 'Light Rail' },
   stations: LRT_STATIONS.map((row) => [String(row[0]), row[1], row[2]])
