@@ -11,7 +11,9 @@ import { lookupStopMap } from './stopName.js';
 
 const ROUTE_STOP_TTL = 24 * 60 * 60 * 1000;
 const ETA_TTL = 8 * 1000;
-const PLAN_MS = 28000;
+const PLAN_MS = 10000;
+const DIRECT_BUDGET_MS = 2000;
+const FARE_BUDGET_MS = 600;
 const MAX_BACKUPS = 2;
 const TRIP_MATCH_MS = 10 * 60 * 1000;
 const NEARBY_CAP = 8;
@@ -66,9 +68,16 @@ function isFirst(eta, first) {
     && etaCo === firstCo
     && String(eta.route).toUpperCase() === String(first.route).toUpperCase()
     && String(eta.service_type || '1') === String(first.service_type || '1')
-    && eta.dir === first.bound
+    && sameBound(eta.dir || eta.bound, first.bound)
     && (firstCo !== 'GMB' || String(eta.gmb_route_id || first.gmb_route_id || '') === String(first.gmb_route_id || ''))
     && (firstCo !== 'NLB' || String(eta.nlb_route_id || first.nlb_route_id || '') === String(first.nlb_route_id || ''));
+}
+
+function raceMs(work, ms, fallback) {
+  return Promise.race([
+    work,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms))
+  ]);
 }
 
 function metresBetween(a, b) {
@@ -761,20 +770,22 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
   const alightStop = interIdx >= 0 ? firstSeq[interIdx] : interchangeSeeds[0];
   const firstAlightIds = new Set(alightStop?.stop ? [alightStop.stop] : []);
 
-  const lookupStops = new Map();
   const liveStops = phase === 'departures' ? boarding : interchange;
-  for (const stop of liveStops) lookupStops.set(stop.stop, stop);
   const needChain = first && boardIdx >= 0 && interIdx >= boardIdx;
   const [live, etaTables] = await Promise.all([
-    etasAtStops(cache, [...lookupStops.values()], routes),
+    etasAtStops(cache, liveStops, routes),
     needChain
       ? firstRouteEtaTables(cache, first, firstSeq, boardIdx, interIdx)
       : Promise.resolve({ bySeq: new Map(), byStop: new Map() })
   ]);
 
-  const boardFirstTimes = clusterEtas(
-    live.filter(({ eta, stop }) => isFirst(eta, first) && boardIds.has(stop.stop)).map(({ eta }) => eta.eta)
-  );
+  const tableBoardTimes = boardIdx >= 0
+    ? etaSlotsAt(firstSeq[boardIdx], etaTables).map((slot) => slot.eta)
+    : [];
+  const boardFirstTimes = clusterEtas([
+    ...tableBoardTimes,
+    ...live.filter(({ eta, stop }) => isFirst(eta, first) && boardIds.has(stop.stop)).map(({ eta }) => eta.eta)
+  ]);
 
   if (box) {
     const dest = first ? namedDest({ dest_tc: first.dest_tc, dest_en: first.dest_en }) : { zh: '', en: '' };
@@ -797,8 +808,6 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
   }
 
   const skipOtherDirects = destOnFirst >= 0 && phase === 'departures';
-  const candidateList = skipOtherDirects ? [] : groupCandidates(live);
-  const sequences = skipOtherDirects ? [] : await mapPool(candidateList, 6, (candidate) => routeStops(cache, stopMap, candidate));
 
   if (phase === 'departures') {
     const dest = first ? namedDest({ dest_tc: first.dest_tc, dest_en: first.dest_en }) : { zh: '', en: '' };
@@ -816,56 +825,85 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
         stops: followed.stops || []
       };
     });
-    const pending = [];
-    candidateList.forEach((candidate, idx) => {
-      const seq = sequences[idx] || [];
-      if (!seq.length || isFirstRoute(candidate, first)) return;
-      for (const entry of candidate.entries) {
-        const match = servesAfter(seq, entry.stop.stop, destinations, destIds);
-        if (!match) continue;
-        const fromIdx = seq.findIndex((row) => row.stop === match.from.stop);
-        const toIdx = seq.findIndex((row) => row.stop === match.to.stop);
-        if (fromIdx < 0 || toIdx <= fromIdx) continue;
-        const atBoard = boardIds.has(entry.stop.stop);
-        const atInter = interIds.has(entry.stop.stop);
-        const sameStop = atBoard && atInter;
-        let kind = null;
-        if (sameStop || (sameStartAndTransfer && atInter)) kind = 'same_stop';
-        else if (atBoard && !atInter) kind = 'direct';
-        if (!kind) continue;
-        pending.push({
-          candidate,
-          seq,
-          fromIdx,
-          toIdx,
-          item: connectionRow(kind, candidate, entry, match, { waitAfterFirstMinutes: null })
-        });
-      }
-    });
-    const uniqueDirects = [];
-    for (const row of pending) addUnique(uniqueDirects, row.item, firstAlightIds);
-    const timedDirects = await mapPool(uniqueDirects.slice(0, 10), 3, async (item) => {
-      const hit = pending.find((row) => row.item.route === item.route && row.item.kind === item.kind && row.item.eta === item.eta);
-      if (!hit) return item;
-      return attachRideTimes(cache, hit.candidate, hit.seq, item, hit.fromIdx, hit.toIdx);
-    });
-    timedDirects.sort((a, b) => new Date(a.eta) - new Date(b.eta));
-    const withDiscounts = first ? await attachDiscounts(timedDirects.map(publicItem), first) : timedDirects.map(publicItem);
+    if (box) {
+      box.latest = {
+        ...box.latest,
+        firstArrivalAtInterchange: departures.find((row) => row.arrive)?.arrive || null,
+        boardDeparture: departures[0]?.eta || null,
+        arrivalEstimated: !!departures.find((row) => row.arrivalEstimated),
+        departures,
+        emptyReason: departures.length ? null : 'no_departure'
+      };
+    }
+
+    const loadDirects = async () => {
+      if (skipOtherDirects) return [];
+      const candidateList = groupCandidates(live);
+      const sequences = await mapPool(candidateList, 6, (candidate) => routeStops(cache, stopMap, candidate));
+      const pending = [];
+      candidateList.forEach((candidate, idx) => {
+        const seq = sequences[idx] || [];
+        if (!seq.length || isFirstRoute(candidate, first)) return;
+        for (const entry of candidate.entries) {
+          const match = servesAfter(seq, entry.stop.stop, destinations, destIds);
+          if (!match) continue;
+          const fromIdx = seq.findIndex((row) => row.stop === match.from.stop);
+          const toIdx = seq.findIndex((row) => row.stop === match.to.stop);
+          if (fromIdx < 0 || toIdx <= fromIdx) continue;
+          const atBoard = boardIds.has(entry.stop.stop);
+          const atInter = interIds.has(entry.stop.stop);
+          const sameStop = atBoard && atInter;
+          let kind = null;
+          if (sameStop || (sameStartAndTransfer && atInter)) kind = 'same_stop';
+          else if (atBoard && !atInter) kind = 'direct';
+          if (!kind) continue;
+          pending.push({
+            candidate,
+            seq,
+            fromIdx,
+            toIdx,
+            item: connectionRow(kind, candidate, entry, match, { waitAfterFirstMinutes: null })
+          });
+        }
+      });
+      const uniqueDirects = [];
+      for (const row of pending) addUnique(uniqueDirects, row.item, firstAlightIds);
+      const timedDirects = await mapPool(uniqueDirects.slice(0, 10), 3, async (item) => {
+        const hit = pending.find((row) => row.item.route === item.route && row.item.kind === item.kind && row.item.eta === item.eta);
+        if (!hit) return item;
+        return attachRideTimes(cache, hit.candidate, hit.seq, item, hit.fromIdx, hit.toIdx);
+      });
+      timedDirects.sort((a, b) => new Date(a.eta) - new Date(b.eta));
+      return timedDirects;
+    };
+
+    const timedDirects = await raceMs(loadDirects(), DIRECT_BUDGET_MS, []);
+    const withDiscounts = first && timedDirects.length
+      ? await raceMs(attachDiscounts(timedDirects.map(publicItem), first), FARE_BUDGET_MS, timedDirects.map(publicItem))
+      : timedDirects.map(publicItem);
+    const firstFare = await raceMs(
+      boardIdx >= 0 && interIdx > boardIdx
+        ? fareForRoute(first, boardIdx + 1, interIdx + 1)
+        : fareForRoute(first),
+      FARE_BUDGET_MS,
+      null
+    );
     return {
       phase: 'departures',
       firstArrivalAtInterchange: departures.find((row) => row.arrive)?.arrive || null,
-      firstFare: boardIdx >= 0 && interIdx > boardIdx
-        ? await fareForRoute(first, boardIdx + 1, interIdx + 1)
-        : await fareForRoute(first),
+      firstFare,
       boardDeparture: departures[0]?.eta || null,
       arrivalEstimated: !!departures.find((row) => row.arrivalEstimated),
       sameStartAndTransfer,
       departures,
-      directs: await attachFaresToItems(withDiscounts),
+      directs: await raceMs(attachFaresToItems(withDiscounts), FARE_BUDGET_MS, withDiscounts),
       list: [],
       emptyReason: departures.length ? null : 'no_departure'
     };
   }
+
+  const candidateList = skipOtherDirects ? [] : groupCandidates(live);
+  const sequences = skipOtherDirects ? [] : await mapPool(candidateList, 6, (candidate) => routeStops(cache, stopMap, candidate));
 
   const selectedBoard = body.selectedDeparture || null;
   const boardDeparture = selectedBoard || boardFirstTimes[0] || null;
@@ -1112,10 +1150,13 @@ export async function planTransfer(cache, stopMap, allStops, body, routes) {
   });
   const timeout = new Promise((resolve) => {
     setTimeout(() => {
-      if (box.latest && ((box.latest.departures || []).length || (box.latest.directs || []).length || (box.latest.list || []).length)) {
+      if (box.latest) {
         resolve({
           ...box.latest,
-          emptyReason: box.latest.emptyReason || ((box.latest.departures || []).length ? null : 'timeout')
+          emptyReason: box.latest.emptyReason
+            || ((box.latest.departures || []).length || (box.latest.directs || []).length || (box.latest.list || []).length
+              ? null
+              : 'timeout')
         });
         return;
       }
