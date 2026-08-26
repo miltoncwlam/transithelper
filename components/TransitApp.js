@@ -1351,7 +1351,7 @@ export default function TransitApp() {
         </div>
       </header>
       <div className="note">{dirCount == null ? t('loading') : dirCount < 0 ? (offline && showLocalDevHint() ? t('connectionRefused') : t('loadFail')) : t('ready', dirCount)}</div>
-      {standaloneHint ? <p className="muted">{t('addHomeScreen')}</p> : null}
+      {standaloneHint ? <p className="muted add-home-hint">{t('addHomeScreen')}</p> : null}
       <nav className="tabs my-5">
         {tabs.map(([id, label]) => (
           <button key={id} className={`tab tab-${id}${tab === id ? ' active' : ''}`} type="button" onClick={() => setTab(id)}>{label}</button>

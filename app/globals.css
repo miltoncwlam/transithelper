@@ -3,6 +3,7 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  overflow-x: clip;
 }
 
 *,
@@ -16,7 +17,8 @@ body {
   background: #ffffff;
   color: #000000;
   margin: 0;
-  overflow-x: hidden;
+  overflow-x: clip;
+  overscroll-behavior-x: none;
   font-family: Inter, 'Noto Sans TC', ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -39,7 +41,9 @@ button {
   box-sizing: border-box;
   width: 100%;
   max-width: 48rem;
+  min-width: 0;
   margin: auto;
+  overflow-x: clip;
   padding: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
 }
 
@@ -47,6 +51,13 @@ button {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.brand > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .brand-mark {
@@ -86,6 +97,8 @@ h1 {
   border: 2px solid #000;
   padding: 16px;
   box-shadow: 3px 3px 0 #000;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .field {
@@ -149,6 +162,9 @@ a.tab {
   align-items: center;
   justify-content: center;
   color: #000;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .tab:hover,
@@ -237,11 +253,14 @@ a.tab {
 }
 
 .stop-map {
+  width: 100%;
+  max-width: 100%;
   height: min(48dvh, 420px);
   min-height: 240px;
   margin-top: 12px;
   overflow: hidden;
   border: 2px solid #000;
+  box-sizing: border-box;
   z-index: 0;
   box-shadow: 3px 3px 0 #000;
   touch-action: pan-x pan-y;
@@ -308,9 +327,17 @@ a.tab {
   background: #fff !important;
 }
 
+.leaflet-container {
+  width: 100% !important;
+  max-width: 100%;
+}
+
 .leaflet-control-attribution {
   font-family: 'Space Mono', ui-monospace, monospace !important;
   font-size: 9px !important;
+  max-width: calc(100% - 12px);
+  overflow-wrap: anywhere;
+  line-height: 1.3;
 }
 
 .guide h3 {
@@ -340,6 +367,11 @@ a.tab {
   justify-content: space-between;
   gap: 10px;
   align-items: center;
+  min-width: 0;
+}
+
+.eta > :first-child {
+  min-width: 0;
 }
 
 .mins {
@@ -506,6 +538,8 @@ a.tab {
   line-height: 1.2;
   font-size: .75rem;
   letter-spacing: .02em;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .search-row {
@@ -562,12 +596,18 @@ h3.font-bold {
   .shell {
     padding: max(8px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
   }
+  .pg-stripe {
+    height: 8px;
+  }
   .app-header {
     position: static;
     flex-direction: column;
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     padding-bottom: 8px;
+  }
+  .app-tagline {
+    display: none;
   }
   .app-controls {
     width: 100%;
@@ -583,32 +623,73 @@ h3.font-bold {
     padding: 8px 6px;
   }
   .text-xl {
-    font-size: 1.05rem;
+    font-size: 1.02rem;
+  }
+  .text-lg {
+    font-size: 1rem;
   }
   .card {
     padding: 12px;
   }
+  .playground-ui .card,
+  .playground-ui .stop-map {
+    box-shadow: 3px 3px 0 #2A241C;
+  }
+  .note {
+    margin-top: 8px;
+    padding: 8px 10px;
+    font-size: .75rem;
+  }
+  .my-5 {
+    margin-top: 12px;
+    margin-bottom: 12px;
+  }
   .tabs .tab {
     min-height: 48px;
-    font-size: .8rem;
+    font-size: .78rem;
     padding: 10px 6px;
+  }
+  .row-actions .tab,
+  .row-actions .btn {
+    min-width: 0;
+    flex: 1 1 calc(50% - 8px);
   }
   .recent-routes {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
     gap: 8px;
   }
   .recent-routes .tab {
     min-width: 0;
+    flex: none;
     padding: 10px 4px;
   }
+  .item .row-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .item .row-actions .tab,
+  .item .row-actions .btn {
+    width: 100%;
+    min-width: 0;
+    padding: 10px 4px;
+    font-size: .75rem;
+  }
+  .search-row .btn {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
   .stop-map {
-    height: min(42dvh, 320px);
-    min-height: 220px;
+    height: min(38dvh, 300px);
+    min-height: 200px;
   }
   .stop-map.stop-map-picked {
-    height: min(28dvh, 220px);
-    min-height: 160px;
+    height: min(26dvh, 200px);
+    min-height: 150px;
+  }
+  .stop-map.playground-map {
+    height: min(46dvh, 320px);
+    min-height: 200px;
   }
   .leaflet-bar a,
   .leaflet-bar a:hover {
@@ -618,7 +699,38 @@ h3.font-bold {
   }
 }
 
-@media (min-width: 640px), (orientation: landscape) and (min-width: 568px) {
+@media (orientation: portrait) and (max-width: 700px) {
+  .tabs {
+    grid-template-columns: 1fr 1fr;
+  }
+  .md-grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .app-tagline {
+    display: none;
+  }
+}
+
+@media (orientation: portrait) and (max-height: 740px) {
+  .add-home-hint {
+    display: none;
+  }
+  .stop-map {
+    height: min(32dvh, 240px);
+    min-height: 170px;
+  }
+  .stop-map.stop-map-picked {
+    height: min(22dvh, 170px);
+    min-height: 130px;
+  }
+  .tabs .tab {
+    min-height: 44px;
+    padding: 8px 4px;
+    font-size: .72rem;
+  }
+}
+
+@media (orientation: landscape) and (min-width: 700px) and (min-height: 500px) {
   .tabs {
     grid-template-columns: repeat(4, 1fr);
   }
@@ -650,18 +762,44 @@ h3.font-bold {
   }
   .app-header {
     position: static;
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: nowrap;
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .app-controls {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .tabs {
+    grid-template-columns: 1fr 1fr;
+  }
+  .stop-map,
+  .stop-map.playground-map {
+    height: min(58dvh, 260px);
+    min-height: 140px;
+  }
+  .stop-map.stop-map-picked {
+    height: min(40dvh, 180px);
+    min-height: 120px;
+  }
+  .md-grid-2 {
+    grid-template-columns: 1fr;
   }
 }
 
-@media (min-width: 768px) {
+@media (min-width: 768px) and (min-height: 600px) {
   .shell {
     padding: 20px max(20px, env(safe-area-inset-right, 0px)) 20px max(20px, env(safe-area-inset-left, 0px));
   }
   .card {
     padding: 18px;
+  }
+  .tabs {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .md-grid-2 {
+    grid-template-columns: 1fr 1fr;
   }
   .route-board {
     grid-template-columns: 1fr 1fr;
