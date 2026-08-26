@@ -63,7 +63,7 @@ async function cityFetch(path, cache, ttlMs) {
       const res = await fetch(BASE + path, {
         cache: 'no-store',
         headers: { Accept: 'application/json', 'User-Agent': 'TransitBuddy/1.0' },
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(15000)
       });
       if (res.status === 403 || res.status === 429) {
         await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));

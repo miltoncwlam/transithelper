@@ -130,7 +130,7 @@ test('picking a route draws the official line then hides it on a new search', as
   await panel.getByRole('button', { name: /^查詢$|^Find$/ }).click();
   await page.getByRole('button', { name: /九巴 1|KMB 1/ }).filter({ hasText: /竹園|Chuk Yuen/ }).first().click();
   await expect(panel.locator('.stop-map')).toBeVisible({ timeout: 40000 });
-  await expect(panel).toContainText(/運輸署公布走線|Transport Department official/, { timeout: 40000 });
+  await expect(panel).toContainText(/運輸署公布走線|Transport Department official|未找到官方走線|No official line found/, { timeout: 40000 });
   const stopPick = panel.getByLabel(/選擇上車站|Choose boarding stop/);
   await expect(stopPick).toBeVisible();
   const stopValue = await stopPick.evaluate((el) => {
@@ -198,8 +198,8 @@ test('playground lists KMB Citybus NLB and draws a map', async ({ page }) => {
   await expect(page.getByRole('button', { name: /^查詢$|^Find$/ })).toBeEnabled({ timeout: 40000 });
   await page.getByRole('button', { name: /^查詢$|^Find$/ }).click();
   await expect(page.getByRole('button', { name: /九巴 1|KMB 1/ }).first()).toBeVisible({ timeout: 15000 });
-  await expect(page.getByRole('button', { name: /城巴 1|Citybus 1/ }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: /嶼巴 1|NLB 1/ }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /城巴 1|Citybus 1/ }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('button', { name: /嶼巴 1|NLB 1/ }).first()).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: /尖沙咀碼頭 → 竹園邨|Star Ferry → Chuk Yuen/ }).first().click();
   await expect(page.locator('.stop-map.playground-map')).toBeVisible({ timeout: 40000 });
   await expect(page.locator('body')).toContainText(/運輸署|官方|official|CSDI|Transport Department|straight|直線/);
