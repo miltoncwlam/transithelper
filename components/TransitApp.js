@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/apiBase.js';
 import { I18N } from '../lib/i18n.js';
 import { pickFollowedTrain } from '../lib/mtr.js';
+import { mtrLineColor } from '../lib/mtrColors.js';
 import { lineColorForCo } from '../lib/routeColors.js';
 import { displayStopName } from '../lib/stopName.js';
 import StopMap from './StopMap.js';
@@ -176,6 +177,8 @@ export default function TransitApp() {
   const arrivalPickSeq = useRef(0);
   const firstSearchSeq = useRef(0);
   const lastView = useRef(null);
+  const arrivalBoardRef = useRef(null);
+  const arrivalLiveRef = useRef(null);
   const transferSeq = useRef(0);
   const homeOpened = useRef(false);
   const stopMap = useMemo(() => new Map(stops.map((x) => [x.stop, x])), [stops]);
@@ -377,7 +380,7 @@ export default function TransitApp() {
     if (q) pushRecent('routes', q);
     if (!q) return { error: 'noRoute' };
     try {
-      const json = await api(`/api/search-live?route=${encodeURIComponent(q)}`, { timeoutMs: 8000 });
+      const json = await api(`/api/search-live?route=${encodeURIComponent(q)}`, { timeoutMs: 15000 });
       if (json.error && !(json.keep || []).length) return { error: json.error };
       const keep = (json.keep || []).map((z) => ({
         ...z,
@@ -435,7 +438,7 @@ export default function TransitApp() {
     });
     api('/api/route-line', {
       method: 'POST',
-      timeoutMs: 10000,
+      timeoutMs: 15000,
       body: JSON.stringify({
         route: s.route,
         co: serviceCo(s),
@@ -468,6 +471,7 @@ export default function TransitApp() {
     const pickToken = ++arrivalPickSeq.current;
     setArrivalService(s);
     setArrivalChoices(null);
+    setArrivalGroups([]);
     setArrivalStopIndex('');
     setArrivalDestIndex('');
     setArrivalTimes(null);
@@ -534,6 +538,11 @@ export default function TransitApp() {
     } catch {}
     await showArrival(arrivalService, arrivalGroups, v, dest);
   }, [api, arrivalDestIndex, arrivalGroups, arrivalService, showArrival]);
+
+  const pickArrivalStopFromMap = useCallback((stop) => {
+    if (stop?.index == null || stop.index === '') return;
+    chooseArrivalStop(stop.index, '');
+  }, [chooseArrivalStop]);
 
   async function swapArrivalBound() {
     if (!arrivalService) return;
@@ -1025,6 +1034,22 @@ export default function TransitApp() {
   }, [refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, showMtr, chosenDirect, mtrDest]);
 
   useEffect(() => {
+    if (!arrivalService || !arrivalGroups.length) return undefined;
+    const id = window.requestAnimationFrame(() => {
+      arrivalBoardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [arrivalService, arrivalGroups.length]);
+
+  useEffect(() => {
+    if (arrivalStopIndex === '' || !arrivalTimes) return undefined;
+    const id = window.requestAnimationFrame(() => {
+      arrivalLiveRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [arrivalStopIndex, arrivalTimes]);
+
+  useEffect(() => {
     if (!arrivalRoute.trim()) {
       hideArrivalResults();
       setArrivalChoices(null);
@@ -1293,7 +1318,7 @@ export default function TransitApp() {
   const resultPhase = chosenDirect ? 'direct' : (transferResult?.json?.phase || transferPhase);
 
   return (
-    <div className="playground-page" style={{ '--pg-accent': arrivalService ? lineColorForCo(serviceCo(arrivalService)) : '#E1251B' }}>
+    <div className="playground-page">
       <div className="pg-stripe" aria-hidden="true" />
     <main className="shell playground-ui">
       <header className="app-header">
@@ -1336,10 +1361,10 @@ export default function TransitApp() {
       <section className={`panel${tab === 'arrivals' ? ' active' : ''}`}>
         <div className="card">
           <h2 className="text-lg font-bold">{t('arrivalsHeading')}</h2>
-          {recents.routes.length ? (
+          {!arrivalService && recents.routes.length ? (
             <div className="mt-2">
               <div className="muted">{t('recentRoutes')}</div>
-              <div className="row-actions">
+              <div className="row-actions recent-routes">
                 {recents.routes.map((route) => (
                   <button key={route} className="tab" type="button" onClick={() => setArrivalRoute(route)}>{route}</button>
                 ))}
@@ -1360,7 +1385,7 @@ export default function TransitApp() {
           </div>
           <div>{renderChoiceList(arrivalChoices, pickArrival)}</div>
           {arrivalService ? (
-            <>
+            <div className="arrival-board" ref={arrivalBoardRef}>
               <h3 className={`font-bold mt-3 pg-route ${coTone(arrivalService)}`}><span className="badge">{coLabel(arrivalService)}</span> {arrivalService.route}</h3>
               <div className="muted">{rn(arrivalService)}</div>
               <div className="row-actions">
@@ -1368,54 +1393,45 @@ export default function TransitApp() {
                 <button className="tab" type="button" onClick={findNearestOnRoute}>{t('nearestStop')}</button>
               </div>
               {routeNearNote ? <p className="muted">{routeNearNote}</p> : null}
-              {routeMapStops.length >= 2 ? (
-                <div className="route-board mt-3">
-                  <div>
-                    <StopMap
-                      mode="route"
-                      center={[routeMapStops[0].lat, routeMapStops[0].lng]}
-                      routeStops={routeMapStops}
-                      selectedIndex={arrivalStopIndex}
-                      path={routeLine?.coords}
-                      lineColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
-                      markerColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
-                      onPick={(stop) => chooseArrivalStop(stop.index, '')}
-                    />
-                    {routeLine?.loading ? <p className="muted">{t('playgroundLoading')}</p> : null}
-                    {!routeLine?.loading && routeLine?.source === 'official' ? <p className="muted">{t('playgroundSourceOfficial')}</p> : null}
-                    {!routeLine?.loading && routeLine?.source === 'osm' ? <p className="muted">{t('playgroundSourceOsm')}</p> : null}
-                    {!routeLine?.loading && routeLine?.source === 'osrm' ? <p className="muted">{t('playgroundSourceRoad')}</p> : null}
-                    {!routeLine?.loading && routeLine?.source === 'straight' ? <p className="muted">{t('playgroundSourceStraight')}</p> : null}
-                  </div>
-                  <div className="stop-scan">
+              {arrivalGroups.length ? (
+                <label className="block mt-3">
+                  <span>{t('chooseStop')}</span>
+                  <select
+                    className="field mt-1"
+                    value={arrivalStopIndex}
+                    aria-label={t('chooseStop')}
+                    onChange={(e) => chooseArrivalStop(e.target.value, '')}
+                  >
+                    <option value="">{t('chooseStop')}</option>
                     {arrivalGroups.map((g, i) => (
-                      <button
-                        key={g.label + i}
-                        className={`item choice pg-choice ${coTone(arrivalService)}${arrivalStopIndex === String(i) ? ' selected' : ''}`}
-                        type="button"
-                        onClick={() => chooseArrivalStop(i, '')}
-                      >
-                        <span className="stop-num-inline">{i + 1}</span>
-                        {fareLabel(g, terminusFareForGroup(arrivalFares, g))}
-                      </button>
+                      <option key={`${g.label}-${i}`} value={String(i)}>
+                        {`${i + 1}. ${fareLabel(g, terminusFareForGroup(arrivalFares, g))}`}
+                      </option>
                     ))}
-                  </div>
+                  </select>
+                  <span className="muted block mt-1">{t('stopMapHint')}</span>
+                </label>
+              ) : null}
+              {routeMapStops.length >= 2 ? (
+                <div className="mt-3">
+                  <StopMap
+                    mode="route"
+                    center={[routeMapStops[0].lat, routeMapStops[0].lng]}
+                    routeStops={routeMapStops}
+                    selectedIndex={arrivalStopIndex}
+                    path={routeLine?.coords}
+                    lineColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
+                    markerColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
+                    onPick={pickArrivalStopFromMap}
+                    className={arrivalStopIndex !== '' ? 'stop-map-picked' : ''}
+                  />
+                  {routeLine?.loading ? <p className="muted">{t('playgroundLoading')}</p> : null}
+                  {!routeLine?.loading && routeLine?.source === 'official' ? <p className="muted">{t('playgroundSourceOfficial')}</p> : null}
+                  {!routeLine?.loading && routeLine?.source === 'osm' ? <p className="muted">{t('playgroundSourceOsm')}</p> : null}
+                  {!routeLine?.loading && routeLine?.source === 'osrm' ? <p className="muted">{t('playgroundSourceRoad')}</p> : null}
+                  {!routeLine?.loading && routeLine?.source === 'straight' ? <p className="muted">{t('playgroundSourceStraight')}</p> : null}
                 </div>
-              ) : (
-                <div className="stop-scan mt-3">
-                  {arrivalGroups.map((g, i) => (
-                    <button
-                      key={g.label + i}
-                      className={`item choice pg-choice ${coTone(arrivalService)}${arrivalStopIndex === String(i) ? ' selected' : ''}`}
-                      type="button"
-                      onClick={() => chooseArrivalStop(i, '')}
-                    >
-                      <span className="stop-num-inline">{i + 1}</span>
-                      {fareLabel(g, terminusFareForGroup(arrivalFares, g))}
-                    </button>
-                  ))}
-                </div>
-              )}
+              ) : null}
               {arrivalStopIndex !== '' ? (
                 <label className="block mt-3">
                   <span>{t('rideDestLabel')}</span>
@@ -1431,10 +1447,10 @@ export default function TransitApp() {
                   </select>
                 </label>
               ) : null}
-            </>
+            </div>
           ) : null}
           {arrivalTimes && arrivalStopIndex !== '' ? (
-            <>
+            <div ref={arrivalLiveRef}>
               <h3 className="font-bold mt-3">{arrivalGroups[+arrivalStopIndex]?.label}{arrivalTimes.destLabel ? ` → ${arrivalTimes.destLabel}` : ''}</h3>
               {fareNote(arrivalService, { hideScheduled: !!(arrivalTimes?.destLabel && arrivalTimes?.trips?.some((row) => row.rideMinutes > 0)) })}
               {etaList(arrivalTimes, { fetchStops: true })}
@@ -1452,7 +1468,7 @@ export default function TransitApp() {
                   });
                 }}>{t('saveHome')}</button>
               </div>
-            </>
+            </div>
           ) : null}
         </div>
       </section>
@@ -1498,7 +1514,7 @@ export default function TransitApp() {
           {firstService ? (
             <div className="md-grid-2 mt-4">
               <label>{t('boardStop')}
-                <select className="field mt-1" value={boardIndex} onChange={(e) => {
+                <select className="field mt-1" value={boardIndex} aria-label={t('boardStop')} onChange={(e) => {
                   const v = e.target.value;
                   setBoardIndex(v);
                   if (interchangeIndex !== '' && (v === '' || +interchangeIndex < +v)) setInterchangeIndex('');
@@ -1508,7 +1524,7 @@ export default function TransitApp() {
                 </select>
               </label>
               <label>{t('interchangeStop')}
-                <select className="field mt-1" value={interchangeIndex} onChange={(e) => setInterchangeIndex(e.target.value)}>
+                <select className="field mt-1" value={interchangeIndex} aria-label={t('interchangeStop')} onChange={(e) => setInterchangeIndex(e.target.value)}>
                   <option value="">{t('chooseInterchange')}</option>
                   {firstGroups.map((g, i) => (
                     boardIndex !== '' && i >= +boardIndex
@@ -1733,14 +1749,17 @@ export default function TransitApp() {
           <h2 className="text-lg font-bold">{t('mtrHeading')}</h2>
           <label className="block mt-3">
             <span>{t('mtrLineLabel')}</span>
-            <select className="field mt-1" value={currentLineKey} onChange={(e) => {
-              const next = e.target.value;
-              setMtrLine(next);
-              setMtrStation(lines[next]?.stations?.[0]?.[0] || '');
-              setMtrDest('');
-            }}>
-              {lineEntries.map(([k, v]) => <option key={k} value={k}>{lineName(v)}</option>)}
-            </select>
+            <div className="mtr-line-row mt-1">
+              <span className="mtr-line-pip" style={{ background: mtrLineColor(currentLineKey) }} aria-hidden="true" />
+              <select className="field" value={currentLineKey} onChange={(e) => {
+                const next = e.target.value;
+                setMtrLine(next);
+                setMtrStation(lines[next]?.stations?.[0]?.[0] || '');
+                setMtrDest('');
+              }} aria-label={t('mtrLineLabel')}>
+                {lineEntries.map(([k, v]) => <option key={k} value={k}>{lineName(v)}</option>)}
+              </select>
+            </div>
           </label>
           <label className="block mt-3">
             <span>{t('mtrStationLabel')}</span>
@@ -1777,7 +1796,7 @@ export default function TransitApp() {
                     const terminus = !!(x.terminus || (x.destCode && String(x.destCode).toUpperCase() === String(boarding).toUpperCase()));
                     const stopId = `mtr-${x.line || currentLineKey}-${boarding}-${x.destCode}-${x.time}`;
                     return (
-                      <div className="item pg-co-nlb" key={`${x.line || ''}-${loc(x.dest)}-${x.time}-${i}`}>
+                      <div className="item" key={`${x.line || ''}-${loc(x.dest)}-${x.time}-${i}`}>
                         <div className="eta">
                           <div>
                             {destName && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}
@@ -1826,7 +1845,7 @@ export default function TransitApp() {
             {homeError ? <div className="note">{homeError}</div> : null}
             {!homes.length ? <p className="muted mt-3">{t('homeEmpty')}</p> : null}
             {homes.map((item) => (
-              <div className={`item ${item.type === 'mtr' ? 'pg-co-nlb' : item.type === 'transfer' ? 'pg-co-lwb' : 'pg-co-kmb'}`} key={item.id}>
+              <div className="item" key={item.id}>
                 <b>{loc(item.title)}</b>
                 {item.pinned ? <span className="badge"> {t('pin')}</span> : null}
                 <div className="muted">{loc(item.subtitle)} · {typeLabel(item.type)}</div>

@@ -32,8 +32,8 @@ function numberedIcon(L, n, selected, color) {
   return L.divIcon({
     className: `tb-stop-num${selected ? ' selected' : ''}${color ? ' colored' : ''}`,
     html: `<span class="tb-stop-num-inner" style="background:${fill};color:${ink};border-color:${edge}">${n}</span>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11]
+    iconSize: [32, 32],
+    iconAnchor: [16, 16]
   });
 }
 
@@ -80,10 +80,17 @@ export default function StopMap({
 
   useEffect(() => {
     let cancelled = false;
+    let resizeObs = null;
+    let onResize = null;
     loadLeaflet().then((L) => {
       if (cancelled || !elRef.current || !L || mapRef.current) return;
       L.Icon.Default.imagePath = 'https://unpkg.com/leaflet@1.9.4/dist/images/';
-      const map = L.map(elRef.current, { scrollWheelZoom: true, zoomControl: true });
+      const map = L.map(elRef.current, {
+        scrollWheelZoom: true,
+        zoomControl: true,
+        tapTolerance: 28,
+        touchZoom: true
+      });
       L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
         subdomains: 'abcd',
@@ -102,11 +109,19 @@ export default function StopMap({
       });
       mapRef.current = map;
       layersRef.current = L.layerGroup().addTo(map);
-      setTimeout(() => map.invalidateSize(), 200);
+      onResize = () => map.invalidateSize();
+      if (cancelled) return;
+      resizeObs = new ResizeObserver(onResize);
+      resizeObs.observe(elRef.current);
+      window.addEventListener('resize', onResize);
+      setTimeout(onResize, 80);
+      setTimeout(onResize, 400);
     }).catch(() => {});
     return () => {
       cancelled = true;
       clearTimeout(moveTimer.current);
+      resizeObs?.disconnect();
+      if (onResize) window.removeEventListener('resize', onResize);
     };
   }, []);
 
@@ -118,18 +133,10 @@ export default function StopMap({
 
     if (mode === 'route') {
       const pts = [];
-      (routeStops || []).forEach((stop, i) => {
+      (routeStops || []).forEach((stop) => {
         const lat = Number(stop.lat);
         const lng = Number(stop.lng ?? stop.long);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-        pts.push([lat, lng]);
-        const marker = L.marker([lat, lng], {
-          icon: numberedIcon(L, stop.seq || i + 1, String(selectedIndex) === String(stop.index ?? i), markerColor),
-          keyboard: true
-        });
-        marker.on('click', () => onPick?.(stop));
-        marker.bindTooltip(stop.name_tc || stop.name_en || String(stop.seq || i + 1), { direction: 'top' });
-        marker.addTo(layersRef.current);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
       });
       const road = Array.isArray(path) && path.length >= 2 ? path : null;
       if (road) {
@@ -140,6 +147,32 @@ export default function StopMap({
       } else if (showStraight && pts.length >= 2) {
         L.polyline(pts, { color: '#000000', weight: 3, dashArray: '6, 6', opacity: 0.55 }).addTo(layersRef.current);
       }
+      (routeStops || []).forEach((stop, i) => {
+        const lat = Number(stop.lat);
+        const lng = Number(stop.lng ?? stop.long);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        const selected = String(selectedIndex) === String(stop.index ?? i);
+        const hit = L.circleMarker([lat, lng], {
+          radius: 18,
+          color: 'transparent',
+          fillColor: markerColor || '#000',
+          fillOpacity: 0.01,
+          weight: 0,
+          bubblingMouseEvents: false
+        });
+        const marker = L.marker([lat, lng], {
+          icon: numberedIcon(L, stop.seq || i + 1, selected, markerColor),
+          keyboard: true,
+          zIndexOffset: selected ? 800 : 400,
+          bubblingMouseEvents: false
+        });
+        const pick = () => onPick?.(stop);
+        hit.on('click', pick);
+        marker.on('click', pick);
+        marker.bindTooltip(stop.name_tc || stop.name_en || String(stop.seq || i + 1), { direction: 'top' });
+        hit.addTo(layersRef.current);
+        marker.addTo(layersRef.current);
+      });
       const fitPts = road || pts;
       const key = `${fitPts.length}:${fitPts[0]?.join(',') || ''}:${fitPts[fitPts.length - 1]?.join(',') || ''}`;
       if (fitPts.length && fittedKey.current !== key) {
@@ -173,10 +206,28 @@ export default function StopMap({
     if (!map || !center) return;
     const lat = Number(center[0]);
     const lng = Number(center[1]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    const here = map.getCenter();
-    if (Math.hypot(here.lat - lat, here.lng - lng) > 0.0008) map.setView([lat, lng], map.getZoom());
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      const here = map.getCenter();
+      if (Math.hypot(here.lat - lat, here.lng - lng) > 0.0008) map.setView([lat, lng], map.getZoom());
+    }
   }, [center, mode]);
+
+  useEffect(() => {
+    if (mode !== 'route') return;
+    const map = mapRef.current;
+    if (!map || selectedIndex === '' || selectedIndex == null) return;
+    const stop = (routeStops || []).find((row, i) => String(row.index ?? i) === String(selectedIndex));
+    if (!stop) return;
+    const lat = Number(stop.lat);
+    const lng = Number(stop.lng ?? stop.long);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+      const zoom = Math.max(map.getZoom() || 15, 15);
+      map.setView([lat, lng], zoom, { animate: true });
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [selectedIndex, mode, routeStops]);
 
   return <div ref={elRef} className={`stop-map${className ? ` ${className}` : ''}`} role="application" />;
 }

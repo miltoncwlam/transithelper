@@ -204,9 +204,9 @@ export default function RoutePlayground() {
   const activeCo = service ? serviceCo(service).toLowerCase() : '';
 
   return (
-    <div className="playground-page" style={{ '--pg-accent': accent }}>
+    <div className="playground-page">
       <div className="pg-stripe" aria-hidden="true" />
-    <main className={`shell playground-ui${activeCo ? ` pg-active-${activeCo}` : ''}`}>
+    <main className="shell playground-ui">
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark">HK</span>

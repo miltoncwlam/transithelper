@@ -54,8 +54,16 @@ test('picking a route draws the official line then hides it on a new search', as
   await panel.getByRole('button', { name: /^查詢$|^Find$/ }).click();
   await page.getByRole('button', { name: /九巴 1|KMB 1/ }).filter({ hasText: /竹園|Chuk Yuen/ }).first().click();
   await expect(panel.locator('.stop-map')).toBeVisible({ timeout: 40000 });
-  await expect(panel).toContainText(/運輸署公布走線|Transport Department official/);
-  await expect(panel).toContainText(/竹園邨總站|Chuk Yuen Estate Bus Terminus/);
+  await expect(panel).toContainText(/運輸署公布走線|Transport Department official/, { timeout: 40000 });
+  const stopPick = panel.getByLabel(/選擇上車站|Choose boarding stop/);
+  await expect(stopPick).toBeVisible();
+  const stopValue = await stopPick.evaluate((el) => {
+    const opt = [...el.options].find((o) => /竹園邨總站|Chuk Yuen Estate Bus Terminus/.test(o.textContent || ''));
+    return opt ? opt.value : '';
+  });
+  expect(stopValue).not.toBe('');
+  await stopPick.selectOption(stopValue);
+  await expect(panel).toContainText(/分鐘|min|沒有|no bus|目前找不到/i, { timeout: 20000 });
   await panel.getByLabel(/路線，例如|Route, for example/).fill('3M');
   await expect(panel).not.toContainText(/竹園邨總站|Chuk Yuen Estate Bus Terminus/);
   await expect(panel.locator('.stop-map')).toHaveCount(0);
@@ -64,14 +72,41 @@ test('picking a route draws the official line then hides it on a new search', as
 });
 
 test('transfer helper and MTR tabs still search', async ({ page }) => {
-  test.setTimeout(90000);
+  test.setTimeout(120000);
   await page.goto('/');
   await expect(page.locator('.note')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 30000 });
   await page.getByRole('button', { name: /轉乘助手|Transfer helper/ }).click();
   const transfer = page.locator('.panel.active');
   await transfer.getByLabel(/第一程路線|First route/).fill('1');
   await transfer.getByRole('button', { name: /^查詢$|^Find$/ }).first().click();
-  await expect(transfer.getByRole('button', { name: /九巴 1|KMB 1/ }).first()).toBeVisible({ timeout: 20000 });
+  await transfer.getByRole('button', { name: /九巴 1|KMB 1/ }).filter({ hasText: /竹園|Chuk Yuen/ }).first().click();
+  const board = transfer.getByLabel(/上車站／下一站|Boarding \/ next stop/, { exact: true });
+  await expect.poll(async () => board.evaluate((el) => (
+    [...el.options].some((o) => /竹園邨總站|Chuk Yuen Estate Bus Terminus/.test(o.textContent || ''))
+  )), { timeout: 40000 }).toBe(true);
+  const boardValue = await board.evaluate((el) => {
+    const opt = [...el.options].find((o) => /竹園邨總站|Chuk Yuen Estate Bus Terminus/.test(o.textContent || ''));
+    return opt ? opt.value : '';
+  });
+  await board.selectOption(boardValue);
+  const inter = transfer.getByLabel(/^轉車站$|^Transfer stop$/);
+  await expect.poll(async () => inter.evaluate((el) => (
+    [...el.options].some((o) => /旺角豉油街|Soy Street/.test(o.textContent || ''))
+  )), { timeout: 15000 }).toBe(true);
+  const interValue = await inter.evaluate((el) => {
+    const opt = [...el.options].find((o) => /旺角豉油街|Soy Street/.test(o.textContent || ''));
+    return opt ? opt.value : '';
+  });
+  await inter.selectOption(interValue);
+  await transfer.getByPlaceholder(/輸入站名|Type a stop name/).fill('尖沙咀碼頭');
+  await transfer.getByRole('button', { name: /^查詢$|^Find$/ }).last().click();
+  await transfer.getByRole('button', { name: /尖沙咀碼頭|Star Ferry/ }).first().click();
+  await transfer.getByRole('button', { name: /顯示即將開出班次|Show upcoming buses/ }).click();
+  await expect(transfer).toContainText(/即將開出的第一程|Upcoming first-bus/, { timeout: 40000 });
+  await expect(transfer).toContainText(/分鐘|min|沒有|no bus|目前找不到/i);
+  await transfer.getByRole('button', { name: /選擇這一班|Choose this bus/ }).first().click();
+  await expect(transfer).toContainText(/可乘搭班次|All buses you can take/, { timeout: 40000 });
+  await expect(transfer).toContainText(/分鐘|min|找不到可轉乘|no connection/i);
   await page.getByRole('button', { name: /港鐵／輕鐵|MTR \/ Light Rail/ }).click();
   await expect(page.getByRole('heading', { name: /港鐵／輕鐵|Next MTR/ }).first()).toBeVisible();
   await page.getByRole('button', { name: /顯示下班車|Show next trains/ }).click();

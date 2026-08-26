@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic';
-export const maxDuration = 15;
+export const maxDuration = 60;
 
 import { json } from '@/lib/http.js';
 import { resolveRouteLine } from '@/lib/routeLine.js';
@@ -21,7 +21,7 @@ export async function GET(request) {
   try {
     return json(await resolveRouteLine(readQuery(request)));
   } catch (error) {
-    return json({ error: error.message, coords: [], source: 'straight' }, 502);
+    return json({ error: error.message, coords: [], source: 'straight' });
   }
 }
 
@@ -39,6 +39,6 @@ export async function POST(request) {
       stops: Array.isArray(body.stops) ? body.stops : []
     }));
   } catch (error) {
-    return json({ error: error.message, coords: [], source: 'straight' }, 502);
+    return json({ error: error.message, coords: [], source: 'straight' });
   }
 }
