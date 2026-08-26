@@ -33,9 +33,10 @@ jobs:
             fi
           done
           echo warming directory
+          curl -sS --max-time 5 http://127.0.0.1:3001/api/kmb/routes >/dev/null &
           for i in $(seq 1 40); do
-            curl -sS -o /tmp/tb-routes.json -w 'http %{http_code}\n' --max-time 90 http://127.0.0.1:3001/api/kmb/routes || true
-            n=$(python3 -c "import json; d=json.load(open('/tmp/tb-routes.json')); print(len(d.get('data') or []))" 2>/dev/null || echo 0)
+            curl -sS -o /tmp/tb-status.json -w 'http %{http_code}\n' --max-time 10 http://127.0.0.1:3001/api/status || true
+            n=$(python3 -c "import json; d=json.load(open('/tmp/tb-status.json')); print(int(d.get('routes') or 0))" 2>/dev/null || echo 0)
             echo "try $i routes $n"
             if [ "${n:-0}" -gt 100 ]; then
               echo directory ready
