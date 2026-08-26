@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-import { loadDiscountIndex, matchDiscount } from '@/lib/discounts.js';
+import { loadDiscountIndex, matchDiscount } from '@/00-required/discounts.js';
 import { json } from '@/lib/http.js';
 
 function publicRow(row) {

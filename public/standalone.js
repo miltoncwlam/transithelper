@@ -11,7 +11,7 @@
   const API_BASE = '';
 
   const $ = (id) => document.getElementById(id);
-  const S = { routes: [], stops: [], map: new Map(), cache: new Map(), last: null, lines: {}, lang: localStorage.getItem('tb-lang') || 'zh', openStops: {}, fetchedStops: {}, direct: false };
+  const S = { routes: [], stops: [], map: new Map(), cache: new Map(), last: null, lines: globalThis.TB_MTR_LINES || {}, lang: localStorage.getItem('tb-lang') || 'zh', openStops: {}, fetchedStops: {}, direct: false };
   let timer;
   let deb;
   let transferSeq = 0;
@@ -441,18 +441,35 @@
   async function followBusAlongRoute(seq, fromIdx, toIdx, tables, startIso) {
     const startMs = new Date(startIso).getTime();
     if (!Number.isFinite(startMs) || fromIdx < 0 || toIdx < fromIdx) {
-      return { time: null, estimated: true, stops: [] };
+      return { time: null, estimated: true, stops: [], leftBoard: false, boardLive: null };
     }
     const boardSlots = etaSlotsAt(seq[fromIdx], tables);
-    const boardHit = boardSlots.find((slot) => Math.abs(slot.ms - startMs) <= 90 * 1000) || boardSlots[0];
-    let prevMs = boardHit?.ms ?? startMs;
-    let lastSlot = boardHit?.slot || 1;
+    const boardHit = boardSlots.reduce((best, slot) => {
+      if (!best) return slot;
+      return Math.abs(slot.ms - startMs) < Math.abs(best.ms - startMs) ? slot : best;
+    }, null);
+    const matched = boardHit && Math.abs(boardHit.ms - startMs) <= 10 * 60 * 1000 ? boardHit : null;
+    let prevMs;
+    let lastSlot;
     let estimated = false;
-    const stops = [followStop(seq[fromIdx], prevMs, false)];
-    if (toIdx === fromIdx) {
-      return { time: new Date(prevMs).toISOString(), estimated: false, stops };
+    let leftBoard = false;
+    const stops = [];
+    let startI = fromIdx + 1;
+    if (matched) {
+      prevMs = matched.ms;
+      lastSlot = matched.slot;
+      stops.push(followStop(seq[fromIdx], prevMs, false));
+    } else {
+      leftBoard = startMs <= Date.now() + 45 * 1000;
+      estimated = true;
+      prevMs = startMs;
+      lastSlot = 1;
+      stops.push(followStop(seq[fromIdx], startMs, true));
     }
-    for (let i = fromIdx + 1; i <= toIdx; i += 1) {
+    if (toIdx === fromIdx) {
+      return { time: new Date(prevMs).toISOString(), estimated, stops, leftBoard, boardLive: matched?.eta || null };
+    }
+    for (let i = startI; i <= toIdx; i += 1) {
       const prevSlots = etaSlotsAt(seq[i - 1], tables);
       const slots = etaSlotsAt(seq[i], tables);
       const metres = usableHopMetres(metresBetween(seq[i - 1], seq[i]));
@@ -495,7 +512,7 @@
       }
       stops.push(followStop(seq[i], prevMs, hopEstimated));
     }
-    return { time: new Date(prevMs).toISOString(), estimated, stops };
+    return { time: new Date(prevMs).toISOString(), estimated, stops, leftBoard, boardLive: matched?.eta || null };
   }
 
   async function firstRouteEtaTables(first, seq, fromIdx, toIdx) {
@@ -636,24 +653,29 @@
   function watchConnection(all, selected, firstArrival) {
     if (!selected?.route) return null;
     const key = connectionWatchKey(selected);
-    const liveMatches = (all || [])
-      .filter((row) => connectionWatchKey(row) === key)
-      .sort((a, b) => new Date(a.eta) - new Date(b.eta));
-    const live = liveMatches[0] || null;
+    const selectedMs = new Date(selected.eta).getTime();
+    const liveMatches = (all || []).filter((row) => connectionWatchKey(row) === key);
+    const closest = liveMatches.reduce((best, row) => {
+      if (!best) return row;
+      return Math.abs(new Date(row.eta) - selectedMs) < Math.abs(new Date(best.eta) - selectedMs) ? row : best;
+    }, null);
+    const live = closest && Number.isFinite(selectedMs) && Math.abs(new Date(closest.eta) - selectedMs) <= 10 * 60 * 1000
+      ? closest
+      : null;
     const arriveMs = firstArrival ? new Date(firstArrival).getTime() : null;
     const liveMs = live ? new Date(live.eta).getTime() : NaN;
     const catchable = Number.isFinite(liveMs) && (arriveMs == null || liveMs >= arriveMs);
-    const selectedMs = Number.isFinite(liveMs) ? liveMs : new Date(selected.eta).getTime();
+    const compareMs = Number.isFinite(liveMs) ? liveMs : selectedMs;
     const earlier = (all || [])
       .filter((row) => {
         const etaMs = new Date(row.eta).getTime();
-        if (!Number.isFinite(etaMs) || !Number.isFinite(selectedMs)) return false;
+        if (!Number.isFinite(etaMs) || !Number.isFinite(compareMs)) return false;
         if (arriveMs != null && etaMs < arriveMs) return false;
-        if (connectionWatchKey(row) === key && Math.abs(etaMs - selectedMs) < 45000) return false;
-        return etaMs < selectedMs - 30000;
+        if (connectionWatchKey(row) === key && Math.abs(etaMs - compareMs) < 10 * 60 * 1000) return false;
+        return etaMs < compareMs - 30000;
       })
       .sort((a, b) => new Date(a.eta) - new Date(b.eta))[0] || null;
-    return { catchable, missed: !catchable, selected: live, earlier };
+    return { catchable, missed: !catchable, selected: live, earlier, left: !live && Number.isFinite(selectedMs) && selectedMs <= Date.now() };
   }
 
   function pickConnections(items) {
@@ -1102,28 +1124,17 @@
     put('status', t('loading'));
     try {
       if (await hasBackend()) {
-        const [routes, stops, lines] = await Promise.all([
-          api('/api/kmb/routes'),
-          api('/api/kmb/stops'),
-          api('/api/mtr/lines')
-        ]);
+        S.lines = globalThis.TB_MTR_LINES || S.lines;
+        mtrInit();
+        const routes = await api('/api/kmb/routes');
         S.routes = routes.data || [];
-        S.stops = stops.data || [];
-        S.map = new Map(S.stops.map((x) => [x.stop, x]));
-        S.lines = lines.data || {};
         S.direct = false;
         mtrInit();
         put('status', S.routes.length ? t('ready', S.routes.length) : t('loadFail'));
-        setTimeout(async () => {
-          try {
-            const later = await api('/api/kmb/stops');
-            const nextStops = later.data || [];
-            if (nextStops.length > S.stops.length) {
-              S.stops = nextStops;
-              S.map = new Map(S.stops.map((x) => [x.stop, x]));
-            }
-          } catch {}
-        }, 12000);
+        api('/api/kmb/stops').then((stops) => {
+          S.stops = stops.data || [];
+          S.map = new Map(S.stops.map((x) => [x.stop, x]));
+        }).catch(() => {});
       } else {
         await loadDirect();
       }
@@ -2139,8 +2150,9 @@
         });
       if (seq !== transferSeq) return;
       S.transferPhase = json.phase || phase;
-      S.selectedDeparture = phase === 'departures' ? null : (picked || null);
+      S.selectedDeparture = phase === 'departures' ? null : (json.boardDeparture || picked || null);
       if (phase === 'departures') S.selectedConnection = null;
+      else if (json.watch?.selected) S.selectedConnection = json.watch.selected;
       else if (Object.prototype.hasOwnProperty.call(opts, 'selectedConnection')) S.selectedConnection = opts.selectedConnection;
       S.last = 't';
       if ((json.phase || phase) === 'departures') renderDepartures(json, inter, boardVal);
@@ -2198,7 +2210,7 @@
     if (currentSta) $('mtrStation').value = currentSta;
     fillMtrDest();
     if (currentDest) $('mtrDest').value = currentDest;
-    $('mtrLine').onchange = () => { mtrStations(); fillMtrDest(); };
+    $('mtrLine').onchange = () => { mtrStations(); fillMtrDest(); mtr(); };
   }
 
   function mtrStations() {
@@ -2208,7 +2220,7 @@
     put('mtrStation', line.stations.map((row) => `<option value="${row[0]}">${esc(stationLabel(row))}</option>`).join(''));
     if (keep && line.stations.some((row) => row[0] === keep)) $('mtrStation').value = keep;
     else $('mtrStation').value = line.stations[0]?.[0] || '';
-    $('mtrStation').onchange = fillMtrDest;
+    $('mtrStation').onchange = () => { fillMtrDest(); mtr(); };
     fillMtrDest();
   }
 
@@ -2219,6 +2231,7 @@
     const rows = rideDestStations(line, origin);
     put('mtrDest', `<option value="">${esc(t('chooseRideDest'))}</option>${rows.map((row) => `<option value="${row[0]}">${esc(stationLabel(row))}</option>`).join('')}`);
     if (keep && keep !== origin && rows.some((row) => row[0] === keep)) $('mtrDest').value = keep;
+    if ($('mtrDest')) $('mtrDest').onchange = mtr;
   }
 
   function paintMtr() {
@@ -2235,24 +2248,27 @@
     else if (r.emptyReason === 'no_dest') empty = t('mtrNoTrainToDest');
     const delay = r.delayed ? `<div class="note">${esc(t('mtrDelayed'))}</div>` : '';
     const destName = loc(r.dest);
+    const destRide = !!(destName && !r.destRelaxed);
     const list = a.length
       ? a.map((x, i) => {
         const wait = x.arrive ? (x.arriveMinutes ?? mins(x.arrive)) : (x.minutes != null ? x.minutes : mins(x.time));
         const when = x.time ? clk(x.time) : '';
-        const plat = x.platform ? ` · ${t('platform', x.platform)}` : '';
+        const plat = x.platform ? t('platform', x.platform) : '';
+        const official = x.line === 'LRT' ? loc(x.timeText) : '';
+        const clockLine = [when, plat, official && !/\d/.test(official) ? official : ''].filter(Boolean).join(' · ');
         const routeBadge = x.route ? `<span class="badge">${esc(x.route)}</span> ` : '';
-        const arrive = x.arrive && destName
+        const arrive = x.arrive && destRide
           ? `<div class="muted">${esc(clk(x.arrive))} ${esc(t('rideArrives'))}${S.lang === 'zh' ? '' : ' '}${esc(destName)}${x.rideMinutes != null ? ` · ${esc(t('rideMins', x.rideMinutes))}` : ''}</div>`
           : '';
         const guess = x.arrivalEstimated ? `<div class="muted">${esc(t('rideArriveGuessed'))}</div>` : '';
         const lineLabel = loc(x.lineName);
-        const earliest = destName && i === 0 ? `<span class="badge">${esc(t('earliestArrival'))}</span>` : '';
+        const earliest = destRide && i === 0 ? `<span class="badge">${esc(t('earliestArrival'))}</span>` : '';
         const lineBadge = lineLabel ? `<span class="badge">${esc(lineLabel)}</span>` : '';
         const boarding = r.sta || s;
         const terminus = !!(x.terminus || (x.destCode && x.destCode === boarding));
         const fetchable = !terminus && !(x.stops && x.stops.length > 1);
-        return `<div class="item"><div class="eta"><div>${earliest}${routeBadge}${lineBadge}<b>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(loc(x.dest))}</b>${when ? `<div class="muted">${esc(when)}${esc(plat)}${destName ? ` · ${esc(t('rideDeparts'))}` : ''}</div>` : ''}${arrive}${guess}</div><span class="mins">${wait == null ? '' : esc(t('minutes', wait))}</span></div>${x.line === 'LRT' ? '' : stopTimesBlock(`mtr-${i}`, terminus ? { terminus: true } : x.stops, fetchable)}</div>`;
-      }).join('')
+        return `<div class="item"><div class="eta"><div>${earliest}${routeBadge}${lineBadge}<b>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(loc(x.dest))}</b>${clockLine ? `<div class="muted">${esc(clockLine)}${destRide ? ` · ${esc(t('rideDeparts'))}` : ''}</div>` : ''}${arrive}${guess}</div><span class="mins">${wait == null ? '' : esc(t('minutes', wait))}</span></div>${x.line === 'LRT' ? '' : stopTimesBlock(`mtr-${i}`, terminus ? { terminus: true } : x.stops, fetchable)}</div>`;
+      }).join('') + (a[0]?.line === 'LRT' ? `<p class="muted">${esc(r.destRelaxed ? t('lrtDestNotTerminus') : t('lrtThisStop'))}</p>` : '')
       : `<p class="muted">${esc(empty)}</p>`;
     put('mtrOutput', delay + list + `<div class="row-actions"><button id="saveMtr" class="tab">${esc(t('saveHome'))}</button></div>`);
     const destRow = d ? S.lines[l].stations.find((row) => row[0] === d) : null;
@@ -2453,6 +2469,7 @@
     document.querySelectorAll('.panel').forEach((x) => x.classList.toggle('active', x.id === id));
     if (id === 'home') renderHome();
     if (id === 'guide') paintGuide();
+    if (id === 'mtr') mtr();
   }
 
   function paintGuide() {

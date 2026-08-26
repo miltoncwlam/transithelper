@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from 'node:fs/promises';
-import { publicMtrLines } from '../lib/mtr.js';
+import { publicMtrLines } from '../00-required/mtr.js';
 
 const lib = await readFile(new URL('../lib/i18n.js', import.meta.url), 'utf8');
 const classic = lib

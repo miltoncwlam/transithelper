@@ -1,6 +1,6 @@
 import { json } from '@/lib/http.js';
-import { planLrt } from '@/lib/lightrail.js';
-import { fetchMtrSchedule, normalizeMtrSchedule, planMtrRide } from '@/lib/mtr.js';
+import { planLrt } from '@/00-required/lightrail.js';
+import { fetchMtrSchedule, normalizeMtrSchedule, planMtrRide } from '@/00-required/mtr.js';
 
 export const dynamic = 'force-dynamic';
 

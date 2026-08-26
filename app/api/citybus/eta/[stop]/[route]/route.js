@@ -3,7 +3,7 @@ export const maxDuration = 60;
 
 import { cache } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
-import { citybusStopEta } from '@/lib/citybus.js';
+import { citybusStopEta } from '@/00-required/citybus.js';
 
 export async function GET(_request, context) {
   const { stop, route } = await context.params;

@@ -3,7 +3,7 @@ export const maxDuration = 60;
 
 import { cache } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
-import { gmbStopEta } from '@/lib/gmb.js';
+import { gmbStopEta } from '@/00-required/gmb.js';
 
 export async function GET(request, context) {
   const { stop } = await context.params;

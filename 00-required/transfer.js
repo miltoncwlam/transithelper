@@ -13,6 +13,7 @@ const ROUTE_STOP_TTL = 24 * 60 * 60 * 1000;
 const ETA_TTL = 8 * 1000;
 const PLAN_MS = 28000;
 const MAX_BACKUPS = 2;
+const TRIP_MATCH_MS = 10 * 60 * 1000;
 const NEARBY_CAP = 8;
 
 function serviceCompany(row) {
@@ -309,24 +310,87 @@ function followStop(row, ms, estimated) {
   };
 }
 
+function closestSlot(slots, startMs, windowMs = TRIP_MATCH_MS) {
+  if (!Number.isFinite(startMs) || !slots?.length) return null;
+  const closest = slots.reduce((best, slot) => (
+    Math.abs(slot.ms - startMs) < Math.abs(best.ms - startMs) ? slot : best
+  ));
+  return Math.abs(closest.ms - startMs) <= windowMs ? closest : null;
+}
+
+function findTripDownstream(seq, fromIdx, toIdx, tables, startMs) {
+  let best = null;
+  for (let i = fromIdx + 1; i <= toIdx; i += 1) {
+    const travel = routeTravelMs(seq, fromIdx, i, null);
+    for (const slot of etaSlotsAt(seq[i], tables)) {
+      const drift = Math.abs(slot.ms - travel - startMs);
+      if (drift > TRIP_MATCH_MS) continue;
+      if (!best || drift < best.drift || (drift === best.drift && i < best.index)) {
+        best = { ...slot, index: i, drift };
+      }
+    }
+  }
+  return best;
+}
+
 async function followBusAlongRoute(seq, fromIdx, toIdx, tables, startIso, cache) {
   const startMs = new Date(startIso).getTime();
   if (!Number.isFinite(startMs) || fromIdx < 0 || toIdx < fromIdx) {
-    return { time: null, estimated: true, stops: [] };
+    return { time: null, estimated: true, stops: [], leftBoard: false, boardLive: null };
   }
 
   const boardSlots = etaSlotsAt(seq[fromIdx], tables);
-  const boardHit = boardSlots.find((slot) => Math.abs(slot.ms - startMs) <= 90 * 1000) || boardSlots[0];
-  let prevMs = boardHit?.ms ?? startMs;
-  let lastSlot = boardHit?.slot || 1;
+  const boardHit = closestSlot(boardSlots, startMs);
+  let prevMs;
+  let lastSlot;
   let estimated = false;
-  const stops = [followStop(seq[fromIdx], prevMs, false)];
+  let leftBoard = false;
+  const stops = [];
+  let startI = fromIdx + 1;
 
-  if (toIdx === fromIdx) {
-    return { time: new Date(prevMs).toISOString(), estimated: false, stops };
+  if (boardHit) {
+    prevMs = boardHit.ms;
+    lastSlot = boardHit.slot;
+    stops.push(followStop(seq[fromIdx], prevMs, false));
+  } else {
+    leftBoard = startMs <= Date.now() + 45 * 1000;
+    estimated = true;
+    prevMs = startMs;
+    lastSlot = 1;
+    stops.push(followStop(seq[fromIdx], startMs, true));
+    const down = toIdx > fromIdx ? findTripDownstream(seq, fromIdx, toIdx, tables, startMs) : null;
+    if (down) {
+      for (let i = fromIdx + 1; i < down.index; i += 1) {
+        prevMs = startMs + routeTravelMs(seq, fromIdx, i, null);
+        stops.push(followStop(seq[i], prevMs, true));
+      }
+      prevMs = down.ms;
+      lastSlot = down.slot;
+      stops.push(followStop(seq[down.index], prevMs, false));
+      if (down.index >= toIdx) {
+        return {
+          time: new Date(prevMs).toISOString(),
+          estimated: down.index > fromIdx + 1,
+          stops,
+          leftBoard,
+          boardLive: null
+        };
+      }
+      startI = down.index + 1;
+    }
   }
 
-  for (let i = fromIdx + 1; i <= toIdx; i += 1) {
+  if (toIdx === fromIdx) {
+    return {
+      time: new Date(prevMs).toISOString(),
+      estimated,
+      stops,
+      leftBoard,
+      boardLive: boardHit?.eta || null
+    };
+  }
+
+  for (let i = startI; i <= toIdx; i += 1) {
     const prevSlots = etaSlotsAt(seq[i - 1], tables);
     const slots = etaSlotsAt(seq[i], tables);
     const metres = usableHopMetres(metresBetween(seq[i - 1], seq[i]));
@@ -371,7 +435,13 @@ async function followBusAlongRoute(seq, fromIdx, toIdx, tables, startIso, cache)
     stops.push(followStop(seq[i], prevMs, hopEstimated));
   }
 
-  return { time: new Date(prevMs).toISOString(), estimated, stops };
+  return {
+    time: new Date(prevMs).toISOString(),
+    estimated,
+    stops,
+    leftBoard,
+    boardLive: boardHit?.eta || null
+  };
 }
 
 async function attachRideTimes(cache, service, seq, item, fromIdx, toIdx) {
@@ -422,6 +492,7 @@ function emptyPlan(emptyReason, extra = {}) {
     firstStops: extra.firstStops || [],
     boardDeparture: extra.boardDeparture || null,
     arrivalEstimated: extra.arrivalEstimated || false,
+    leftBoard: extra.leftBoard || false,
     sameStartAndTransfer: extra.sameStartAndTransfer || false,
     departures: extra.departures || [],
     directs: extra.directs || [],
@@ -556,28 +627,36 @@ function connectionWatchKey(item) {
 function watchConnection(all, selected, firstArrival) {
   if (!selected?.route) return null;
   const key = connectionWatchKey(selected);
-  const liveMatches = (all || [])
-    .filter((row) => connectionWatchKey(row) === key)
-    .sort((a, b) => new Date(a.eta) - new Date(b.eta));
-  const live = liveMatches[0] || null;
+  const selectedMs = new Date(selected.eta).getTime();
+  const liveMatches = (all || []).filter((row) => connectionWatchKey(row) === key);
+  const closest = liveMatches.reduce((best, row) => {
+    if (!best) return row;
+    return Math.abs(new Date(row.eta) - selectedMs) < Math.abs(new Date(best.eta) - selectedMs) ? row : best;
+  }, null);
+  const live = closest
+    && Number.isFinite(selectedMs)
+    && Math.abs(new Date(closest.eta) - selectedMs) <= TRIP_MATCH_MS
+    ? closest
+    : null;
   const arriveMs = firstArrival ? new Date(firstArrival).getTime() : null;
   const liveMs = live ? new Date(live.eta).getTime() : NaN;
   const catchable = Number.isFinite(liveMs) && (arriveMs == null || liveMs >= arriveMs);
-  const selectedMs = Number.isFinite(liveMs) ? liveMs : new Date(selected.eta).getTime();
+  const compareMs = Number.isFinite(liveMs) ? liveMs : selectedMs;
   const earlier = (all || [])
     .filter((row) => {
       const etaMs = new Date(row.eta).getTime();
-      if (!Number.isFinite(etaMs) || !Number.isFinite(selectedMs)) return false;
+      if (!Number.isFinite(etaMs) || !Number.isFinite(compareMs)) return false;
       if (arriveMs != null && etaMs < arriveMs) return false;
-      if (connectionWatchKey(row) === key && Math.abs(etaMs - selectedMs) < 45000) return false;
-      return etaMs < selectedMs - 30000;
+      if (connectionWatchKey(row) === key && Math.abs(etaMs - compareMs) < TRIP_MATCH_MS) return false;
+      return etaMs < compareMs - 30000;
     })
     .sort((a, b) => new Date(a.eta) - new Date(b.eta))[0] || null;
   return {
     catchable,
     missed: !catchable,
     selected: live,
-    earlier
+    earlier,
+    left: !live && Number.isFinite(selectedMs) && selectedMs <= Date.now()
   };
 }
 
@@ -623,7 +702,7 @@ function resolvePhase(body) {
   return 'departures';
 }
 
-function pickConnections(items) {
+function pickConnections(items, selected) {
   const ranked = [...items].sort((a, b) => {
     const dt = new Date(a.eta) - new Date(b.eta);
     if (dt) return dt;
@@ -631,10 +710,21 @@ function pickConnections(items) {
     if (b.kind === 'stay' && a.kind !== 'stay') return 1;
     return 0;
   });
-  const chosen = ranked.slice(0, 1 + MAX_BACKUPS).map((item, i) => ({
-    ...item,
-    recommended: i === 0
-  }));
+  const key = selected?.route ? connectionWatchKey(selected) : '';
+  const selectedMs = selected?.eta ? new Date(selected.eta).getTime() : NaN;
+  const watchingRow = (item) => key
+    && connectionWatchKey(item) === key
+    && Number.isFinite(selectedMs)
+    && Math.abs(new Date(item.eta) - selectedMs) <= TRIP_MATCH_MS;
+  const chosen = ranked.slice(0, 1 + MAX_BACKUPS).map((item, i) => {
+    const watching = watchingRow(item);
+    return {
+      ...item,
+      recommended: selected ? false : i === 0,
+      watching
+    };
+  });
+  if (selected) chosen.sort((a, b) => Number(b.watching) - Number(a.watching));
   return chosen;
 }
 
@@ -694,6 +784,7 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
       firstStops: [],
       boardDeparture: boardFirstTimes[0] || null,
       arrivalEstimated: false,
+      leftBoard: false,
       sameStartAndTransfer,
       departures: phase === 'departures'
         ? boardFirstTimes.slice(0, 8).map((eta) => ({ eta, dest, route: first?.route || '', board: eta }))
@@ -776,10 +867,13 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
     };
   }
 
-  const boardDeparture = body.selectedDeparture || boardFirstTimes[0] || null;
+  const selectedBoard = body.selectedDeparture || null;
+  const boardDeparture = selectedBoard || boardFirstTimes[0] || null;
   let firstArrivalAtInterchange = null;
   let arrivalEstimated = false;
   let firstStops = [];
+  let leftBoard = false;
+  let liveBoard = selectedBoard;
   if (boardDeparture && boardIdx >= 0 && interIdx >= boardIdx) {
     const followed = await followBusAlongRoute(
       firstSeq,
@@ -792,6 +886,8 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
     firstArrivalAtInterchange = followed.time;
     arrivalEstimated = followed.estimated;
     firstStops = followed.stops || [];
+    leftBoard = !!followed.leftBoard;
+    liveBoard = followed.boardLive || selectedBoard || boardDeparture;
   } else if (boardDeparture && travelMs) {
     firstArrivalAtInterchange = new Date(new Date(boardDeparture).getTime() + travelMs).toISOString();
     arrivalEstimated = true;
@@ -867,7 +963,7 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
   });
 
   const allPublic = timedList.map(publicItem);
-  const ranked = pickConnections(timedList).map(publicItem);
+  const ranked = pickConnections(timedList, body.selectedConnection).map(publicItem);
   const watch = watchConnection(allPublic, body.selectedConnection, firstArrivalAtInterchange);
   if (watch?.selected && !ranked.some((row) => connectionWatchKey(row) === connectionWatchKey(watch.selected)
     && Math.abs(new Date(row.eta) - new Date(watch.selected.eta)) < 60000)) {
@@ -895,8 +991,9 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
       ? await fareForRoute(first, boardIdx + 1, interIdx + 1)
       : first ? await fareForRoute(first) : null,
     firstStops,
-    boardDeparture,
+    boardDeparture: liveBoard || boardDeparture,
     arrivalEstimated,
+    leftBoard,
     sameStartAndTransfer,
     departures: [],
     directs: [],

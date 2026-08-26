@@ -3,7 +3,7 @@ export const maxDuration = 60;
 
 import { cache } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
-import { gmbRouteStops } from '@/lib/gmb.js';
+import { gmbRouteStops } from '@/00-required/gmb.js';
 
 export async function GET(_request, context) {
   const { routeId, seq } = await context.params;

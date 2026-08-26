@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 import { warmDirectory } from '@/lib/directory.js';
-import { startGtfsLoad } from '@/lib/gtfs.js';
+import { startGtfsLoad } from '@/00-required/gtfs.js';
 import { json } from '@/lib/http.js';
 
 export async function GET(request) {

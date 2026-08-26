@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { cache, getDirectory } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
-import { attachStopMeta, kmbFetch } from '@/lib/kmb.js';
+import { attachStopMeta, kmbFetch } from '@/00-required/kmb.js';
 
 const ROUTE_STOP_TTL = 24 * 60 * 60 * 1000;
 

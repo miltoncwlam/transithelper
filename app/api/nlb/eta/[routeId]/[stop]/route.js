@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { cache, getDirectory } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
-import { nlbEta } from '@/lib/nlb.js';
+import { nlbEta } from '@/00-required/nlb.js';
 
 export async function GET(request, context) {
   const { routeId, stop } = await context.params;

@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 
-import { fareForRoute, getFareIndex } from '@/lib/fares.js';
+import { fareForRoute, getFareIndex } from '@/00-required/fares.js';
 import { json } from '@/lib/http.js';
 
 export async function GET(request) {

@@ -3,7 +3,7 @@ export const maxDuration = 60;
 
 import { getDirectory } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
-import { nearestStops } from '@/lib/kmb.js';
+import { nearestStops } from '@/00-required/kmb.js';
 
 export async function GET(request) {
   const url = new URL(request.url);

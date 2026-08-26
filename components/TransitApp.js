@@ -4,10 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/apiBase.js';
 import { I18N } from '../lib/i18n.js';
-import { pickFollowedTrain } from '../lib/mtr.js';
+import { pickFollowedTrain, publicMtrLines } from '../00-required/mtr.js';
 import { mtrLineColor } from '../lib/mtrColors.js';
 import { lineColorForCo } from '../lib/routeColors.js';
-import { displayStopName } from '../lib/stopName.js';
+import { displayStopName } from '../00-required/stopName.js';
 import StopMap from './StopMap.js';
 import UserGuide from './UserGuide.js';
 
@@ -121,7 +121,7 @@ export default function TransitApp() {
   const [lang, setLang] = useState('zh');
   const [routes, setRoutes] = useState([]);
   const [stops, setStops] = useState([]);
-  const [lines, setLines] = useState({});
+  const [lines] = useState(publicMtrLines);
   const [dirCount, setDirCount] = useState(null);
   const [offline, setOffline] = useState(false);
   const [tab, setTab] = useState('arrivals');
@@ -177,10 +177,27 @@ export default function TransitApp() {
   const arrivalPickSeq = useRef(0);
   const firstSearchSeq = useRef(0);
   const lastView = useRef(null);
+  const mtrSeq = useRef(0);
   const arrivalBoardRef = useRef(null);
   const arrivalLiveRef = useRef(null);
   const transferSeq = useRef(0);
   const homeOpened = useRef(false);
+  const transferPhaseRef = useRef(null);
+  const selectedDepartureRef = useRef(null);
+  const selectedConnectionRef = useRef(null);
+  const chosenDirectRef = useRef(null);
+  const stopsLoad = useRef(null);
+
+  function resetTransferLock() {
+    transferPhaseRef.current = null;
+    selectedDepartureRef.current = null;
+    selectedConnectionRef.current = null;
+    chosenDirectRef.current = null;
+    setTransferPhase(null);
+    setSelectedDeparture(null);
+    setSelectedConnection(null);
+    setChosenDirect(null);
+  }
   const stopMap = useMemo(() => new Map(stops.map((x) => [x.stop, x])), [stops]);
 
   const t = useCallback((key, ...args) => {
@@ -254,6 +271,32 @@ export default function TransitApp() {
       clearTimeout(kill);
     }
   }, [t]);
+
+  async function ensureStops() {
+    if (stops.length) return stops;
+    if (stopsLoad.current) return stopsLoad.current;
+    stopsLoad.current = (async () => {
+      try {
+        const headers = { Accept: 'application/json', 'X-Device-Id': deviceId() };
+        const ctrl = new AbortController();
+        const kill = setTimeout(() => ctrl.abort(), 25000);
+        try {
+          const res = await fetch(`${API_BASE}/api/kmb/stops`, { cache: 'no-store', signal: ctrl.signal, headers });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(json.error || 'fail');
+          const next = json.data || [];
+          setStops(next);
+          return next;
+        } finally {
+          clearTimeout(kill);
+        }
+      } catch {
+        stopsLoad.current = null;
+        return [];
+      }
+    })();
+    return stopsLoad.current;
+  }
 
   function pushRecent(kind, value) {
     if (value == null || value === '') return;
@@ -422,10 +465,7 @@ export default function TransitApp() {
     setFirstFares(null);
     setTransferResult(null);
     setTransferMessage('');
-    setTransferPhase(null);
-    setSelectedDeparture(null);
-    setSelectedConnection(null);
-    setChosenDirect(null);
+    resetTransferLock();
   }
 
   function requestRouteLine(s, seq) {
@@ -616,9 +656,7 @@ export default function TransitApp() {
     setFirstBoxHidden(restore.keepBoxHidden !== false);
     setTransferResult(null);
     setTransferMessage('');
-    setChosenDirect(null);
-    setSelectedDeparture(null);
-    setSelectedConnection(null);
+    resetTransferLock();
     const seq = await fetchStops(s);
     if (token !== firstSearchSeq.current) return;
     setFirstGroups(groups(seq));
@@ -717,17 +755,27 @@ export default function TransitApp() {
       return;
     }
     const phase = opts.phase
-      ?? (transferPhase === 'connections' && selectedDeparture ? 'connections' : 'departures');
+      ?? (transferPhaseRef.current === 'connections' && (selectedDepartureRef.current || selectedDeparture)
+        ? 'connections'
+        : (transferPhase === 'connections' && selectedDeparture ? 'connections' : 'departures'));
     const picked = Object.prototype.hasOwnProperty.call(opts, 'selectedDeparture')
       ? opts.selectedDeparture
-      : (phase === 'connections' ? selectedDeparture : null);
+      : (phase === 'connections' ? (selectedDepartureRef.current || selectedDeparture) : null);
     const watched = Object.prototype.hasOwnProperty.call(opts, 'selectedConnection')
       ? opts.selectedConnection
-      : (phase === 'connections' ? selectedConnection : null);
+      : (phase === 'connections' ? (selectedConnectionRef.current || selectedConnection) : null);
+    if (phase === 'connections' && picked) {
+      transferPhaseRef.current = 'connections';
+      selectedDepartureRef.current = picked;
+    }
+    if (Object.prototype.hasOwnProperty.call(opts, 'selectedConnection')) {
+      selectedConnectionRef.current = opts.selectedConnection;
+    }
     const seq = ++transferSeq.current;
     const silent = !!opts.silent && !!transferResult;
     if (!silent) {
       setTransferMessage(phase === 'departures' ? t('searchingDepartures') : t('searching'));
+      chosenDirectRef.current = null;
       setChosenDirect(null);
       setTransferResult(null);
     }
@@ -749,13 +797,27 @@ export default function TransitApp() {
       });
       if (seq !== transferSeq.current) return;
       setTransferMessage('');
-      setTransferPhase(json.phase || phase);
+      const nextPhase = json.phase || phase;
+      transferPhaseRef.current = nextPhase;
+      setTransferPhase(nextPhase);
       if (phase === 'departures') {
+        selectedDepartureRef.current = null;
+        selectedConnectionRef.current = null;
         setSelectedDeparture(null);
         setSelectedConnection(null);
-      } else if (picked) setSelectedDeparture(picked);
-      if (Object.prototype.hasOwnProperty.call(opts, 'selectedConnection')) {
-        setSelectedConnection(opts.selectedConnection);
+      } else {
+        const nextBoard = json.boardDeparture || picked;
+        if (nextBoard) {
+          selectedDepartureRef.current = nextBoard;
+          setSelectedDeparture(nextBoard);
+        }
+        if (json.watch?.selected) {
+          selectedConnectionRef.current = json.watch.selected;
+          setSelectedConnection(json.watch.selected);
+        } else if (Object.prototype.hasOwnProperty.call(opts, 'selectedConnection')) {
+          selectedConnectionRef.current = opts.selectedConnection;
+          setSelectedConnection(opts.selectedConnection);
+        }
       }
       setTransferResult({ json, inter });
       lastView.current = 't';
@@ -800,11 +862,14 @@ export default function TransitApp() {
   const showMtr = useCallback(async (line = currentLineKey, sta = currentSta, dest = mtrDest) => {
     if (!line || !sta) return;
     const destCode = dest && dest !== sta ? dest : '';
+    const seq = ++mtrSeq.current;
     try {
       const r = await api(`/api/mtr/schedule?line=${encodeURIComponent(line)}&sta=${encodeURIComponent(sta)}${destCode ? `&dest=${encodeURIComponent(destCode)}` : ''}`);
+      if (seq !== mtrSeq.current) return;
       setMtrResult({ ...r, line, sta });
       lastView.current = 'm';
     } catch {
+      if (seq !== mtrSeq.current) return;
       setMtrResult({ trains: [], emptyReason: 'unavailable', line, sta });
     }
   }, [api, currentLineKey, currentSta, mtrDest]);
@@ -906,15 +971,16 @@ export default function TransitApp() {
       const iIdx = item.payload.interchangeIndex;
       setBoardIndex(bIdx);
       setInterchangeIndex(iIdx);
+      const allStops = await ensureStops();
+      const byId = new Map(allStops.map((row) => [row.stop, row]));
       const dest = {
         label: item.payload.destLabel,
-        stops: (item.payload.destStops || []).map((id) => stopMap.get(id)).filter(Boolean)
+        stops: (item.payload.destStops || []).map((id) => byId.get(id)).filter(Boolean)
       };
       setDestination(dest);
-      setDestBoxHidden(true);
       setChosenDirect(null);
-      setSelectedDeparture(null);
-      setTransferPhase(null);
+      setDestBoxHidden(true);
+      resetTransferLock();
       await goTransfer({
         firstService: s,
         firstGroups: g,
@@ -968,45 +1034,39 @@ export default function TransitApp() {
           clearTimeout(kill);
         }
       }
-      let lastError;
-      for (let attempt = 0; attempt < 3 && !cancelled; attempt += 1) {
-        try {
-          const [routeJson, stopJson, lineJson] = await Promise.all([
-            pull('/api/kmb/routes', 25000),
-            pull('/api/kmb/stops', 25000),
-            pull('/api/mtr/lines', 25000)
-          ]);
-          if (cancelled) return;
-          const nextRoutes = routeJson.data || [];
-          setRoutes(nextRoutes);
-          setStops(stopJson.data || []);
-          setLines(lineJson.data || {});
-          setDirCount(nextRoutes.length ? nextRoutes.length : -1);
-          setOffline(false);
-          setTimeout(async () => {
+      async function loadRoutes() {
+        let lastError;
+        for (let attempt = 0; attempt < 3 && !cancelled; attempt += 1) {
+          try {
+            const routeJson = await pull('/api/kmb/routes', 25000);
             if (cancelled) return;
-            try {
-              const later = await pull('/api/kmb/stops', 25000);
-              const nextStops = later.data || [];
-              if (nextStops.length > (stopJson.data || []).length) setStops(nextStops);
-            } catch {}
-          }, 12000);
-          lastError = null;
-          break;
-        } catch (error) {
-          lastError = error;
-          await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+            const nextRoutes = routeJson.data || [];
+            setRoutes(nextRoutes);
+            setDirCount(nextRoutes.length ? nextRoutes.length : -1);
+            setOffline(false);
+            return;
+          } catch (error) {
+            lastError = error;
+            await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+          }
+        }
+        if (lastError && !cancelled) {
+          setDirCount(-1);
+          const network = lastError?.name === 'TypeError' || /fetch|network|Failed to fetch|Load failed/i.test(String(lastError?.message || ''));
+          setOffline(network);
         }
       }
-      if (lastError && !cancelled) {
-        setDirCount(-1);
-        const network = lastError?.name === 'TypeError' || /fetch|network|Failed to fetch|Load failed/i.test(String(lastError?.message || ''));
-        setOffline(network);
-      }
+
+      await loadRoutes();
       if (!cancelled) renderHome();
     })();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (tab !== 'transfer' && tab !== 'home') return;
+    ensureStops();
+  }, [tab]);
 
   useEffect(() => {
     const entries = Object.entries(lines);
@@ -1027,11 +1087,16 @@ export default function TransitApp() {
       if (lastView.current === 'a' && arrivalService && arrivalStopIndex !== '') {
         showArrival(arrivalService, arrivalGroups, arrivalStopIndex);
       }
-      if (lastView.current === 't' && !chosenDirect) goTransfer({ silent: true });
+      if (lastView.current === 't' && !chosenDirectRef.current) goTransfer({ silent: true });
       if (lastView.current === 'm') showMtr();
     }, +refreshSec * 1000);
     return () => clearInterval(id);
   }, [refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, showMtr, chosenDirect, mtrDest]);
+
+  useEffect(() => {
+    if (tab !== 'mtr' || !currentLineKey || !currentSta) return;
+    showMtr(currentLineKey, currentSta, mtrDest);
+  }, [tab, currentLineKey, currentSta, mtrDest, showMtr]);
 
   useEffect(() => {
     if (!arrivalService || !arrivalGroups.length) return undefined;
@@ -1566,10 +1631,7 @@ export default function TransitApp() {
             type="button"
             aria-label={findLabel}
             onClick={() => {
-              setChosenDirect(null);
-              setSelectedDeparture(null);
-              setSelectedConnection(null);
-              setTransferPhase(null);
+              resetTransferLock();
               goTransfer({ phase: 'departures', selectedDeparture: null });
             }}
           >{findLabel}</button>
@@ -1580,7 +1642,7 @@ export default function TransitApp() {
                 <div className="note">{t('chosenDirect')}</div>
                 {renderTransferItem(chosenDirect, 0)}
                 <button className="tab mt-2" type="button" onClick={() => {
-                  setChosenDirect(null);
+                  resetTransferLock();
                   goTransfer({ phase: 'departures', selectedDeparture: null });
                 }}>{t('changeDeparture')}</button>
                 <div className="row-actions">
@@ -1637,8 +1699,10 @@ export default function TransitApp() {
                           key={`d-${x.route}-${x.eta}-${i}`}
                           className={`item choice pg-choice ${coTone(x)}`}
                           type="button"
-                          onClick={() => {
+                            onClick={() => {
+                            chosenDirectRef.current = x;
                             setChosenDirect(x);
+                            transferPhaseRef.current = 'direct';
                             setTransferPhase('direct');
                             lastView.current = 't';
                           }}
@@ -1658,15 +1722,22 @@ export default function TransitApp() {
                   </>
                 ) : (
                   <>
-                    {transferResult.json.firstArrivalAtInterchange ? (
+                    {transferResult.json.firstArrivalAtInterchange || transferResult.json.boardDeparture ? (
                       <div className="note">
-                        <h3 className="font-bold">{t('firstArrival')}</h3>
-                        <div className="eta mt-2">
-                          <b>{clk(transferResult.json.firstArrivalAtInterchange)}</b>
-                          <span className="mins">{mins(transferResult.json.firstArrivalAtInterchange) == null ? '' : t('minutes', mins(transferResult.json.firstArrivalAtInterchange))}</span>
-                        </div>
+                        <h3 className="font-bold"><span className="badge">{t('liveLocked')}</span> {t('watchingFirst')}</h3>
+                        <p className="muted mt-2">{t('watchingFirstLive')}</p>
+                        <p className="mt-2">{transferResult.json.leftBoard ? t('firstBusLeft') : t('firstBusWaiting')}</p>
+                        {transferResult.json.firstArrivalAtInterchange ? (
+                          <>
+                            <div className="eta mt-2">
+                              <b>{clk(transferResult.json.firstArrivalAtInterchange)}</b>
+                              <span className="mins">{mins(transferResult.json.firstArrivalAtInterchange) == null ? '' : t('minutes', mins(transferResult.json.firstArrivalAtInterchange))}</span>
+                            </div>
+                            <div className="muted">{t('firstArrival')}</div>
+                          </>
+                        ) : null}
                         {fareNote(transferResult.json.firstFare || firstService)}
-                        {transferResult.json.boardDeparture ? (
+                        {transferResult.json.boardDeparture && !transferResult.json.leftBoard ? (
                           <div className="muted mt-2">{t('boardAt')}：{clk(transferResult.json.boardDeparture)}</div>
                         ) : null}
                         {transferResult.json.arrivalEstimated ? (
@@ -1676,6 +1747,9 @@ export default function TransitApp() {
                       </div>
                     ) : null}
                     <button className="tab mt-2" type="button" onClick={() => {
+                        selectedDepartureRef.current = null;
+                        selectedConnectionRef.current = null;
+                        transferPhaseRef.current = 'departures';
                         setSelectedDeparture(null);
                         setSelectedConnection(null);
                         goTransfer({ phase: 'departures', selectedDeparture: null, selectedConnection: null });
@@ -1684,7 +1758,12 @@ export default function TransitApp() {
                       <div className="note mt-4">
                         <h3 className="font-bold">{t('watchingConnection')}</h3>
                         <p className="muted mt-2">{t('watchingLive')}</p>
-                        {transferResult.json.watch?.selected ? renderTransferItem(transferResult.json.watch.selected, 0, { watching: true }) : null}
+                        {transferResult.json.watch?.selected
+                          ? renderTransferItem(transferResult.json.watch.selected, 0, { watching: true })
+                          : selectedConnection
+                            ? renderTransferItem(selectedConnection, 0, { watching: true })
+                            : null}
+                        {transferResult.json.watch?.left ? <p className="muted mt-2">{t('connectionGone')}</p> : null}
                         <p className={transferResult.json.watch?.catchable ? 'mt-2' : 'muted mt-2'}>
                           {transferResult.json.watch?.catchable ? t('stillCatchable') : t('missedConnection')}
                         </p>
@@ -1706,6 +1785,7 @@ export default function TransitApp() {
                           </>
                         ) : null}
                         <button className="tab mt-2" type="button" onClick={() => {
+                          selectedConnectionRef.current = null;
                           setSelectedConnection(null);
                           goTransfer({ phase: 'connections', selectedConnection: null, silent: true });
                         }}>{t('changeConnection')}</button>
@@ -1714,10 +1794,11 @@ export default function TransitApp() {
                     <h3 className="font-bold mt-4">{t('combinedList')}</h3>
                     {(transferResult.json.list || []).length
                       ? transferResult.json.list.map((x, i) => renderTransferItem(x, i, {
-                        watching: selectedConnection && String(selectedConnection.route).toUpperCase() === String(x.route).toUpperCase()
-                          && (selectedConnection.co || 'KMB') === (x.co || 'KMB'),
+                        watching: !!(x.watching || (selectedConnection && String(selectedConnection.route).toUpperCase() === String(x.route).toUpperCase()
+                          && (selectedConnection.co || 'KMB') === (x.co || 'KMB')
+                          && Math.abs(new Date(x.eta) - new Date(selectedConnection.eta)) < 10 * 60 * 1000)),
                         pickHint: !selectedConnection,
-                        onPick: () => goTransfer({ phase: 'connections', selectedConnection: x, silent: true })
+                        onPick: selectedConnection ? null : () => goTransfer({ phase: 'connections', selectedConnection: x, silent: true })
                       }))
                       : <p className="muted">{transferEmpty || t('noConnection')}</p>}
                   </>
@@ -1782,29 +1863,34 @@ export default function TransitApp() {
           </label>
           <button className="btn btn-block mt-4" type="button" aria-label={t('mtrFind')} onClick={() => showMtr()}>{t('mtrFind')}</button>
           <div>
-            {mtrResult ? (
+            {mtrResult && mtrResult.line === currentLineKey && mtrResult.sta === currentSta ? (
               <>
                 {mtrResult.delayed ? <div className="note">{t('mtrDelayed')}</div> : null}
                 {(mtrResult.trains || []).length
-                  ? mtrResult.trains.map((x, i) => {
+                  ? (
+                    <>
+                      {mtrResult.trains.map((x, i) => {
                     const wait = x.arrive ? (x.arriveMinutes ?? mins(x.arrive)) : (x.minutes != null ? x.minutes : mins(x.time));
                     const when = x.time ? clk(x.time) : '';
                     const plat = x.platform ? t('platform', x.platform) : '';
                     const destName = loc(mtrResult.dest);
+                    const destRide = !!(destName && !mtrResult.destRelaxed);
                     const lineLabel = loc(x.lineName);
                     const boarding = mtrResult?.sta || currentSta;
                     const terminus = !!(x.terminus || (x.destCode && String(x.destCode).toUpperCase() === String(boarding).toUpperCase()));
                     const stopId = `mtr-${x.line || currentLineKey}-${boarding}-${x.destCode}-${x.time}`;
+                    const official = x.line === 'LRT' ? loc(x.timeText) : '';
+                    const clockLine = [when, plat, official && !/\d/.test(official) ? official : ''].filter(Boolean).join(' · ');
                     return (
                       <div className="item" key={`${x.line || ''}-${loc(x.dest)}-${x.time}-${i}`}>
                         <div className="eta">
                           <div>
-                            {destName && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}
+                            {destRide && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}
                             {x.route ? <span className="badge">{x.route}</span> : null}
                             {lineLabel ? <span className="badge">{lineLabel}</span> : null}
                             <b>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</b>
-                            {when || plat ? <div className="muted">{[when, plat].filter(Boolean).join(' · ')}{destName ? ` · ${t('rideDeparts')}` : ''}</div> : null}
-                            {x.arrive && destName ? (
+                            {clockLine ? <div className="muted">{clockLine}{destRide ? ` · ${t('rideDeparts')}` : ''}</div> : null}
+                            {x.arrive && destRide ? (
                               <div className="muted">{clk(x.arrive)} {t('rideArrives')}{lang === 'zh' ? '' : ' '}{destName}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
                             ) : null}
                             {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
@@ -1814,7 +1900,12 @@ export default function TransitApp() {
                         {x.line !== 'LRT' ? renderStopTimes(stopId, terminus ? { terminus: true } : x.stops, terminus || x.stops?.length > 1 ? null : () => loadMtrStops(x)) : null}
                       </div>
                     );
-                  })
+                      })}
+                      {(mtrResult.trains[0]?.line === 'LRT') ? (
+                        <p className="muted">{mtrResult.destRelaxed ? t('lrtDestNotTerminus') : t('lrtThisStop')}</p>
+                      ) : null}
+                    </>
+                  )
                   : <p className="muted">{t(mtrResult.emptyReason === 'unavailable' ? 'mtrUnavailable' : mtrResult.emptyReason === 'racecourse' ? 'mtrRacecourse' : mtrResult.emptyReason === 'empty' ? 'mtrEmptyLine' : mtrResult.emptyReason === 'no_dest' ? 'mtrNoTrainToDest' : 'noTrains')}</p>}
                 <div className="row-actions">
                   <button className="tab" type="button" onClick={() => {

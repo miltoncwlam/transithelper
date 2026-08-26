@@ -87,11 +87,35 @@ function parseLrtMinutes(train) {
   return Number(m[1]);
 }
 
+function lrtStationRow(id) {
+  const code = String(id || '').trim();
+  if (!code) return null;
+  return LRT_STATIONS.find((row) => String(row[0]) === code) || null;
+}
+
+function lrtSystemMs(payload) {
+  const raw = String(payload?.system_time || '').trim();
+  if (!raw) return Date.now();
+  const iso = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const stamped = /Z$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}+08:00`;
+  const ms = Date.parse(stamped);
+  return Number.isFinite(ms) ? ms : Date.now();
+}
+
+function terminusMatches(dest, destRow, destWanted) {
+  if (destRow) return dest.zh === destRow[1] || dest.en === destRow[2];
+  const wanted = String(destWanted || '').trim();
+  if (!wanted) return true;
+  return dest.zh === wanted || dest.en.toLowerCase() === wanted.toLowerCase();
+}
+
 export function normalizeLrtSchedule(payload, stationId, destFilter) {
   const status = Number(payload?.status);
-  const station = LRT_STATIONS.find((row) => String(row[0]) === String(stationId));
-  const destWanted = String(destFilter || '').trim();
-  const trains = [];
+  const destRow = lrtStationRow(destFilter);
+  const sameStop = destRow && String(destRow[0]) === String(stationId);
+  const destWanted = sameStop ? '' : String(destFilter || '').trim();
+  const systemMs = lrtSystemMs(payload);
+  const all = [];
   for (const platform of payload?.platform_list || []) {
     for (const train of platform.route_list || []) {
       if (!train || Number(train.stop) === 1) continue;
@@ -99,38 +123,37 @@ export function normalizeLrtSchedule(payload, stationId, destFilter) {
         zh: train.dest_ch || train.dest_en || '',
         en: train.dest_en || train.dest_ch || ''
       };
-      if (destWanted) {
-        const code = destWanted.toUpperCase();
-        const match = LRT_STATIONS.find((row) => String(row[0]) === code);
-        if (match) {
-          if (dest.zh !== match[1] && dest.en !== match[2]) continue;
-        } else if (dest.zh !== destWanted && dest.en.toLowerCase() !== destWanted.toLowerCase()) continue;
-      }
       const minutes = parseLrtMinutes(train);
       if (minutes == null && !/即將|arriving|離開|departing/i.test(String(train.time_ch || '') + String(train.time_en || ''))) continue;
-      trains.push({
+      const wait = minutes == null ? 0 : minutes;
+      all.push({
         line: 'LRT',
         lineName: LRT_LINE.name,
         route: train.route_no,
         dest,
         destCode: destWanted || '',
-        minutes: minutes == null ? 0 : minutes,
-        time: null,
+        minutes: wait,
+        time: new Date(systemMs + wait * 60000).toISOString(),
+        timeText: { zh: train.time_ch || '', en: train.time_en || train.time_ch || '' },
         platform: platform.platform_id != null ? String(platform.platform_id) : null,
         special: Number(train.special) === 1,
         cars: Number(train.train_length) || null
       });
     }
   }
-  trains.sort((a, b) => (a.minutes ?? 99) - (b.minutes ?? 99) || String(a.route).localeCompare(String(b.route)));
+  all.sort((a, b) => (a.minutes ?? 99) - (b.minutes ?? 99) || String(a.route).localeCompare(String(b.route)));
+  const matching = destWanted ? all.filter((train) => terminusMatches(train.dest, destRow, destWanted)) : all;
+  const destRelaxed = !!(destWanted && all.length && !matching.length);
+  const trains = destRelaxed ? all : matching;
   let emptyReason = null;
   if (status === 0) emptyReason = 'unavailable';
-  else if (!trains.length) emptyReason = destWanted ? 'no_dest' : 'empty';
+  else if (!trains.length) emptyReason = destWanted && !destRelaxed ? 'no_dest' : 'empty';
   return {
     trains,
     delayed: false,
     emptyReason,
-    dest: destWanted && station ? { zh: station[1], en: station[2] } : null,
+    dest: destRow && destWanted ? { zh: destRow[1], en: destRow[2] } : null,
+    destRelaxed,
     message: null
   };
 }
@@ -164,6 +187,7 @@ export async function planLrt(stationId, dest) {
       delayed: false,
       emptyReason: 'unavailable',
       dest: null,
+      destRelaxed: false,
       message: null
     };
   }
