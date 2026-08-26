@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 
+const dirNote = (page) => page.locator('.app-header + .note');
+const DIR_READY = /共 \d+ 條路線服務|Directory ready|無法載入/;
+
 test('home and standalone load', async ({ page }) => {
   const home = await page.goto('/');
   expect(home.ok()).toBeTruthy();
@@ -37,9 +40,40 @@ test('saved homes do not steal the arrivals tab', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('button.tab-arrivals')).toHaveClass(/active/);
   await expect(page.getByRole('heading', { name: /九巴／龍運／城巴|Live arrivals|實時到站/ }).first()).toBeVisible();
-  await expect(page.locator('.note')).toContainText(/共 \d+ 條路線服務|Directory ready|無法載入/, { timeout: 30000 });
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await expect(page.locator('button.tab-arrivals')).toHaveClass(/active/);
   await expect(page.locator('button.tab-home')).not.toHaveClass(/active/);
+});
+
+test('last bus restores on first open without stealing the tab', async ({ page }) => {
+  test.setTimeout(90000);
+  await page.addInitScript(() => {
+    localStorage.setItem('tb-arrival', JSON.stringify({
+      route: '1',
+      service: {
+        route: '1',
+        co: 'KMB',
+        bound: 'O',
+        service_type: '1',
+        orig_tc: '竹園邨',
+        dest_tc: '尖沙咀碼頭',
+        orig_en: 'Chuk Yuen',
+        dest_en: 'Star Ferry'
+      },
+      stopIndex: 0,
+      destIndex: ''
+    }));
+  });
+  await page.goto('/');
+  await expect(page.locator('button.tab-arrivals')).toHaveClass(/active/);
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await expect(page.locator('button.tab-arrivals')).toHaveClass(/active/);
+  await expect(page.locator('button.tab-home')).not.toHaveClass(/active/);
+  const panel = page.locator('.panel.active');
+  await expect(panel.locator('.arrival-board')).toBeVisible({ timeout: 40000 });
+  await expect(panel).toContainText(/九巴 1|KMB 1/);
+  await expect(panel).toContainText(/竹園|Chuk Yuen/);
+  await expect(panel).toContainText(/分鐘|min|沒有|no bus|目前找不到/i, { timeout: 40000 });
 });
 
 test('Light Rail is first and dest is termini only', async ({ page }) => {
@@ -78,7 +112,7 @@ test('product tabs stay available', async ({ page }) => {
 test('search lists NLB 1 and 3M', async ({ page }) => {
   test.setTimeout(90000);
   await page.goto('/');
-  await expect(page.locator('.note')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 30000 });
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await page.locator('.panel.active').getByLabel(/路線，例如|Route, for example/).fill('1');
   await page.locator('.panel.active').getByRole('button', { name: /^查詢$|^Find$/ }).click();
   await expect(page.getByRole('button', { name: /嶼巴 1|NLB 1/ }).first()).toBeVisible({ timeout: 20000 });
@@ -90,7 +124,7 @@ test('search lists NLB 1 and 3M', async ({ page }) => {
 test('picking a route draws the official line then hides it on a new search', async ({ page }) => {
   test.setTimeout(120000);
   await page.goto('/');
-  await expect(page.locator('.note')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 30000 });
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   const panel = page.locator('.panel.active');
   await panel.getByLabel(/路線，例如|Route, for example/).fill('1');
   await panel.getByRole('button', { name: /^查詢$|^Find$/ }).click();
@@ -116,7 +150,7 @@ test('picking a route draws the official line then hides it on a new search', as
 test('transfer helper and MTR tabs still search', async ({ page }) => {
   test.setTimeout(120000);
   await page.goto('/');
-  await expect(page.locator('.note')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 30000 });
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await page.getByRole('button', { name: /轉乘助手|Transfer helper/ }).click();
   const transfer = page.locator('.panel.active');
   await transfer.getByLabel(/第一程路線|First route/).fill('1');

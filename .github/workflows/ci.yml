@@ -22,12 +22,28 @@ jobs:
           npm run dev > /tmp/tb-dev.log 2>&1 &
           for i in $(seq 1 90); do
             if curl -sf http://127.0.0.1:3001 >/dev/null; then
-              echo ready
-              exit 0
+              echo html ready
+              break
             fi
             sleep 2
+            if [ "$i" -eq 90 ]; then
+              echo 'dev server did not start'
+              tail -n 80 /tmp/tb-dev.log || true
+              exit 1
+            fi
           done
-          echo 'dev server did not start'
+          echo warming directory
+          for i in $(seq 1 40); do
+            curl -sS -o /tmp/tb-routes.json -w 'http %{http_code}\n' --max-time 90 http://127.0.0.1:3001/api/kmb/routes || true
+            n=$(python3 -c "import json; d=json.load(open('/tmp/tb-routes.json')); print(len(d.get('data') or []))" 2>/dev/null || echo 0)
+            echo "try $i routes $n"
+            if [ "${n:-0}" -gt 100 ]; then
+              echo directory ready
+              exit 0
+            fi
+            sleep 3
+          done
+          echo 'directory did not load'
           tail -n 80 /tmp/tb-dev.log || true
           exit 1
       - run: npm test

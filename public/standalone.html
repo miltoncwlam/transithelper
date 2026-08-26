@@ -1051,6 +1051,7 @@ const MANUAL = {
   const MTR_API = 'https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php';
   const HOME_KEY = 'tb-homes';
   const MTR_PREF_KEY = 'tb-mtr';
+  const ARRIVAL_PREF_KEY = 'tb-arrival';
   const API_BASE = '';
 
   const $ = (id) => document.getElementById(id);
@@ -2188,6 +2189,7 @@ const MANUAL = {
         put('status', t('loadFail'));
       }
     }
+    await restoreArrivalPref();
     renderHome();
   }
 
@@ -2232,6 +2234,48 @@ const MANUAL = {
     S.direct = true;
     mtrInit();
     put('status', `${t('ready', S.routes.length)} · ${t('directMode')}`);
+  }
+
+  function matchArrivalService(pref) {
+    const s = pref?.service;
+    if (!s) return null;
+    const co = serviceCo(s);
+    const found = (S.routes || []).find((row) => {
+      if (n(row.route) !== n(s.route)) return false;
+      if (serviceCo(row) !== co) return false;
+      if (co === 'GMB') {
+        return String(row.gmb_route_id) === String(s.gmb_route_id)
+          && String(row.gmb_route_seq || 1) === String(s.gmb_route_seq || 1);
+      }
+      if (co === 'NLB') return String(row.nlb_route_id || row.route) === String(s.nlb_route_id || s.route);
+      return String(row.bound) === String(s.bound)
+        && String(row.service_type || 1) === String(s.service_type || 1);
+    });
+    return found || s;
+  }
+
+  async function restoreArrivalPref() {
+    if (S.arrivalRestored) return;
+    S.arrivalRestored = true;
+    let pref = {};
+    try { pref = JSON.parse(localStorage.getItem(ARRIVAL_PREF_KEY) || '{}'); } catch {}
+    if (!pref.service || pref.stopIndex === '' || pref.stopIndex == null) return;
+    if ($('arrivalRoute')?.value) return;
+    const s = matchArrivalService(pref);
+    if (!s) return;
+    S.restoringArrival = true;
+    try {
+      if ($('arrivalRoute')) $('arrivalRoute').value = s.route || pref.route || '';
+      await pickA(s);
+      if ($('arrivalStop')) $('arrivalStop').value = String(pref.stopIndex);
+      fillArrivalDest();
+      if (pref.destIndex !== '' && pref.destIndex != null && $('arrivalDest')) {
+        $('arrivalDest').value = String(pref.destIndex);
+      }
+      await showA();
+    } finally {
+      S.restoringArrival = false;
+    }
   }
 
   function groups(rows) {
@@ -2780,6 +2824,14 @@ const MANUAL = {
     S.arrivalPayload = payload;
     paintArrival();
     S.last = 'a';
+    try {
+      localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
+        route: S.a?.route || '',
+        service: S.a,
+        stopIndex: v,
+        destIndex: destVal
+      }));
+    } catch {}
   }
 
   async function pickF(s, restore = {}) {
@@ -3590,7 +3642,11 @@ const MANUAL = {
   if ('serviceWorker' in navigator && (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1')) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
-  $('arrivalRoute').oninput = () => { clearTimeout(deb); deb = setTimeout(() => $('arrivalFind').click(), 500); };
+  $('arrivalRoute').oninput = () => {
+    if (S.restoringArrival) return;
+    clearTimeout(deb);
+    deb = setTimeout(() => $('arrivalFind').click(), 500);
+  };
   $('firstRoute').oninput = () => { clearTimeout(deb); deb = setTimeout(() => $('firstFind').click(), 500); };
   $('destinationInput').oninput = () => { clearTimeout(deb); deb = setTimeout(dest, 500); };
   document.querySelectorAll('.tab').forEach((x) => {

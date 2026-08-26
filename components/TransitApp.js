@@ -93,6 +93,7 @@ function readRecents() {
 
 const HOMES_KEY = 'tb-homes';
 const MTR_PREF_KEY = 'tb-mtr';
+const ARRIVAL_PREF_KEY = 'tb-arrival';
 
 function readMtrPref() {
   if (typeof window === 'undefined') return {};
@@ -113,6 +114,46 @@ function writeMtrPref(next) {
       dest: next.dest ?? cur.dest ?? ''
     }));
   } catch {}
+}
+
+function readArrivalPref() {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = JSON.parse(localStorage.getItem(ARRIVAL_PREF_KEY) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeArrivalPref(next) {
+  try {
+    localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
+      route: next.route || '',
+      service: next.service || null,
+      stopIndex: next.stopIndex ?? '',
+      destIndex: next.destIndex ?? ''
+    }));
+  } catch {}
+}
+
+function matchArrivalService(pref, routes) {
+  const s = pref?.service;
+  if (!s) return null;
+  const list = routes || [];
+  const co = serviceCo(s);
+  const found = list.find((row) => {
+    if (n(row.route) !== n(s.route)) return false;
+    if (serviceCo(row) !== co) return false;
+    if (co === 'GMB') {
+      return String(row.gmb_route_id) === String(s.gmb_route_id)
+        && String(row.gmb_route_seq || 1) === String(s.gmb_route_seq || 1);
+    }
+    if (co === 'NLB') return String(row.nlb_route_id || row.route) === String(s.nlb_route_id || s.route);
+    return String(row.bound) === String(s.bound)
+      && String(row.service_type || 1) === String(s.service_type || 1);
+  });
+  return found || s;
 }
 
 function readLocalHomes() {
@@ -206,6 +247,8 @@ export default function TransitApp() {
   const arrivalBoardRef = useRef(null);
   const arrivalLiveRef = useRef(null);
   const transferSeq = useRef(0);
+  const arrivalRestored = useRef(false);
+  const suppressArrivalSearch = useRef(false);
   const transferPhaseRef = useRef(null);
   const selectedDepartureRef = useRef(null);
   const selectedConnectionRef = useRef(null);
@@ -578,6 +621,12 @@ export default function TransitApp() {
       setArrivalTimes({ trips: [], destLabel: destGroup?.label || null, emptyReason: 'empty' });
     }
     lastView.current = 'a';
+    writeArrivalPref({
+      route: service.route,
+      service,
+      stopIndex: String(index),
+      destIndex: destVal === '' || destVal == null ? '' : String(destVal)
+    });
   }, [api, arrivalDestIndex]);
 
   const chooseArrivalStop = useCallback(async (index, destIndex) => {
@@ -1085,6 +1134,44 @@ export default function TransitApp() {
   }, []);
 
   useEffect(() => {
+    if (arrivalRestored.current || !routes.length) return;
+    const pref = readArrivalPref();
+    if (!pref.service || pref.stopIndex === '' || pref.stopIndex == null) {
+      arrivalRestored.current = true;
+      return;
+    }
+    let cancelled = false;
+    suppressArrivalSearch.current = true;
+    (async () => {
+      try {
+        const s = matchArrivalService(pref, routes) || pref.service;
+        if (!s || cancelled) return;
+        setArrivalRoute(String(s.route || pref.route || ''));
+        setArrivalService(s);
+        setArrivalChoices(null);
+        const seq = await fetchStops(s);
+        if (cancelled) return;
+        const g = groups(seq);
+        setArrivalGroups(g);
+        requestRouteLine(s, seq);
+        const idx = String(pref.stopIndex);
+        if (!g[+idx]) return;
+        setArrivalStopIndex(idx);
+        const destIdx = pref.destIndex != null && pref.destIndex !== '' ? String(pref.destIndex) : '';
+        setArrivalDestIndex(destIdx);
+        await showArrival(s, g, idx, destIdx);
+      } catch {}
+      finally {
+        if (!cancelled) {
+          arrivalRestored.current = true;
+          suppressArrivalSearch.current = false;
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [routes, showArrival]);
+
+  useEffect(() => {
     if (tab !== 'transfer' && tab !== 'home') return;
     ensureStops();
   }, [tab]);
@@ -1148,6 +1235,7 @@ export default function TransitApp() {
   }, [arrivalStopIndex, arrivalTimes]);
 
   useEffect(() => {
+    if (suppressArrivalSearch.current) return undefined;
     if (!arrivalRoute.trim()) {
       hideArrivalResults();
       setArrivalChoices(null);
