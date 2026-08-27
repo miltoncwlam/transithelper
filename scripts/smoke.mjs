@@ -301,6 +301,19 @@ try {
   await checkSearch('1', 'NLB', SEARCH_MS);
   await checkSearch('3M', 'NLB', SEARCH_MS);
   await checkSearch('A35', 'NLB', SEARCH_MS);
+  await checkSearch('673', 'KMB', Math.max(SEARCH_MS, 15000));
+
+  const search673 = await get('/api/search-live?route=673');
+  if (!search673.ok) fail(`search-live 673 HTTP ${search673.status}`);
+  else if (search673.json.error === 'timeout' && !(search673.json.keep || []).length) {
+    fail('search-live 673 timed out with empty keep');
+  } else {
+    const keep = (search673.json.keep || []).filter((z) => String(z.service?.route || '').toUpperCase() === '673');
+    const bounds = new Set(keep.map((z) => String(z.service?.bound || '').toUpperCase()));
+    if (keep.length < 2) fail(`search-live 673 expected both bounds, got ${keep.length}`);
+    else if (!bounds.has('O') || !bounds.has('I')) fail(`search-live 673 missing bound ${[...bounds].join(',')}`);
+    else console.log('ok search-live 673 bounds', [...bounds].sort().join(','));
+  }
 
   const search11 = await get('/api/search-live?route=11');
   if (!search11.ok) fail(`search-live 11 HTTP ${search11.status}`);

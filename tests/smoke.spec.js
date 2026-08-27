@@ -109,6 +109,34 @@ test('product tabs stay available', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /我的回家路線|My travel home/ }).first()).toBeVisible();
 });
 
+test('search lists KMB 673 both bounds and does not timeout', async ({ page }) => {
+  test.setTimeout(90000);
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  const panel = page.locator('.panel.active');
+  await panel.getByLabel(/路線，例如|Route, for example/).fill('673');
+  await panel.getByRole('button', { name: /^查詢$|^Find$/ }).click();
+  await expect(panel).not.toContainText(/查詢逾時|The search timed out/);
+  await expect(page.getByRole('button', { name: /九巴 673|KMB 673/ }).filter({ hasText: /上水|Sheung Shui/ }).first()).toBeVisible({ timeout: 20000 });
+  await expect(page.getByRole('button', { name: /九巴 673|KMB 673/ })).toHaveCount(2);
+  await expect(panel).toContainText(/中環|Central/);
+});
+
+test('search still lists 673 when live lookup fails', async ({ page }) => {
+  test.setTimeout(90000);
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await page.route('**/api/search-live**', (route) => route.abort());
+  const panel = page.locator('.panel.active');
+  await panel.getByLabel(/路線，例如|Route, for example/).fill('673');
+  await panel.getByRole('button', { name: /^查詢$|^Find$/ }).click();
+  await expect(panel).not.toContainText(/查詢逾時|The search timed out/);
+  await expect(page.getByRole('button', { name: /九巴 673|KMB 673/ }).first()).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole('button', { name: /九巴 673|KMB 673/ })).toHaveCount(2);
+  await expect(panel).toContainText(/上水|Sheung Shui/);
+  await expect(panel).toContainText(/中環|Central/);
+});
+
 test('search lists NLB 1 and 3M', async ({ page }) => {
   test.setTimeout(90000);
   await page.goto('/');

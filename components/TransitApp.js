@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/apiBase.js';
 import { I18N } from '../lib/i18n.js';
+import { directoryKeep } from '../lib/routeSearch.js';
 import { pickFollowedTrain, publicMtrLines } from '../00-required/mtr.js';
 import { LRT_TERMINI } from '../00-required/lightrail.js';
 import { mtrLineColor } from '../lib/mtrColors.js';
@@ -485,22 +486,29 @@ export default function TransitApp() {
     }
   }
 
+  function paintChoices(payload) {
+    const keep = (payload.keep || []).map((z) => ({
+      ...z,
+      note: z.note || (z.live?.length ? '' : t('noLiveNow'))
+    }));
+    return {
+      keep,
+      auto: keep.length === 1 ? keep[0].service : payload.auto || null
+    };
+  }
+
   async function loadChoices(routeStr) {
     const q = n(routeStr);
     if (q) pushRecent('routes', q);
     if (!q) return { error: 'noRoute' };
+    const local = directoryKeep(routes, q);
     try {
       const json = await api(`/api/search-live?route=${encodeURIComponent(q)}`, { timeoutMs: 15000 });
-      if (json.error && !(json.keep || []).length) return { error: json.error };
-      const keep = (json.keep || []).map((z) => ({
-        ...z,
-        note: z.note || (z.live?.length ? '' : t('noLiveNow'))
-      }));
-      return {
-        keep,
-        auto: keep.length === 1 ? keep[0].service : json.auto || null
-      };
+      if ((json.keep || []).length) return paintChoices(json);
+      if ((local.keep || []).length) return paintChoices(local);
+      return { error: json.error || local.error || 'noRoute' };
     } catch {
+      if ((local.keep || []).length) return paintChoices(local);
       return { error: 'timeout' };
     }
   }
