@@ -1,7 +1,7 @@
 import { attachDiscounts } from './discounts.js';
 import { attachFaresToItems, fareForRoute } from './fares.js';
 import { scheduledTripMs } from './gtfs.js';
-import { citybusRouteStops, citybusStopEta, stopCompany } from './citybus.js';
+import { citybusRouteStops, citybusStopEta, citybusStopsNearSeeds, stopCompany } from './citybus.js';
 import { addStops } from './addStops.js';
 import { gmbRouteStops, gmbStopEta } from './gmb.js';
 import { attachStopMeta, clusterEtas, expandNearby, kmbFetchOrEmpty, namedStop, stopPlaceKey } from './kmb.js';
@@ -12,6 +12,7 @@ import { lookupStopMap } from './stopName.js';
 const ROUTE_STOP_TTL = 24 * 60 * 60 * 1000;
 const ETA_TTL = 8 * 1000;
 const PLAN_MS = 10000;
+const CONNECTION_PLAN_MS = 14000;
 const DIRECT_BUDGET_MS = 2000;
 const FARE_BUDGET_MS = 600;
 const MAX_BACKUPS = 2;
@@ -75,7 +76,7 @@ function isFirst(eta, first) {
 
 function raceMs(work, ms, fallback) {
   return Promise.race([
-    work,
+    Promise.resolve(work).catch(() => fallback),
     new Promise((resolve) => setTimeout(() => resolve(fallback), ms))
   ]);
 }
@@ -474,8 +475,8 @@ function matchesDest(row, destStops, destIds) {
   return destStops.some((dest) => {
     if (dest.stop === row.stop) return true;
     const metres = metresBetween(row, dest);
-    if (metres <= 80) return true;
-    return metres <= 120 && stopPlaceKey(row) === stopPlaceKey(dest);
+    if (metres <= 160) return true;
+    return metres <= 220 && stopPlaceKey(row) === stopPlaceKey(dest);
   });
 }
 
@@ -711,8 +712,20 @@ function resolvePhase(body) {
   return 'departures';
 }
 
+function likelyServesDest(candidate, destStops) {
+  const dest = (destStops || []).map((d) => `${d.name_tc || ''}${d.name_en || ''}`).join('');
+  const islandEast = /太古|康怡|康山|鰂魚涌|西灣河|筲箕灣|柴灣|小西灣|杏花|Cityplaza|Tai Koo|Quarry Bay|Sai Wan Ho/;
+  if (!islandEast.test(dest)) return true;
+  const blob = `${candidate.dest_tc || ''}${candidate.dest_en || ''}${candidate.orig_tc || ''}${candidate.route || ''}`;
+  if (String(candidate.co || '').toUpperCase() === 'CTB') return true;
+  return /柴灣|小西灣|筲箕灣|西灣河|太古|鰂魚涌|杏花|康怡|北角|銅鑼灣|金鐘|中環|灣仔|Chai Wan|Admiralty|Central|Causeway|Tai Koo|Quarry/.test(blob);
+}
+
 function pickConnections(items, selected) {
   const ranked = [...items].sort((a, b) => {
+    const aCatch = a.catchable !== false;
+    const bCatch = b.catchable !== false;
+    if (aCatch !== bCatch) return aCatch ? -1 : 1;
     const dt = new Date(a.eta) - new Date(b.eta);
     if (dt) return dt;
     if (a.kind === 'stay' && b.kind !== 'stay') return -1;
@@ -738,6 +751,9 @@ function pickConnections(items, selected) {
 }
 
 async function plan(cache, stopMap, allStops, body, routes, box) {
+  const started = Date.now();
+  const budget = resolvePhase(body) === 'connections' ? CONNECTION_PLAN_MS : PLAN_MS;
+  const remain = (reserve = 1200) => Math.max(100, budget - reserve - (Date.now() - started));
   const radius = Number(body.radius) || 250;
   const first = body.first;
   const phase = resolvePhase(body);
@@ -751,7 +767,13 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
     return emptyPlan('need_board', { phase });
   }
 
-  const interchange = body.nearby ? expandNearby(interchangeSeeds, allStops, radius).slice(0, NEARBY_CAP) : interchangeSeeds;
+  const extraCtbPromise = phase === 'connections'
+    ? citybusStopsNearSeeds(cache, routes, interchangeSeeds, destSeeds, radius).catch(() => [])
+    : Promise.resolve([]);
+  const firstSeq = first ? await routeStops(cache, stopMap, first) : [];
+  const interchange = body.nearby
+    ? expandNearby(interchangeSeeds, allStops, radius).slice(0, NEARBY_CAP)
+    : [...interchangeSeeds];
   const destinations = body.nearby ? expandNearby(destSeeds, allStops, radius).slice(0, NEARBY_CAP) : destSeeds;
   const boarding = boardSeeds;
   const destIds = new Set(destinations.map((stop) => stop.stop));
@@ -759,7 +781,6 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
   const interIds = new Set(interchange.map((stop) => stop.stop));
   const sameStartAndTransfer = [...boardIds].some((id) => interIds.has(id));
 
-  const firstSeq = first ? await routeStops(cache, stopMap, first) : [];
   const boardIdx = firstSeq.findIndex((row) => boardIds.has(row.stop));
   const interIdx = firstSeq.findIndex((row) => interIds.has(row.stop));
   if (boardIdx >= 0 && interIdx >= 0 && interIdx < boardIdx) {
@@ -772,12 +793,13 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
 
   const liveStops = phase === 'departures' ? boarding : interchange;
   const needChain = first && boardIdx >= 0 && interIdx >= boardIdx;
-  const [live, etaTables] = await Promise.all([
+  const [liveKmb, etaTables] = await Promise.all([
     etasAtStops(cache, liveStops, routes),
     needChain
       ? firstRouteEtaTables(cache, first, firstSeq, boardIdx, interIdx)
       : Promise.resolve({ bySeq: new Map(), byStop: new Map() })
   ]);
+  let live = liveKmb;
 
   const tableBoardTimes = boardIdx >= 0
     ? etaSlotsAt(firstSeq[boardIdx], etaTables).map((slot) => slot.eta)
@@ -902,9 +924,6 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
     };
   }
 
-  const candidateList = skipOtherDirects ? [] : groupCandidates(live);
-  const sequences = skipOtherDirects ? [] : await mapPool(candidateList, 6, (candidate) => routeStops(cache, stopMap, candidate));
-
   const selectedBoard = body.selectedDeparture || null;
   const boardDeparture = selectedBoard || boardFirstTimes[0] || null;
   let firstArrivalAtInterchange = null;
@@ -930,6 +949,32 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
     firstArrivalAtInterchange = new Date(new Date(boardDeparture).getTime() + travelMs).toISOString();
     arrivalEstimated = true;
   }
+  if (box) {
+    box.latest = {
+      ...box.latest,
+      firstArrivalAtInterchange,
+      firstStops,
+      boardDeparture: liveBoard || boardDeparture,
+      arrivalEstimated,
+      leftBoard
+    };
+  }
+
+  const extraCtb = await raceMs(extraCtbPromise, remain(2500), []);
+  for (const stop of extraCtb || []) {
+    if (!stop?.stop || interIds.has(stop.stop)) continue;
+    interchange.push(stop);
+    interIds.add(stop.stop);
+  }
+  if ((extraCtb || []).length) {
+    const liveCtb = await etasAtStops(cache, extraCtb, routes);
+    live = [...live, ...liveCtb];
+  }
+
+  const candidateList = skipOtherDirects
+    ? []
+    : groupCandidates(live).filter((candidate) => likelyServesDest(candidate, destSeeds));
+  const sequences = skipOtherDirects ? [] : await mapPool(candidateList, 6, (candidate) => routeStops(cache, stopMap, candidate));
 
   const connectAfterBase = firstArrivalAtInterchange
     ? new Date(firstArrivalAtInterchange).getTime()
@@ -968,11 +1013,14 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
       const firstMatch = isFirstRoute(candidate, first);
       if (!atInter || firstMatch) continue;
       const walk = walkMs(alightStop, entry.stop);
-      if (connectAfterBase && etaMs < connectAfterBase + walk) continue;
+      const readyAt = connectAfterBase != null ? connectAfterBase + walk : null;
+      const catchable = readyAt == null || etaMs >= readyAt;
+      if (readyAt != null && etaMs < readyAt - (8 * 60 * 1000)) continue;
       addUnique(list, connectionRow('transfer', candidate, entry, match, {
         waitAfterFirstMinutes: firstArrivalAtInterchange
-          ? Math.max(0, Math.round((etaMs - new Date(firstArrivalAtInterchange).getTime()) / 60000))
-          : null
+          ? Math.round((etaMs - new Date(firstArrivalAtInterchange).getTime()) / 60000)
+          : null,
+        catchable
       }), firstAlightIds);
     }
   });
@@ -1148,6 +1196,7 @@ export async function planTransfer(cache, stopMap, allStops, body, routes) {
     box.latest = result;
     return result;
   });
+  const budget = resolvePhase(body || {}) === 'connections' ? CONNECTION_PLAN_MS : PLAN_MS;
   const timeout = new Promise((resolve) => {
     setTimeout(() => {
       if (box.latest) {
@@ -1161,11 +1210,20 @@ export async function planTransfer(cache, stopMap, allStops, body, routes) {
         return;
       }
       resolve(emptyPlan('timeout', { phase: resolvePhase(body || {}) }));
-    }, PLAN_MS);
+    }, budget);
   });
   try {
     return await Promise.race([work, timeout]);
   } catch {
+    if (box.latest) {
+      return {
+        ...box.latest,
+        emptyReason: box.latest.emptyReason
+          || ((box.latest.departures || []).length || (box.latest.directs || []).length || (box.latest.list || []).length
+            ? null
+            : 'timeout')
+      };
+    }
     return emptyPlan('none', { phase: resolvePhase(body || {}) });
   }
 }

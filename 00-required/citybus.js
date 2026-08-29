@@ -241,6 +241,61 @@ export async function citybusStopEtas(cache, stopId) {
   }
 }
 
+function metresBetweenStops(a, b) {
+  const metres = Math.hypot(
+    (Number(a.lat) - Number(b.lat)) * 111000,
+    (Number(a.long) - Number(b.long)) * 102000
+  );
+  return Number.isFinite(metres) ? metres : Infinity;
+}
+
+function citybusConnectScore(row, destStops) {
+  const blob = `${row.orig_tc || ''}${row.dest_tc || ''}${row.orig_en || ''}${row.dest_en || ''}`;
+  const dest = (destStops || []).map((d) => `${d.name_tc || ''}${d.name_en || ''}`).join('');
+  let score = 0;
+  if (/馬鞍山|烏溪沙|沙田|大埔|粉嶺|上水|大學|火炭|大圍/.test(blob)) score += 2;
+  if (/柴灣|小西灣|筲箕灣|西灣河|太古|鰂魚涌|杏花|康怡|北角/.test(blob)) score += 2;
+  if (/太古|康怡|鰂魚涌|西灣河|柴灣|Cityplaza|Tai Koo/.test(dest)
+    && /柴灣|太古|西灣河|鰂魚涌|康怡|杏花|Chai Wan|Tai Koo/.test(blob)) score += 2;
+  return score;
+}
+
+export async function citybusStopsNearSeeds(cache, routes, seeds, destStops, radius) {
+  try {
+    const cap = Math.max(80, Number(radius) || 250);
+    const scored = [];
+    const seen = new Set();
+    for (const row of routes || []) {
+      if (String(row.co || '').toUpperCase() !== 'CTB') continue;
+      const key = `${String(row.route || '').toUpperCase()}|${row.bound}`;
+      if (seen.has(key)) continue;
+      const score = citybusConnectScore(row, destStops);
+      if (score < 3) continue;
+      seen.add(key);
+      scored.push({ row, score });
+    }
+    scored.sort((a, b) => b.score - a.score || String(a.row.route).localeCompare(String(b.row.route)));
+    const picked = scored.slice(0, 4).map((x) => x.row);
+    const found = new Map();
+    await mapPool(picked, 4, async (service) => {
+      if (found.size >= 2) return;
+      const seq = await citybusRouteStopSeq(cache, service);
+      if (!seq.length) return;
+      const mid = Math.floor(seq.length * 0.42);
+      const sample = seq.slice(Math.max(0, mid - 4), Math.min(seq.length, mid + 6));
+      await mapPool(sample, 8, async (row) => {
+        if (found.size >= 2) return;
+        const meta = await citybusStop(cache, row.stop);
+        if (meta?.lat == null || !seeds?.some((seed) => metresBetweenStops(meta, seed) <= cap)) return;
+        found.set(String(meta.stop), { ...meta, co: 'CTB' });
+      });
+    });
+    return [...found.values()];
+  } catch {
+    return [];
+  }
+}
+
 export async function citybusAllStops(cache, routes, { limit = 40 } = {}) {
   const jobs = [];
   const seen = new Set();

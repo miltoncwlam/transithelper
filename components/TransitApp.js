@@ -789,27 +789,32 @@ export default function TransitApp() {
           <div className="muted">{clk(x.arrive)} {t('rideArrives')} {loc(x.to)}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}{x.totalMinutes != null ? ` · ${t('totalMins', x.totalMinutes)}` : ''}</div>
         ) : null}
         {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
-        {x.kind === 'transfer' && x.waitAfterFirstMinutes != null ? (
-          <div className="muted">{t('waitAfter', x.waitAfterFirstMinutes)}</div>
+        {x.kind === 'transfer' && x.catchable !== false && x.waitAfterFirstMinutes != null ? (
+          <div className="muted">{t('waitAfter', Math.max(0, x.waitAfterFirstMinutes))}</div>
         ) : null}
+        {x.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
         {fareNote(x)}
         {x.discount ? (
           <div className="muted"><span className="badge">{t('octopusDiscount')}</span> {lang === 'zh' ? x.discount.notes_zh : x.discount.notes_en} {t('discountNote')}</div>
         ) : null}
         {opts.pickHint ? <div className="muted">{t('pickConnection')}</div> : null}
-        {!opts.onPick ? renderStopTimes(`xfer-${x.kind}-${x.route}-${x.eta}`, x.stops) : null}
       </>
     );
+    const stopTimes = renderStopTimes(`xfer-${x.kind}-${x.route}-${x.eta}`, x.stops);
     if (opts.onPick) {
       return (
-        <button className={`item choice pg-choice ${coTone(x)}`} type="button" key={`${x.kind}-${x.route}-${x.eta}-${i}`} onClick={opts.onPick}>
-          {body}
-        </button>
+        <div className={`item ${coTone(x)}`} key={`${x.kind}-${x.route}-${x.eta}-${i}`}>
+          <button className={`choice pg-choice ${coTone(x)}`} type="button" onClick={opts.onPick}>
+            {body}
+          </button>
+          {stopTimes}
+        </div>
       );
     }
     return (
       <div className={`item ${coTone(x)}`} key={`${x.kind}-${x.route}-${x.eta}-${i}`}>
         {body}
+        {stopTimes}
       </div>
     );
   }
@@ -1237,7 +1242,7 @@ export default function TransitApp() {
   useEffect(() => {
     if (arrivalStopIndex === '' || !arrivalTimes) return undefined;
     const id = window.requestAnimationFrame(() => {
-      arrivalLiveRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      arrivalLiveRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     return () => cancelAnimationFrame(id);
   }, [arrivalStopIndex, arrivalTimes]);
@@ -1317,7 +1322,8 @@ export default function TransitApp() {
         <button
           className="tab mt-2"
           type="button"
-          onClick={async () => {
+          onClick={async (e) => {
+            e.stopPropagation();
             if (open) {
               setOpenStopKey(null);
               return;
@@ -1606,6 +1612,42 @@ export default function TransitApp() {
                   <span className="muted block mt-1">{t('stopMapHint')}</span>
                 </label>
               ) : null}
+              {arrivalStopIndex !== '' ? (
+                <label className="block mt-3">
+                  <span>{t('rideDestLabel')}</span>
+                  <select className="field mt-1" value={arrivalDestIndex} onChange={async (e) => {
+                    const v = e.target.value;
+                    setArrivalDestIndex(v);
+                    await showArrival(arrivalService, arrivalGroups, arrivalStopIndex, v);
+                  }}>
+                    <option value="">{t('chooseRideDest')}</option>
+                    {arrivalGroups.map((g, i) => (
+                      i > +arrivalStopIndex ? <option key={`d-${g.label}-${i}`} value={i}>{fareLabel(g, odFare(arrivalGroups[+arrivalStopIndex], g, arrivalFares))}</option> : null
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {arrivalTimes && arrivalStopIndex !== '' ? (
+                <div ref={arrivalLiveRef}>
+                  <h3 className="font-bold mt-3">{arrivalGroups[+arrivalStopIndex]?.label}{arrivalTimes.destLabel ? ` → ${arrivalTimes.destLabel}` : ''}</h3>
+                  {fareNote(arrivalService, { hideScheduled: !!(arrivalTimes?.destLabel && arrivalTimes?.trips?.some((row) => row.rideMinutes > 0)) })}
+                  {etaList(arrivalTimes, { fetchStops: true })}
+                  <div className="row-actions">
+                    <button className="tab" type="button" onClick={() => {
+                      const g = arrivalGroups[+arrivalStopIndex];
+                      const destG = arrivalDestIndex !== '' ? arrivalGroups[+arrivalDestIndex] : null;
+                      saveHome({
+                        type: 'arrival',
+                        title: { zh: `${arrivalService.route}（${areaName(g.stops[0])}）`, en: `${arrivalService.route} at ${g.stops[0].name_en || g.stops[0].name_tc}` },
+                        subtitle: destG
+                          ? { zh: `${g.label} → ${destG.label}`, en: `${g.label} → ${destG.label}` }
+                          : { zh: `${arrivalService.orig_tc || arrivalService.orig_en} → ${arrivalService.dest_tc || arrivalService.dest_en}`, en: `${arrivalService.orig_en || arrivalService.orig_tc} → ${arrivalService.dest_en || arrivalService.dest_tc}` },
+                        payload: { service: arrivalService, stopIndex: +arrivalStopIndex, destIndex: arrivalDestIndex === '' ? '' : +arrivalDestIndex }
+                      });
+                    }}>{t('saveHome')}</button>
+                  </div>
+                </div>
+              ) : null}
               {routeMapStops.length >= 2 ? (
                 <div className="mt-3">
                   <StopMap
@@ -1626,42 +1668,6 @@ export default function TransitApp() {
                   {!routeLine?.loading && routeLine?.source === 'straight' ? <p className="muted">{t('playgroundSourceStraight')}</p> : null}
                 </div>
               ) : null}
-              {arrivalStopIndex !== '' ? (
-                <label className="block mt-3">
-                  <span>{t('rideDestLabel')}</span>
-                  <select className="field mt-1" value={arrivalDestIndex} onChange={async (e) => {
-                    const v = e.target.value;
-                    setArrivalDestIndex(v);
-                    await showArrival(arrivalService, arrivalGroups, arrivalStopIndex, v);
-                  }}>
-                    <option value="">{t('chooseRideDest')}</option>
-                    {arrivalGroups.map((g, i) => (
-                      i > +arrivalStopIndex ? <option key={`d-${g.label}-${i}`} value={i}>{fareLabel(g, odFare(arrivalGroups[+arrivalStopIndex], g, arrivalFares))}</option> : null
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-            </div>
-          ) : null}
-          {arrivalTimes && arrivalStopIndex !== '' ? (
-            <div ref={arrivalLiveRef}>
-              <h3 className="font-bold mt-3">{arrivalGroups[+arrivalStopIndex]?.label}{arrivalTimes.destLabel ? ` → ${arrivalTimes.destLabel}` : ''}</h3>
-              {fareNote(arrivalService, { hideScheduled: !!(arrivalTimes?.destLabel && arrivalTimes?.trips?.some((row) => row.rideMinutes > 0)) })}
-              {etaList(arrivalTimes, { fetchStops: true })}
-              <div className="row-actions">
-                <button className="tab" type="button" onClick={() => {
-                  const g = arrivalGroups[+arrivalStopIndex];
-                  const destG = arrivalDestIndex !== '' ? arrivalGroups[+arrivalDestIndex] : null;
-                  saveHome({
-                    type: 'arrival',
-                    title: { zh: `${arrivalService.route}（${areaName(g.stops[0])}）`, en: `${arrivalService.route} at ${g.stops[0].name_en || g.stops[0].name_tc}` },
-                    subtitle: destG
-                      ? { zh: `${g.label} → ${destG.label}`, en: `${g.label} → ${destG.label}` }
-                      : { zh: `${arrivalService.orig_tc || arrivalService.orig_en} → ${arrivalService.dest_tc || arrivalService.dest_en}`, en: `${arrivalService.orig_en || arrivalService.orig_tc} → ${arrivalService.dest_en || arrivalService.dest_tc}` },
-                    payload: { service: arrivalService, stopIndex: +arrivalStopIndex, destIndex: arrivalDestIndex === '' ? '' : +arrivalDestIndex }
-                  });
-                }}>{t('saveHome')}</button>
-              </div>
             </div>
           ) : null}
         </div>

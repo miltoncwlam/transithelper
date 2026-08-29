@@ -207,6 +207,11 @@ a.tab {
   transition: background-color .1s ease, color .1s ease, transform .05s ease;
 }
 
+.item > button.choice {
+  box-shadow: none;
+  margin: 0;
+}
+
 .choice b {
   font-family: 'Space Mono', ui-monospace, monospace;
   font-size: 1.2rem;
