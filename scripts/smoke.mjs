@@ -428,12 +428,8 @@ try {
   }, '#00A651');
 
   const playground = await fetch(`${BASE}/playground`);
-  if (!playground.ok) fail(`playground ${playground.status}`);
-  else {
-    const html = await playground.text();
-    if (!/路線地圖練習場|Route map playground/.test(html)) fail('playground missing heading');
-    else console.log('ok playground', playground.status);
-  }
+  if (playground.status !== 404) fail(`playground should be gone, got ${playground.status}`);
+  else console.log('ok playground removed');
 
   const homesNoId = await fetch(`${BASE}/api/homes`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
   const homesNoJson = await homesNoId.json().catch(() => ({}));

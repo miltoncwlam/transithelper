@@ -960,7 +960,7 @@ async function plan(cache, stopMap, allStops, body, routes, box) {
     };
   }
 
-  const extraCtb = await raceMs(extraCtbPromise, remain(2500), []);
+  const extraCtb = await raceMs(extraCtbPromise, Math.max(2000, remain(2000)), []);
   for (const stop of extraCtb || []) {
     if (!stop?.stop || interIds.has(stop.stop)) continue;
     interchange.push(stop);
@@ -1205,7 +1205,7 @@ export async function planTransfer(cache, stopMap, allStops, body, routes) {
           emptyReason: box.latest.emptyReason
             || ((box.latest.departures || []).length || (box.latest.directs || []).length || (box.latest.list || []).length
               ? null
-              : 'timeout')
+              : (box.latest.firstArrivalAtInterchange || box.latest.boardDeparture ? 'timeout' : 'timeout'))
         });
         return;
       }

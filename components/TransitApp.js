@@ -1,17 +1,25 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/apiBase.js';
 import { I18N } from '../lib/i18n.js';
 import { directoryKeep } from '../lib/routeSearch.js';
 import { pickFollowedTrain, publicMtrLines } from '../00-required/mtr.js';
-import { LRT_TERMINI } from '../00-required/lightrail.js';
 import { mtrLineColor } from '../lib/mtrColors.js';
 import { lineColorForCo } from '../lib/routeColors.js';
 import { displayStopName } from '../00-required/stopName.js';
 import StopMap from './StopMap.js';
 import UserGuide from './UserGuide.js';
+import SearchableSelect from './SearchableSelect.js';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 function isLocalHost() {
   if (typeof window === 'undefined') return false;
@@ -81,6 +89,81 @@ function emptyReasonKey(reason) {
   if (reason === 'need_board') return 'needBoard';
   if (reason === 'empty' || reason === 'no_departure') return 'noLiveNow';
   return 'none';
+}
+
+function transferListsEmpty(json) {
+  return !(json?.list || []).length && !(json?.departures || []).length && !(json?.directs || []).length;
+}
+
+function origDestKey(s) {
+  return `${servicePlaceKey(s, 'orig')}|${servicePlaceKey(s, 'dest')}`;
+}
+
+function mergeJointBounds(rows) {
+  const order = [];
+  const byKey = new Map();
+  for (const z of rows) {
+    const k = origDestKey(z.service);
+    if (!byKey.has(k)) {
+      byKey.set(k, []);
+      order.push(k);
+    }
+    byKey.get(k).push(z);
+  }
+  const out = [];
+  for (const k of order) {
+    const list = byKey.get(k);
+    const cos = list.map((z) => serviceCo(z.service));
+    const hasCtb = cos.includes('CTB');
+    const hasFranchised = cos.some((c) => c !== 'CTB' && c !== 'GMB' && c !== 'NLB');
+    if (list.length >= 2 && hasCtb && hasFranchised) {
+      const preferred = list.find((z) => (z.live || []).length) || list[0];
+      out.push({
+        ...preferred,
+        live: list.flatMap((z) => z.live || []),
+        companies: [...new Set(list.flatMap((z) => z.companies || [serviceCo(z.service)]))]
+      });
+    } else {
+      out.push(...list);
+    }
+  }
+  return out;
+}
+
+function groupKeep(keep) {
+  const order = [];
+  const byRoute = new Map();
+  for (const z of keep || []) {
+    const route = n(z.service.route);
+    if (!byRoute.has(route)) {
+      byRoute.set(route, []);
+      order.push(route);
+    }
+    byRoute.get(route).push(z);
+  }
+  return order.map((route) => {
+    const merged = mergeJointBounds(byRoute.get(route));
+    const live = merged.filter((z) => (z.live || []).length);
+    const idle = merged.filter((z) => !(z.live || []).length);
+    return { route, live, idle };
+  });
+}
+
+function earliestByRoute(rows) {
+  const map = new Map();
+  for (const x of rows || []) {
+    const k = `${String(x.kind || '')}|${n(x.route)}|${String(x.co || x.kind || '')}`;
+    const cur = map.get(k);
+    if (!cur || new Date(x.eta) < new Date(cur.eta)) map.set(k, x);
+  }
+  return [...map.values()].sort((a, b) => new Date(a.eta) - new Date(b.eta));
+}
+
+function sameWatchedTrip(a, b) {
+  if (!a || !b) return false;
+  return n(a.route) === n(b.route)
+    && String(a.co || a.kind || 'KMB') === String(b.co || b.kind || 'KMB')
+    && Math.abs(new Date(a.eta) - new Date(b.eta)) < 10 * 60 * 1000;
 }
 
 function readRecents() {
@@ -220,7 +303,7 @@ export default function TransitApp() {
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [chosenDirect, setChosenDirect] = useState(null);
 
-  const [mtrLine, setMtrLine] = useState('LRT');
+  const [mtrLine, setMtrLine] = useState('TWL');
   const [mtrStation, setMtrStation] = useState('');
   const [mtrDest, setMtrDest] = useState('');
   const [mtrResult, setMtrResult] = useState(null);
@@ -249,7 +332,6 @@ export default function TransitApp() {
   const arrivalLiveRef = useRef(null);
   const transferSeq = useRef(0);
   const arrivalRestored = useRef(false);
-  const suppressArrivalSearch = useRef(false);
   const transferPhaseRef = useRef(null);
   const selectedDepartureRef = useRef(null);
   const selectedConnectionRef = useRef(null);
@@ -491,9 +573,12 @@ export default function TransitApp() {
       ...z,
       note: z.note || (z.live?.length ? '' : t('noLiveNow'))
     }));
+    const grouped = groupKeep(keep);
+    const liveBounds = grouped.flatMap((g) => g.live);
     return {
       keep,
-      auto: keep.length === 1 ? keep[0].service : payload.auto || null
+      groups: grouped,
+      auto: liveBounds.length === 1 ? liveBounds[0].service : null
     };
   }
 
@@ -511,6 +596,28 @@ export default function TransitApp() {
       if ((local.keep || []).length) return paintChoices(local);
       return { error: 'timeout' };
     }
+  }
+
+  async function searchArrivalByRoute(routeStr) {
+    if (routeStr != null) setArrivalRoute(routeStr);
+    hideArrivalResults();
+    const gen = arrivalSearchSeq.current;
+    setArrivalChoices({ loading: true });
+    const payload = await loadChoices(routeStr ?? arrivalRoute);
+    if (gen !== arrivalSearchSeq.current) return;
+    setArrivalChoices(payload);
+    if (payload.auto) pickArrival(payload.auto);
+  }
+
+  async function searchFirstByRoute(routeStr) {
+    if (routeStr != null) setFirstRoute(routeStr);
+    hideFirstService();
+    const gen = firstSearchSeq.current;
+    setFirstChoices({ loading: true });
+    const payload = await loadChoices(routeStr ?? firstRoute);
+    if (gen !== firstSearchSeq.current) return;
+    setFirstChoices(payload);
+    if (payload.auto) pickFirst(payload.auto);
   }
 
   function hideArrivalResults() {
@@ -882,6 +989,25 @@ export default function TransitApp() {
         })
       });
       if (seq !== transferSeq.current) return;
+      if (silent && transferResult?.json && !transferListsEmpty(transferResult.json) && transferListsEmpty(json)) {
+        if (json.firstArrivalAtInterchange || json.boardDeparture || json.firstStops?.length) {
+          setTransferResult({
+            json: {
+              ...transferResult.json,
+              firstArrivalAtInterchange: json.firstArrivalAtInterchange || transferResult.json.firstArrivalAtInterchange,
+              firstStops: json.firstStops?.length ? json.firstStops : transferResult.json.firstStops,
+              boardDeparture: json.boardDeparture || transferResult.json.boardDeparture,
+              arrivalEstimated: json.arrivalEstimated ?? transferResult.json.arrivalEstimated,
+              leftBoard: json.leftBoard ?? transferResult.json.leftBoard,
+              watch: json.watch || transferResult.json.watch
+            },
+            inter
+          });
+        }
+        setTransferMessage('');
+        lastView.current = 't';
+        return;
+      }
       setTransferMessage('');
       const nextPhase = json.phase || phase;
       transferPhaseRef.current = nextPhase;
@@ -918,8 +1044,7 @@ export default function TransitApp() {
 
   const lineName = (line) => loc(line.name) || line.name;
   const stationLabel = (row) => (lang === 'zh' ? row[1] : row[2]);
-  function rideDestStations(line, origin, lineKey) {
-    if (lineKey === 'LRT') return LRT_TERMINI.filter((row) => row[0] !== origin);
+  function rideDestStations(line, origin) {
     const stations = line?.stations || [];
     const routes = line?.routes;
     if (!routes?.length) return stations.filter((row) => row[0] !== origin);
@@ -938,9 +1063,13 @@ export default function TransitApp() {
     return out;
   }
 
-  const lineEntries = Object.entries(lines).sort(([a], [b]) => (a === 'LRT' ? -1 : b === 'LRT' ? 1 : 0));
+  const lineEntries = Object.entries(lines).sort(([a], [b]) => {
+    if (a === 'TWL') return -1;
+    if (b === 'TWL') return 1;
+    return 0;
+  });
   const currentLine = lines[mtrLine] || lineEntries[0]?.[1];
-  const currentLineKey = lines[mtrLine] ? mtrLine : (lineEntries[0]?.[0] || 'LRT');
+  const currentLineKey = lines[mtrLine] ? mtrLine : (lineEntries[0]?.[0] || 'TWL');
   const currentStations = currentLine?.stations || [];
   const currentSta = currentStations.some((row) => row[0] === mtrStation)
     ? mtrStation
@@ -1154,14 +1283,16 @@ export default function TransitApp() {
       return;
     }
     let cancelled = false;
-    suppressArrivalSearch.current = true;
     (async () => {
       try {
         const s = matchArrivalService(pref, routes) || pref.service;
         if (!s || cancelled) return;
-        setArrivalRoute(String(s.route || pref.route || ''));
+        const routeStr = String(s.route || pref.route || '');
+        setArrivalRoute(routeStr);
         setArrivalService(s);
-        setArrivalChoices(null);
+        const listed = await loadChoices(routeStr);
+        if (cancelled) return;
+        setArrivalChoices(listed);
         const seq = await fetchStops(s);
         if (cancelled) return;
         const g = groups(seq);
@@ -1177,7 +1308,6 @@ export default function TransitApp() {
       finally {
         if (!cancelled) {
           arrivalRestored.current = true;
-          suppressArrivalSearch.current = false;
         }
       }
     })();
@@ -1199,7 +1329,7 @@ export default function TransitApp() {
 
   useEffect(() => {
     if (mtrLine && lines[mtrLine]) return;
-    if (lines.LRT) setMtrLine('LRT');
+    if (lines.TWL) setMtrLine('TWL');
     else {
       const first = Object.keys(lines)[0];
       if (first) setMtrLine(first);
@@ -1246,47 +1376,6 @@ export default function TransitApp() {
     });
     return () => cancelAnimationFrame(id);
   }, [arrivalStopIndex, arrivalTimes]);
-
-  useEffect(() => {
-    if (suppressArrivalSearch.current) return undefined;
-    if (!arrivalRoute.trim()) {
-      hideArrivalResults();
-      setArrivalChoices(null);
-      return undefined;
-    }
-    hideArrivalResults();
-    const gen = arrivalSearchSeq.current;
-    setArrivalChoices({ loading: true });
-    const handle = setTimeout(() => {
-      (async () => {
-        const payload = await loadChoices(arrivalRoute);
-        if (gen !== arrivalSearchSeq.current) return;
-        setArrivalChoices(payload);
-        if (payload.auto) pickArrival(payload.auto);
-      })();
-    }, 400);
-    return () => clearTimeout(handle);
-  }, [arrivalRoute]);
-
-  useEffect(() => {
-    if (!firstRoute.trim()) {
-      hideFirstService();
-      setFirstChoices(null);
-      return undefined;
-    }
-    hideFirstService();
-    const gen = firstSearchSeq.current;
-    setFirstChoices({ loading: true });
-    const handle = setTimeout(() => {
-      (async () => {
-        const payload = await loadChoices(firstRoute);
-        if (gen !== firstSearchSeq.current) return;
-        setFirstChoices(payload);
-        if (payload.auto) pickFirst(payload.auto);
-      })();
-    }, 400);
-    return () => clearTimeout(handle);
-  }, [firstRoute]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -1486,22 +1575,47 @@ export default function TransitApp() {
     return <div className="muted">{parts.join(' · ')}</div>;
   }
 
+  function renderBoundChoice(z, onPick) {
+    const key = `${z.service.co || 'KMB'}-${z.service.route}-${z.service.bound}-${z.service.service_type}-${z.service.gmb_route_id || z.service.nlb_route_id || ''}`;
+    return (
+      <button key={key} className={`item choice pg-choice ${coTone(z.service, z.companies)}`} type="button" onClick={() => onPick(z.service)}>
+        <Badge className="badge">{coLabel(z.service, z.companies)}</Badge> <b>{z.service.route}</b>
+        <div>{rn(z.service)}</div>
+        {fareNote(z.service)}
+        {z.note ? <div className="muted">{z.note}</div> : null}
+      </button>
+    );
+  }
+
   function renderChoiceList(payload, onPick) {
     if (!payload) return null;
     if (payload.loading) return <div className="note">{t('checking')}</div>;
     if (payload.error) return <p className="muted">{t(payload.error)}</p>;
-    return (
-      <>
-        {payload.keep.map((z, i) => (
-          <button key={`${z.service.co || 'KMB'}-${z.service.route}-${z.service.bound}-${z.service.service_type}-${z.service.gmb_route_id || z.service.nlb_route_id || ''}-${i}`} className={`item choice pg-choice ${coTone(z.service, z.companies)}`} type="button" onClick={() => onPick(z.service)}>
-            <span className="badge">{coLabel(z.service, z.companies)}</span> <b>{z.service.route}</b>
-            <div>{rn(z.service)}</div>
-            {fareNote(z.service)}
-            {z.note ? <div className="muted">{z.note}</div> : null}
-          </button>
-        ))}
-      </>
-    );
+    const grouped = payload.groups || groupKeep(payload.keep || []);
+    return grouped.map((g) => {
+      const primary = g.live.length ? g.live : g.idle;
+      const collapsed = g.live.length ? g.idle : [];
+      return (
+        <Card key={g.route} className="mt-3 overflow-hidden">
+          <CardHeader className="p-3 pb-1">
+            <CardTitle className="text-lg">{g.route}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1 p-3 pt-0">
+            {primary.map((z) => renderBoundChoice(z, onPick))}
+            {collapsed.length ? (
+              <Collapsible>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="mt-2 px-0">{t('moreIdle', collapsed.length)}</Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  {collapsed.map((z) => renderBoundChoice(z, onPick))}
+                </CollapsibleContent>
+              </Collapsible>
+            ) : null}
+          </CardContent>
+        </Card>
+      );
+    });
   }
 
   const tabs = [
@@ -1518,9 +1632,9 @@ export default function TransitApp() {
   const resultPhase = chosenDirect ? 'direct' : (transferResult?.json?.phase || transferPhase);
 
   return (
-    <div className="playground-page">
+    <div className="app-page">
       <div className="pg-stripe" aria-hidden="true" />
-    <main className="shell playground-ui">
+    <main className="shell app-shell">
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark">HK</span>
@@ -1530,7 +1644,8 @@ export default function TransitApp() {
           </div>
         </div>
         <div className="app-controls">
-          <button
+          <Button
+            variant="outline"
             className="tab pg-lang"
             type="button"
             aria-label={t('langBtn')}
@@ -1541,22 +1656,28 @@ export default function TransitApp() {
             }}
           >
             {t('langBtn')}
-          </button>
-          <Link className="tab pg-map" href="/playground">{t('playgroundBtn')}</Link>
-          <button className={`tab pg-guide${tab === 'guide' ? ' active' : ''}`} type="button" onClick={() => setTab('guide')}>{t('guideBtn')}</button>
-          <select className="field" value={refreshSec} onChange={(e) => setRefreshSec(e.target.value)}>
-            <option value="15">{t('refresh15')}</option>
-            <option value="30">{t('refresh30')}</option>
-          </select>
+          </Button>
+          <Button className={`tab pg-guide${tab === 'guide' ? ' active' : ''}`} variant={tab === 'guide' ? 'default' : 'outline'} type="button" onClick={() => setTab('guide')}>{t('guideBtn')}</Button>
+          <Select value={refreshSec} onValueChange={setRefreshSec}>
+            <SelectTrigger className="w-[9.5rem]" aria-label={t('refresh15')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="15">{t('refresh15')}</SelectItem>
+              <SelectItem value="30">{t('refresh30')}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </header>
       <div className="note">{dirCount == null ? t('loading') : dirCount < 0 ? (offline && showLocalDevHint() ? t('connectionRefused') : t('loadFail')) : t('ready', dirCount)}</div>
       {standaloneHint ? <p className="muted add-home-hint">{t('addHomeScreen')}</p> : null}
-      <nav className="tabs my-5">
-        {tabs.map(([id, label]) => (
-          <button key={id} className={`tab tab-${id}${tab === id ? ' active' : ''}`} type="button" onClick={() => setTab(id)}>{label}</button>
-        ))}
-      </nav>
+      <Tabs value={tab} onValueChange={setTab} className="my-5">
+        <TabsList className="tabs">
+          {tabs.map(([id, label]) => (
+            <TabsTrigger key={id} value={id} className={`tab tab-${id}${tab === id ? ' active' : ''}`}>{label}</TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       <section className={`panel${tab === 'arrivals' ? ' active' : ''}`}>
         <div className="card">
@@ -1566,22 +1687,14 @@ export default function TransitApp() {
               <div className="muted">{t('recentRoutes')}</div>
               <div className="row-actions recent-routes">
                 {recents.routes.map((route) => (
-                  <button key={route} className="tab" type="button" onClick={() => setArrivalRoute(route)}>{route}</button>
+                  <Button key={route} variant="outline" className="tab" type="button" onClick={() => searchArrivalByRoute(route)}>{route}</Button>
                 ))}
               </div>
             </div>
           ) : null}
           <div className="search-row mt-3">
-            <input className="field" placeholder={t('routePlaceholder')} value={arrivalRoute} onChange={(e) => setArrivalRoute(e.target.value)} aria-label={t('routePlaceholder')} />
-              <button className="btn" type="button" aria-label={t('find')} onClick={async () => {
-                hideArrivalResults();
-                const gen = arrivalSearchSeq.current;
-                setArrivalChoices({ loading: true });
-                const payload = await loadChoices(arrivalRoute);
-                if (gen !== arrivalSearchSeq.current) return;
-                setArrivalChoices(payload);
-                if (payload.auto) pickArrival(payload.auto);
-              }}>{t('find')}</button>
+            <Input className="field" placeholder={t('routePlaceholder')} value={arrivalRoute} onChange={(e) => setArrivalRoute(e.target.value)} aria-label={t('routePlaceholder')} />
+              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchArrivalByRoute()}>{t('find')}</Button>
           </div>
           <div>{renderChoiceList(arrivalChoices, pickArrival)}</div>
           {arrivalService ? (
@@ -1589,43 +1702,49 @@ export default function TransitApp() {
               <h3 className={`font-bold mt-3 pg-route ${coTone(arrivalService)}`}><span className="badge">{coLabel(arrivalService)}</span> {arrivalService.route}</h3>
               <div className="muted">{rn(arrivalService)}</div>
               <div className="row-actions">
-                <button className="tab" type="button" onClick={swapArrivalBound}>{t('reverseBound')}</button>
-                <button className="tab" type="button" onClick={findNearestOnRoute}>{t('nearestStop')}</button>
+                <Button variant="outline" className="tab" type="button" onClick={swapArrivalBound}>{t('reverseBound')}</Button>
+                <Button variant="outline" className="tab" type="button" onClick={findNearestOnRoute}>{t('nearestStop')}</Button>
               </div>
               {routeNearNote ? <p className="muted">{routeNearNote}</p> : null}
               {arrivalGroups.length ? (
-                <label className="block mt-3">
-                  <span>{t('chooseStop')}</span>
-                  <select
-                    className="field mt-1"
+                <div className="mt-3">
+                  <SearchableSelect
+                    label={t('chooseStop')}
                     value={arrivalStopIndex}
-                    aria-label={t('chooseStop')}
-                    onChange={(e) => chooseArrivalStop(e.target.value, '')}
-                  >
-                    <option value="">{t('chooseStop')}</option>
-                    {arrivalGroups.map((g, i) => (
-                      <option key={`${g.label}-${i}`} value={String(i)}>
-                        {`${i + 1}. ${fareLabel(g, terminusFareForGroup(arrivalFares, g))}`}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder={t('chooseStop')}
+                    searchPlaceholder={t('stopSearch')}
+                    emptyText={t('noStopMatch')}
+                    options={arrivalGroups.map((g, i) => ({
+                      value: String(i),
+                      label: `${i + 1}. ${fareLabel(g, terminusFareForGroup(arrivalFares, g))}`
+                    }))}
+                    onChange={(v) => chooseArrivalStop(v, '')}
+                  />
                   <span className="muted block mt-1">{t('stopMapHint')}</span>
-                </label>
+                </div>
               ) : null}
               {arrivalStopIndex !== '' ? (
-                <label className="block mt-3">
-                  <span>{t('rideDestLabel')}</span>
-                  <select className="field mt-1" value={arrivalDestIndex} onChange={async (e) => {
-                    const v = e.target.value;
-                    setArrivalDestIndex(v);
-                    await showArrival(arrivalService, arrivalGroups, arrivalStopIndex, v);
-                  }}>
-                    <option value="">{t('chooseRideDest')}</option>
-                    {arrivalGroups.map((g, i) => (
-                      i > +arrivalStopIndex ? <option key={`d-${g.label}-${i}`} value={i}>{fareLabel(g, odFare(arrivalGroups[+arrivalStopIndex], g, arrivalFares))}</option> : null
-                    ))}
-                  </select>
-                </label>
+                <div className="mt-3">
+                  <SearchableSelect
+                    label={t('rideDestLabel')}
+                    value={arrivalDestIndex}
+                    placeholder={t('chooseRideDest')}
+                    searchPlaceholder={t('stopSearch')}
+                    emptyText={t('noStopMatch')}
+                    options={[
+                      { value: '', label: t('chooseRideDest') },
+                      ...arrivalGroups.map((g, i) => (
+                        i > +arrivalStopIndex
+                          ? { value: String(i), label: fareLabel(g, odFare(arrivalGroups[+arrivalStopIndex], g, arrivalFares)) }
+                          : null
+                      )).filter(Boolean)
+                    ]}
+                    onChange={async (v) => {
+                      setArrivalDestIndex(v);
+                      await showArrival(arrivalService, arrivalGroups, arrivalStopIndex, v);
+                    }}
+                  />
+                </div>
               ) : null}
               {arrivalTimes && arrivalStopIndex !== '' ? (
                 <div ref={arrivalLiveRef}>
@@ -1679,27 +1798,24 @@ export default function TransitApp() {
           <label className="block mt-3">
             <input type="checkbox" checked={nearby} onChange={(e) => setNearby(e.target.checked)} /> <span>{t('nearbyLabel')}</span>
           </label>
-          <label className="block mt-2">
+          <div className="mt-2">
             <span>{t('radiusLabel')}</span>
-            <select className="field mt-1" value={radius} onChange={(e) => setRadius(e.target.value)}>
-              <option value="150">{t('m150')}</option>
-              <option value="250">{t('m250')}</option>
-              <option value="400">{t('m400')}</option>
-            </select>
-          </label>
+            <Select value={radius} onValueChange={setRadius}>
+              <SelectTrigger className="mt-1" aria-label={t('radiusLabel')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="150">{t('m150')}</SelectItem>
+                <SelectItem value="250">{t('m250')}</SelectItem>
+                <SelectItem value="400">{t('m400')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div className={`mt-4${firstBoxHidden ? ' hidden' : ''}`}>
             <b>{t('firstRouteLabel')}</b>
             <div className="search-row mt-1">
-              <input className="field" placeholder={t('routePlaceholder')} value={firstRoute} onChange={(e) => setFirstRoute(e.target.value)} aria-label={t('firstRouteLabel')} />
-              <button className="btn" type="button" aria-label={t('find')} onClick={async () => {
-                hideFirstService();
-                const gen = firstSearchSeq.current;
-                setFirstChoices({ loading: true });
-                const payload = await loadChoices(firstRoute);
-                if (gen !== firstSearchSeq.current) return;
-                setFirstChoices(payload);
-                if (payload.auto) pickFirst(payload.auto);
-              }}>{t('find')}</button>
+              <Input className="field" placeholder={t('routePlaceholder')} value={firstRoute} onChange={(e) => setFirstRoute(e.target.value)} aria-label={t('firstRouteLabel')} />
+              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchFirstByRoute()}>{t('find')}</Button>
             </div>
             <div>{renderChoiceList(firstChoices, (s) => pickFirst(s))}</div>
           </div>
@@ -1708,48 +1824,74 @@ export default function TransitApp() {
               <b>{firstService.route}</b>
               <div>{rn(firstService)}</div>
               {fareNote(firstService)}
-              <button className="tab mt-2" type="button" onClick={() => setFirstBoxHidden(false)}>{t('change')}</button>
+              <Button variant="outline" className="tab mt-2" type="button" onClick={() => setFirstBoxHidden(false)}>{t('change')}</Button>
             </div>
           ) : null}
           {firstService ? (
             <div className="md-grid-2 mt-4">
-              <label>{t('boardStop')}
-                <select className="field mt-1" value={boardIndex} aria-label={t('boardStop')} onChange={(e) => {
-                  const v = e.target.value;
+              <SearchableSelect
+                label={t('boardStop')}
+                value={boardIndex}
+                placeholder={t('notSelected')}
+                searchPlaceholder={t('stopSearch')}
+                emptyText={t('noStopMatch')}
+                options={[
+                  { value: '', label: t('notSelected') },
+                  ...firstGroups.map((g, i) => ({
+                    value: String(i),
+                    label: fareLabel(g, terminusFareForGroup(firstFares, g))
+                  }))
+                ]}
+                onChange={(v) => {
                   setBoardIndex(v);
                   if (interchangeIndex !== '' && (v === '' || +interchangeIndex < +v)) setInterchangeIndex('');
-                }}>
-                  <option value="">{t('notSelected')}</option>
-                  {firstGroups.map((g, i) => <option key={`b-${g.label}-${i}`} value={i}>{fareLabel(g, terminusFareForGroup(firstFares, g))}</option>)}
-                </select>
-              </label>
-              <label>{t('interchangeStop')}
-                <select className="field mt-1" value={interchangeIndex} aria-label={t('interchangeStop')} onChange={(e) => setInterchangeIndex(e.target.value)}>
-                  <option value="">{t('chooseInterchange')}</option>
-                  {firstGroups.map((g, i) => (
+                }}
+              />
+              <SearchableSelect
+                label={t('interchangeStop')}
+                value={interchangeIndex}
+                placeholder={t('chooseInterchange')}
+                searchPlaceholder={t('stopSearch')}
+                emptyText={t('noStopMatch')}
+                options={[
+                  { value: '', label: t('chooseInterchange') },
+                  ...firstGroups.map((g, i) => (
                     boardIndex !== '' && i >= +boardIndex
-                      ? <option key={`i-${g.label}-${i}`} value={i}>{fareLabel(g, odFare(firstGroups[+boardIndex], g, firstFares) || terminusFareForGroup(firstFares, g))}</option>
+                      ? { value: String(i), label: fareLabel(g, odFare(firstGroups[+boardIndex], g, firstFares) || terminusFareForGroup(firstFares, g)) }
                       : null
-                  ))}
-                </select>
-              </label>
+                  )).filter(Boolean)
+                ]}
+                onChange={setInterchangeIndex}
+              />
             </div>
           ) : null}
           <div className={`mt-4${destBoxHidden ? ' hidden' : ''}`}>
             <b>{t('destLabel')}</b>
             <div className="search-row mt-1">
-              <input className="field" placeholder={t('destPlaceholder')} value={destinationInput} onChange={(e) => setDestinationInput(e.target.value)} />
-              <button className="btn" type="button" aria-label={t('find')} onClick={() => searchDest(destinationInput)}>{t('find')}</button>
+              <Input className="field" placeholder={t('destPlaceholder')} value={destinationInput} onChange={(e) => setDestinationInput(e.target.value)} />
+              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchDest(destinationInput)}>{t('find')}</Button>
             </div>
-            <div>
+            <div className="mt-2">
               {destinationResults
                 ? (destinationResults.length
-                  ? destinationResults.map((x, i) => (
-                    <button key={x.label + i} className="item choice pg-choice pg-stop" type="button" onClick={() => {
-                      setDestination(x);
-                      setDestBoxHidden(true);
-                    }}>{x.label}</button>
-                  ))
+                  ? (
+                    <ScrollArea className="h-72 rounded-md border">
+                    <Command className="rounded-none border-0">
+                      <CommandInput placeholder={t('stopSearch')} />
+                      <CommandList>
+                        <CommandEmpty>{t('noStops')}</CommandEmpty>
+                        <CommandGroup>
+                          {destinationResults.map((x, i) => (
+                            <CommandItem key={x.label + i} value={x.label} onSelect={() => {
+                              setDestination(x);
+                              setDestBoxHidden(true);
+                            }}>{x.label}</CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                    </ScrollArea>
+                  )
                   : <p className="muted">{t('noStops')}</p>)
                 : null}
             </div>
@@ -1758,18 +1900,18 @@ export default function TransitApp() {
             <div className="note">
               <b>{t('destArea')}</b>
               <div>{destination.label}</div>
-              <button className="tab mt-2" type="button" onClick={() => setDestBoxHidden(false)}>{t('change')}</button>
+              <Button variant="outline" className="tab mt-2" type="button" onClick={() => setDestBoxHidden(false)}>{t('change')}</Button>
             </div>
           ) : null}
-          <button
-            className="btn btn-block mt-4"
+          <Button
+            className="btn btn-block mt-4 w-full"
             type="button"
             aria-label={findLabel}
             onClick={() => {
               resetTransferLock();
               goTransfer({ phase: 'departures', selectedDeparture: null });
             }}
-          >{findLabel}</button>
+          >{findLabel}</Button>
           <div>
             {transferMessage ? <div className="note">{transferMessage}</div> : null}
             {chosenDirect ? (
@@ -1804,32 +1946,52 @@ export default function TransitApp() {
                   <>
                     <h3 className="font-bold mt-4">{t('firstDepartures')}</h3>
                     {(transferResult.json.departures || []).length
-                      ? transferResult.json.departures.map((row, i) => {
-                        const dest = loc(row.dest);
-                        return (
-                          <button
-                            key={`${row.eta}-${i}`}
-                            className={`item choice pg-choice ${coTone(firstService)}`}
-                            type="button"
-                            onClick={() => goTransfer({ phase: 'connections', selectedDeparture: row.eta })}
-                          >
-                            <b>{firstService.route}</b>
-                            {dest ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{dest}</div> : null}
-                            {fareNote(transferResult.json.firstFare || firstService)}
-                            <div className="eta">
-                              <b>{clk(row.eta)}</b>
-                              <span className="mins">{t('minutes', mins(row.eta))}</span>
+                      ? (
+                        <>
+                          {transferResult.json.departures.slice(0, 3).map((row, i) => {
+                            const dest = loc(row.dest);
+                            return (
+                              <button
+                                key={`${row.eta}-${i}`}
+                                className={`item choice pg-choice ${coTone(firstService)}`}
+                                type="button"
+                                onClick={() => goTransfer({ phase: 'connections', selectedDeparture: row.eta })}
+                              >
+                                <b>{firstService.route}</b>
+                                {dest ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{dest}</div> : null}
+                                {fareNote(transferResult.json.firstFare || firstService)}
+                                <div className="eta">
+                                  <b>{clk(row.eta)}</b>
+                                  <span className="mins">{t('minutes', mins(row.eta))}</span>
+                                </div>
+                                {row.arrive ? <div className="muted">{clk(row.arrive)} {t('rideArrives')}{row.rideMinutes != null ? ` · ${t('rideMins', row.rideMinutes)}` : ''}</div> : null}
+                                {row.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+                                <div className="muted">{t('pickDeparture')}</div>
+                              </button>
+                            );
+                          })}
+                          {transferResult.json.departures.length > 3 ? (
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className="muted">{t('moreDepartures')}</span>
+                              {transferResult.json.departures.slice(3).map((row, i) => (
+                                <Button
+                                  key={`${row.eta}-chip-${i}`}
+                                  variant="outline"
+                                  size="sm"
+                                  type="button"
+                                  onClick={() => goTransfer({ phase: 'connections', selectedDeparture: row.eta })}
+                                >
+                                  {clk(row.eta)} · {t('minutes', mins(row.eta))}
+                                </Button>
+                              ))}
                             </div>
-                            {row.arrive ? <div className="muted">{clk(row.arrive)} {t('rideArrives')}{row.rideMinutes != null ? ` · ${t('rideMins', row.rideMinutes)}` : ''}</div> : null}
-                            {row.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
-                            <div className="muted">{t('pickDeparture')}</div>
-                          </button>
-                        );
-                      })
+                          ) : null}
+                        </>
+                      )
                       : <p className="muted">{t(emptyReasonKey(transferResult.json.emptyReason || 'no_departure'))}</p>}
                     <h3 className="font-bold mt-4">{t('directHeading')}</h3>
-                    {(transferResult.json.directs || []).length
-                      ? transferResult.json.directs.map((x, i) => (
+                    {earliestByRoute(transferResult.json.directs || []).length
+                      ? earliestByRoute(transferResult.json.directs || []).map((x, i) => (
                         <button
                           key={`d-${x.route}-${x.eta}-${i}`}
                           className={`item choice pg-choice ${coTone(x)}`}
@@ -1927,8 +2089,8 @@ export default function TransitApp() {
                       </div>
                     ) : null}
                     <h3 className="font-bold mt-4">{t('combinedList')}</h3>
-                    {(transferResult.json.list || []).length
-                      ? transferResult.json.list.map((x, i) => renderTransferItem(x, i, {
+                    {((transferResult.json.list || []).filter((x) => !sameWatchedTrip(x, transferResult.json.watch?.selected || selectedConnection))).length
+                      ? (transferResult.json.list || []).filter((x) => !sameWatchedTrip(x, transferResult.json.watch?.selected || selectedConnection)).map((x, i) => renderTransferItem(x, i, {
                         watching: !!(x.watching || (selectedConnection && String(selectedConnection.route).toUpperCase() === String(x.route).toUpperCase()
                           && (selectedConnection.co || 'KMB') === (x.co || 'KMB')
                           && Math.abs(new Date(x.eta) - new Date(selectedConnection.eta)) < 10 * 60 * 1000)),
@@ -1963,57 +2125,67 @@ export default function TransitApp() {
       <section className={`panel${tab === 'mtr' ? ' active' : ''}`}>
         <div className="card">
           <h2 className="text-lg font-bold">{t('mtrHeading')}</h2>
-          <label className="block mt-3">
+          <div className="mt-3">
             <span>{t('mtrLineLabel')}</span>
             <div className="mtr-line-row mt-1">
               <span className="mtr-line-pip" style={{ background: mtrLineColor(currentLineKey) }} aria-hidden="true" />
-              <select className="field" value={currentLineKey} onChange={(e) => {
-                const next = e.target.value;
+              <Select value={currentLineKey} onValueChange={(next) => {
                 const sta = lines[next]?.stations?.[0]?.[0] || '';
                 setMtrLine(next);
                 setMtrStation(sta);
                 setMtrDest('');
                 writeMtrPref({ line: next, station: sta, dest: '' });
-              }} aria-label={t('mtrLineLabel')}>
-                {lineEntries.map(([k, v]) => <option key={k} value={k}>{lineName(v)}</option>)}
-              </select>
+              }}>
+                <SelectTrigger aria-label={t('mtrLineLabel')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {lineEntries.map(([k, v]) => <SelectItem key={k} value={k}>{lineName(v)}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
-          </label>
-          <label className="block mt-3">
-            <span>{t('mtrStationLabel')}</span>
-            <select className="field mt-1" value={currentSta} onChange={(e) => {
-              const sta = e.target.value;
-              const dest = mtrDest === sta ? '' : mtrDest;
-              setMtrStation(sta);
-              if (mtrDest === sta) setMtrDest('');
-              writeMtrPref({ line: currentLineKey, station: sta, dest });
-            }}>
-              {currentStations.map((row) => <option key={row[0]} value={row[0]}>{stationLabel(row)}</option>)}
-            </select>
-          </label>
-          <label className="block mt-3">
-            <span>{t('mtrDestLabel')}</span>
-            <select className="field mt-1" value={mtrDest} onChange={(e) => {
-              const dest = e.target.value;
-              setMtrDest(dest);
-              writeMtrPref({ line: currentLineKey, station: currentSta, dest });
-            }}>
-              <option value="">{t('chooseRideDest')}</option>
-              {rideDestStations(currentLine, currentSta, currentLineKey).map((row) => (
-                <option key={row[0]} value={row[0]}>{stationLabel(row)}</option>
-              ))}
-            </select>
-          </label>
-          <button className="btn btn-block mt-4" type="button" aria-label={t('mtrFind')} onClick={() => showMtr()}>{t('mtrFind')}</button>
+          </div>
+          <div className="mt-3">
+            <SearchableSelect
+              label={t('mtrStationLabel')}
+              value={currentSta}
+              placeholder={t('mtrStationLabel')}
+              searchPlaceholder={t('stopSearch')}
+              emptyText={t('noStopMatch')}
+              options={currentStations.map((row) => ({ value: row[0], label: stationLabel(row) }))}
+              onChange={(sta) => {
+                const dest = mtrDest === sta ? '' : mtrDest;
+                setMtrStation(sta);
+                if (mtrDest === sta) setMtrDest('');
+                writeMtrPref({ line: currentLineKey, station: sta, dest });
+              }}
+            />
+          </div>
+          <div className="mt-3">
+            <SearchableSelect
+              label={t('mtrDestLabel')}
+              value={mtrDest}
+              placeholder={t('chooseRideDest')}
+              searchPlaceholder={t('stopSearch')}
+              emptyText={t('noStopMatch')}
+              options={[
+                { value: '', label: t('chooseRideDest') },
+                ...rideDestStations(currentLine, currentSta).map((row) => ({ value: row[0], label: stationLabel(row) }))
+              ]}
+              onChange={(dest) => {
+                setMtrDest(dest);
+                writeMtrPref({ line: currentLineKey, station: currentSta, dest });
+              }}
+            />
+          </div>
+          <Button className="btn btn-block mt-4 w-full" type="button" aria-label={t('mtrFind')} onClick={() => showMtr()}>{t('mtrFind')}</Button>
           <div>
             {tab === 'mtr' && mtrLoading ? <p className="muted mt-3">{t('mtrWait')}</p> : null}
             {mtrResult && mtrResult.line === currentLineKey && mtrResult.sta === currentSta ? (
               <>
                 {mtrResult.delayed ? <div className="note">{t('mtrDelayed')}</div> : null}
                 {(mtrResult.trains || []).length
-                  ? (
-                    <>
-                      {mtrResult.trains.map((x, i) => {
+                  ? mtrResult.trains.map((x, i) => {
                     const wait = x.arrive ? (x.arriveMinutes ?? mins(x.arrive)) : (x.minutes != null ? x.minutes : mins(x.time));
                     const when = x.time ? clk(x.time) : '';
                     const plat = x.platform ? t('platform', x.platform) : '';
@@ -2023,8 +2195,7 @@ export default function TransitApp() {
                     const boarding = mtrResult?.sta || currentSta;
                     const terminus = !!(x.terminus || (x.destCode && String(x.destCode).toUpperCase() === String(boarding).toUpperCase()));
                     const stopId = `mtr-${x.line || currentLineKey}-${boarding}-${x.destCode}-${x.time}`;
-                    const official = x.line === 'LRT' ? loc(x.timeText) : '';
-                    const clockLine = [when, plat, official && !/\d/.test(official) ? official : ''].filter(Boolean).join(' · ');
+                    const clockLine = [when, plat].filter(Boolean).join(' · ');
                     return (
                       <div className="item" key={`${x.line || ''}-${loc(x.dest)}-${x.time}-${i}`}>
                         <div className="eta">
@@ -2041,18 +2212,13 @@ export default function TransitApp() {
                           </div>
                           <span className="mins">{wait == null ? '' : t('minutes', wait)}</span>
                         </div>
-                        {x.line !== 'LRT' ? renderStopTimes(stopId, terminus ? { terminus: true } : x.stops, terminus || x.stops?.length > 1 ? null : () => loadMtrStops(x)) : null}
+                        {renderStopTimes(stopId, terminus ? { terminus: true } : x.stops, terminus || x.stops?.length > 1 ? null : () => loadMtrStops(x))}
                       </div>
                     );
-                      })}
-                      {(mtrResult.trains[0]?.line === 'LRT') ? (
-                        <p className="muted">{mtrResult.destRelaxed ? t('lrtDestNotTerminus') : t('lrtThisStop')}</p>
-                      ) : null}
-                    </>
-                  )
+                  })
                   : <p className="muted">{t(mtrResult.emptyReason === 'unavailable' ? 'mtrUnavailable' : mtrResult.emptyReason === 'racecourse' ? 'mtrRacecourse' : mtrResult.emptyReason === 'empty' ? 'mtrEmptyLine' : mtrResult.emptyReason === 'no_dest' ? 'mtrNoTrainToDest' : 'noTrains')}</p>}
                 <div className="row-actions">
-                  <button className="tab" type="button" onClick={() => {
+                  <Button variant="outline" className="tab" type="button" onClick={() => {
                     const line = lines[currentLineKey];
                     const sta = (line?.stations || []).find((row) => row[0] === currentSta);
                     const destRow = (line?.stations || []).find((row) => row[0] === mtrDest);
@@ -2064,7 +2230,7 @@ export default function TransitApp() {
                         : { zh: t('nextTrains'), en: 'Next trains' },
                       payload: { line: currentLineKey, station: currentSta, dest: mtrDest || undefined }
                     });
-                  }}>{t('saveHome')}</button>
+                  }}>{t('saveHome')}</Button>
                 </div>
               </>
             ) : null}

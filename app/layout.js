@@ -2,7 +2,7 @@ import './globals.css';
 
 export const metadata = {
   title: '巴士／小巴實時到站與轉乘助手',
-  description: '九巴／龍運／城巴／嶼巴／專線小巴實時到站，港鐵及輕鐵',
+  description: '九巴／龍運／城巴／嶼巴／專線小巴實時到站，港鐵',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
@@ -26,7 +26,7 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="zh-Hant">
-      <body className="playground-page">{children}</body>
+      <body className="app-page">{children}</body>
     </html>
   );
 }

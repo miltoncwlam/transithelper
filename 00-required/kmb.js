@@ -67,18 +67,27 @@ export function nearestStops(allStops, lat, lng, radius = 250, limit = 20) {
 
 export function expandNearby(seedStops, allStops, radius) {
   const found = new Map();
+  const dist = new Map();
   for (const seed of seedStops) {
     found.set(seed.stop, seed);
+    dist.set(seed.stop, 0);
     const lat = Number(seed.lat);
     const lng = Number(seed.long);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
     for (const stop of allStops) {
-      const dLat = (Number(stop.lat) - lat) * 111000;
-      const dLng = (Number(stop.long) - lng) * 102000;
-      if (Math.hypot(dLat, dLng) <= radius) found.set(stop.stop, stop);
+      const metres = Math.hypot(
+        (Number(stop.lat) - lat) * 111000,
+        (Number(stop.long) - lng) * 102000
+      );
+      if (!Number.isFinite(metres) || metres > radius) continue;
+      const prev = dist.get(stop.stop);
+      if (prev == null || metres < prev) {
+        found.set(stop.stop, stop);
+        dist.set(stop.stop, metres);
+      }
     }
   }
-  return [...found.values()];
+  return [...found.values()].sort((a, b) => (dist.get(a.stop) || 0) - (dist.get(b.stop) || 0));
 }
 
 export function attachStopMeta(routeStops, stopMap) {

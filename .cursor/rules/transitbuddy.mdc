@@ -1,5 +1,5 @@
 ---
-description: TransitBuddy product rules — honesty, UI, Light Rail, local run
+description: TransitBuddy product rules — honesty, UI, MTR, local run
 alwaysApply: true
 ---
 
@@ -8,8 +8,7 @@ alwaysApply: true
 Hong Kong live transit helper. Product is a few taps and a fast honest answer.
 
 - Never invent live ETAs, hop times, stop names, or fares. Empty operator feed = empty UI. Mark estimates as 估計 / est.
-- Default Traditional Chinese. Keep 轉乘助手, 港鐵／輕鐵, 車費, 沿途, 我的回家路線, 使用說明, same-origin `/api`. Recents = popular; 我的回家路線 = bookmarks. Map picks stops.
-- Light Rail Next Train is **this station only**: show live minutes, clock, platform, and route terminus. Do not invent along-route or dest-arrival times. If dest is not a published terminus, still list live trains here.
+- Default Traditional Chinese. Keep 轉乘助手, 港鐵, 車費, 沿途, 我的回家路線, 使用說明, same-origin `/api`. Recents = popular; 我的回家路線 = bookmarks. Map picks stops.
 - Transfer Buddy stays locked on the chosen trip’s live status; never snap to the next bus.
 - Local app is port **3001**. Do not commit `.env.local`. After i18n/guide: `npm run sync-i18n`; after guide: `npm run build-manual`.
-- Do not block MTR/Light Rail on the KMB directory. Do not wait for a “Show next trains” click to fetch when the 港鐵／輕鐵 tab is open.
+- Do not block MTR on the KMB directory. Do not wait for a “Show next trains” click to fetch when the 港鐵 tab is open.

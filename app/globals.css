@@ -1,26 +1,60 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&family=Noto+Sans+TC:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap');
 
-html {
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-  overflow-x: clip;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-*,
-*::before,
-*::after {
-  border-radius: 0 !important;
-  -webkit-tap-highlight-color: transparent;
-}
+@layer base {
+  :root {
+    --background: 36 100% 97%;
+    --foreground: 30 18% 14%;
+    --card: 40 60% 99%;
+    --card-foreground: 30 18% 14%;
+    --popover: 40 60% 99%;
+    --popover-foreground: 30 18% 14%;
+    --primary: 45 78% 59%;
+    --primary-foreground: 30 18% 14%;
+    --secondary: 24 70% 80%;
+    --secondary-foreground: 30 18% 14%;
+    --muted: 36 40% 92%;
+    --muted-foreground: 30 8% 35%;
+    --accent: 24 70% 80%;
+    --accent-foreground: 30 18% 14%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 30 18% 22%;
+    --input: 30 18% 22%;
+    --ring: 45 78% 45%;
+    --radius: 0.55rem;
+    --pg-paper: #FFF8EF;
+    --pg-card: #FFFDF8;
+    --pg-ink: #2A241C;
+  }
 
-body {
-  background: #ffffff;
-  color: #000000;
-  margin: 0;
-  overflow-x: clip;
-  overscroll-behavior-x: none;
-  font-family: Inter, 'Noto Sans TC', ui-sans-serif, system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
+  * {
+    @apply border-border;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overflow-x: clip;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    overflow-x: clip;
+    overscroll-behavior-x: none;
+    font-family: Inter, 'Noto Sans TC', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100dvh;
+    background:
+      radial-gradient(900px 420px at 8% -8%, #F4C7A5 0%, transparent 55%),
+      radial-gradient(800px 380px at 100% 6%, #C8E6D0 0%, transparent 52%),
+      #FFF8EF;
+  }
 }
 
 ::selection {
@@ -93,24 +127,26 @@ h1 {
 }
 
 .card {
-  background: #fff;
-  border: 2px solid #000;
+  background: var(--pg-card, #FFFDF8);
+  border: 1.5px solid var(--pg-ink, #2A241C);
   padding: 16px;
-  box-shadow: 3px 3px 0 #000;
+  box-shadow: 0 1px 0 rgba(42, 36, 28, 0.08);
   max-width: 100%;
   box-sizing: border-box;
+  border-radius: var(--radius);
 }
 
 .field {
   width: 100%;
-  min-height: 48px;
+  min-height: 44px;
   padding: 12px;
-  border: 1.5px solid #000;
-  background: #fff;
+  border: 1.5px solid var(--pg-ink, #2A241C);
+  background: var(--pg-paper, #FFF8EF);
   box-sizing: border-box;
   max-width: 100%;
-  font-family: 'Space Mono', ui-monospace, monospace;
-  font-weight: 700;
+  font-family: Inter, 'Noto Sans TC', sans-serif;
+  font-weight: 600;
+  border-radius: var(--radius);
 }
 
 .field:focus {
@@ -128,32 +164,32 @@ select.field {
 
 .btn,
 .tab {
-  padding: 12px 14px;
+  padding: 10px 14px;
   min-height: 44px;
-  font-weight: 800;
-  border: 2px solid #000;
+  font-weight: 700;
+  border: 1.5px solid var(--pg-ink, #2A241C);
   cursor: pointer;
   box-sizing: border-box;
-  font-family: 'Space Mono', ui-monospace, monospace;
-  box-shadow: 2px 2px 0 #000;
-  transition: transform .05s ease-in-out, box-shadow .05s ease-in-out, background-color .1s ease, color .1s ease;
+  font-family: inherit;
+  border-radius: var(--radius);
+  transition: background-color .1s ease, color .1s ease;
 }
 
 .btn:active,
 .tab:active {
-  transform: translate(2px, 2px);
-  box-shadow: 0 0 0 #000;
+  transform: none;
+  box-shadow: none;
 }
 
 .btn,
 .tab.active {
-  background: #000;
-  color: #fff;
+  background: #E8C547;
+  color: #2A241C;
 }
 
 .tab {
-  background: #fff;
-  color: #000;
+  background: var(--pg-card, #FFFDF8);
+  color: var(--pg-ink, #2A241C);
 }
 
 a.tab {
@@ -193,10 +229,11 @@ a.tab {
 .item {
   margin-top: 10px;
   padding: 12px;
-  border: 1.5px solid #000;
-  background: #fff;
+  border: 1.5px solid var(--pg-ink, #2A241C);
+  background: var(--pg-card, #FFFDF8);
   overflow-wrap: anywhere;
   word-break: break-word;
+  border-radius: var(--radius);
 }
 
 .choice {
@@ -637,8 +674,8 @@ h3.font-bold {
   .card {
     padding: 12px;
   }
-  .playground-ui .card,
-  .playground-ui .stop-map {
+  .app-shell .card,
+  .app-shell .stop-map {
     box-shadow: 3px 3px 0 #2A241C;
   }
   .note {
@@ -823,7 +860,8 @@ h3.font-bold {
   }
 }
 
-.playground-page {
+.playground-page,
+.app-page {
   --pg-paper: #FFF8EF;
   --pg-card: #FFFDF8;
   --pg-ink: #2A241C;
@@ -833,12 +871,9 @@ h3.font-bold {
   --pg-sky: #C9DDF2;
   --pg-action: #E8C547;
   min-height: 100dvh;
-  background:
-    radial-gradient(900px 420px at 8% -8%, #F4C7A5 0%, transparent 55%),
-    radial-gradient(800px 380px at 100% 6%, #C8E6D0 0%, transparent 52%),
-    #FFF8EF;
 }
 
+.app-page ::selection,
 .playground-page ::selection {
   background: #2A241C;
   color: #FFF8EF;
@@ -850,292 +885,292 @@ h3.font-bold {
   border-bottom: 3px solid #2A241C;
 }
 
-.playground-ui .app-header {
+.app-shell .app-header {
   background: #FFFDF8;
   border-bottom: 3px solid #2A241C;
   box-shadow: 0 3px 0 #F4C7A5;
 }
 
-.playground-ui .brand-mark {
+.app-shell .brand-mark {
   background: #2A241C;
   color: #FFF8EF;
   box-shadow: 2px 2px 0 #F4C7A5;
 }
 
-.playground-ui .pg-title {
+.app-shell .pg-title {
   color: #2A241C;
 }
 
-.playground-ui .brand-kicker {
+.app-shell .brand-kicker {
   color: #5c5348;
 }
 
-.playground-ui .card {
+.app-shell .card {
   background: #FFFDF8;
   border-color: #2A241C;
   box-shadow: 4px 4px 0 #2A241C;
 }
 
-.playground-ui .field {
+.app-shell .field {
   background: #FFF8EF;
   border-width: 2px;
   border-color: #2A241C;
 }
 
-.playground-ui .field:focus {
+.app-shell .field:focus {
   background: #F6E7A8;
 }
 
-.playground-ui .pg-find,
-.playground-ui .btn {
+.app-shell .pg-find,
+.app-shell .btn {
   background: #E8C547;
   color: #2A241C;
   box-shadow: 3px 3px 0 #2A241C;
 }
 
-.playground-ui .pg-find:hover,
-.playground-ui .pg-find:focus-visible,
-.playground-ui .btn:hover,
-.playground-ui .btn:focus-visible {
+.app-shell .pg-find:hover,
+.app-shell .pg-find:focus-visible,
+.app-shell .btn:hover,
+.app-shell .btn:focus-visible {
   background: #d4b23a;
   color: #2A241C;
 }
 
-.playground-ui .pg-lang,
-.playground-ui .tab.pg-lang,
-.playground-ui a.pg-back,
-.playground-ui .tab.pg-map,
-.playground-ui .tab.pg-guide {
+.app-shell .pg-lang,
+.app-shell .tab.pg-lang,
+.app-shell a.pg-back,
+.app-shell .tab.pg-map,
+.app-shell .tab.pg-guide {
   background: #FFFDF8;
   color: #2A241C;
   box-shadow: 2px 2px 0 #2A241C;
 }
 
-.playground-ui .pg-lang:hover,
-.playground-ui .pg-lang:focus-visible,
-.playground-ui .tab.pg-lang:hover,
-.playground-ui .tab.pg-lang:focus-visible,
-.playground-ui a.pg-back:hover,
-.playground-ui a.pg-back:focus-visible,
-.playground-ui .tab.pg-map:hover,
-.playground-ui .tab.pg-map:focus-visible,
-.playground-ui .tab.pg-guide:hover,
-.playground-ui .tab.pg-guide:focus-visible,
-.playground-ui .tab.pg-guide.active {
+.app-shell .pg-lang:hover,
+.app-shell .pg-lang:focus-visible,
+.app-shell .tab.pg-lang:hover,
+.app-shell .tab.pg-lang:focus-visible,
+.app-shell a.pg-back:hover,
+.app-shell a.pg-back:focus-visible,
+.app-shell .tab.pg-map:hover,
+.app-shell .tab.pg-map:focus-visible,
+.app-shell .tab.pg-guide:hover,
+.app-shell .tab.pg-guide:focus-visible,
+.app-shell .tab.pg-guide.active {
   background: #F4C7A5;
   color: #2A241C;
 }
 
-.playground-ui .color-chip {
+.app-shell .color-chip {
   color: #000;
 }
 
-.playground-ui .pg-chip-kmb {
+.app-shell .pg-chip-kmb {
   background: #e1251b;
   color: #fff;
 }
 
-.playground-ui .pg-chip-lwb {
+.app-shell .pg-chip-lwb {
   background: #f37021;
   color: #fff;
 }
 
-.playground-ui .pg-chip-ctb {
+.app-shell .pg-chip-ctb {
   background: #f5c400;
   color: #000;
 }
 
-.playground-ui .pg-chip-gmb {
+.app-shell .pg-chip-gmb {
   background: #00a651;
   color: #fff;
 }
 
-.playground-ui .pg-chip-nlb {
+.app-shell .pg-chip-nlb {
   background: #2f6fed;
   color: #fff;
 }
 
-.playground-ui .note {
+.app-shell .note {
   background: #C9DDF2;
   border-color: #2A241C;
 }
 
-.playground-ui .muted {
+.app-shell .muted {
   color: #5c5348;
 }
 
-.playground-ui .playground-toggle input {
+.app-shell .playground-toggle input {
   accent-color: #E8C547;
 }
 
-.playground-ui .stop-map {
+.app-shell .stop-map {
   border-color: #2A241C;
   box-shadow: 4px 4px 0 #2A241C;
 }
 
-.playground-ui .leaflet-bar a,
-.playground-ui .leaflet-bar a:hover {
+.app-shell .leaflet-bar a,
+.app-shell .leaflet-bar a:hover {
   background: #F6E7A8 !important;
 }
 
-.playground-ui .pg-choice {
+.app-shell .pg-choice {
   background: #FFFDF8;
   border-width: 2px;
   border-color: #2A241C;
 }
 
-.playground-ui .pg-co-kmb,
-.playground-ui .pg-co-lwb,
-.playground-ui .pg-co-ctb,
-.playground-ui .pg-co-gmb,
-.playground-ui .pg-co-nlb,
-.playground-ui .pg-co-joint {
+.app-shell .pg-co-kmb,
+.app-shell .pg-co-lwb,
+.app-shell .pg-co-ctb,
+.app-shell .pg-co-gmb,
+.app-shell .pg-co-nlb,
+.app-shell .pg-co-joint {
   background: #FFFDF8;
   border-color: #2A241C;
 }
 
-.playground-ui .pg-co-kmb .badge {
+.app-shell .pg-co-kmb .badge {
   background: #e1251b;
 }
 
-.playground-ui .pg-co-lwb .badge {
+.app-shell .pg-co-lwb .badge {
   background: #f37021;
 }
 
-.playground-ui .pg-co-ctb .badge {
+.app-shell .pg-co-ctb .badge {
   background: #f5c400;
   color: #000;
 }
 
-.playground-ui .pg-co-gmb .badge {
+.app-shell .pg-co-gmb .badge {
   background: #00a651;
 }
 
-.playground-ui .pg-co-nlb .badge {
+.app-shell .pg-co-nlb .badge {
   background: #2f6fed;
 }
 
-.playground-ui .pg-choice:hover,
-.playground-ui .pg-choice:focus-visible,
-.playground-ui .pg-co-kmb:hover,
-.playground-ui .pg-co-kmb:focus-visible,
-.playground-ui .pg-co-lwb:hover,
-.playground-ui .pg-co-lwb:focus-visible,
-.playground-ui .pg-co-ctb:hover,
-.playground-ui .pg-co-ctb:focus-visible,
-.playground-ui .pg-co-gmb:hover,
-.playground-ui .pg-co-gmb:focus-visible,
-.playground-ui .pg-co-nlb:hover,
-.playground-ui .pg-co-nlb:focus-visible,
-.playground-ui .pg-co-joint:hover,
-.playground-ui .pg-co-joint:focus-visible {
+.app-shell .pg-choice:hover,
+.app-shell .pg-choice:focus-visible,
+.app-shell .pg-co-kmb:hover,
+.app-shell .pg-co-kmb:focus-visible,
+.app-shell .pg-co-lwb:hover,
+.app-shell .pg-co-lwb:focus-visible,
+.app-shell .pg-co-ctb:hover,
+.app-shell .pg-co-ctb:focus-visible,
+.app-shell .pg-co-gmb:hover,
+.app-shell .pg-co-gmb:focus-visible,
+.app-shell .pg-co-nlb:hover,
+.app-shell .pg-co-nlb:focus-visible,
+.app-shell .pg-co-joint:hover,
+.app-shell .pg-co-joint:focus-visible {
   background: #2A241C;
   color: #FFF8EF;
 }
 
-.playground-ui .pg-route .badge {
+.app-shell .pg-route .badge {
   margin-right: 6px;
 }
 
-.playground-ui .pg-source {
+.app-shell .pg-source {
   background: #FFFDF8;
   border: 2px solid #2A241C;
   padding: 8px 10px;
 }
 
-.playground-ui .tab {
+.app-shell .tab {
   background: #FFFDF8;
   color: #2A241C;
   box-shadow: 2px 2px 0 #2A241C;
 }
 
-.playground-ui .tab:hover,
-.playground-ui .tab:focus-visible {
+.app-shell .tab:hover,
+.app-shell .tab:focus-visible {
   background: #F4C7A5;
   color: #2A241C;
 }
 
-.playground-ui .tab.active {
+.app-shell .tab.active {
   background: #E8C547;
   color: #2A241C;
 }
 
-.playground-ui a.tab {
+.app-shell a.tab {
   color: inherit;
 }
 
-.playground-ui .item {
+.app-shell .item {
   background: #FFFDF8;
   border-color: #2A241C;
   box-shadow: 2px 2px 0 #2A241C;
 }
 
-.playground-ui .choice:hover,
-.playground-ui .choice:focus-visible {
+.app-shell .choice:hover,
+.app-shell .choice:focus-visible {
   background: #2A241C;
   color: #FFF8EF;
 }
 
-.playground-ui .choice.selected {
+.app-shell .choice.selected {
   background: #E8C547;
   color: #2A241C;
 }
 
-.playground-ui .choice.selected .muted {
+.app-shell .choice.selected .muted {
   color: #5c5348;
 }
 
-.playground-ui .choice.selected .badge,
-.playground-ui .choice.selected .stop-num-inline {
+.app-shell .choice.selected .badge,
+.app-shell .choice.selected .stop-num-inline {
   background: #2A241C;
   color: #FFF8EF;
   border-color: #2A241C;
 }
 
-.playground-ui .stop-scan {
+.app-shell .stop-scan {
   background: #FFF8EF;
   border-color: #2A241C;
 }
 
-.playground-ui .stop-num-inline {
+.app-shell .stop-num-inline {
   background: #2A241C;
   color: #FFF8EF;
 }
 
-.playground-ui .mins {
+.app-shell .mins {
   color: #2A241C;
 }
 
-.playground-ui .pg-stop {
+.app-shell .pg-stop {
   background: #FFFDF8;
   border-color: #2A241C;
 }
 
-.playground-ui .pg-stop:hover,
-.playground-ui .pg-stop:focus-visible {
+.app-shell .pg-stop:hover,
+.app-shell .pg-stop:focus-visible {
   background: #2A241C;
   color: #FFF8EF;
 }
 
-.playground-ui .pg-co-joint .badge {
+.app-shell .pg-co-joint .badge {
   background: #8b5cf6;
 }
 
-.playground-ui h2 {
+.app-shell h2 {
   color: #2A241C;
 }
 
-.playground-ui .guide a.tab {
+.app-shell .guide a.tab {
   background: #FFFDF8;
   color: #2A241C;
   box-shadow: 2px 2px 0 #2A241C;
 }
 
-.playground-ui .stop-times li {
+.app-shell .stop-times li {
   border-top-color: #2A241C;
 }
 
-.playground-ui .badge {
+.app-shell .badge {
   box-shadow: 1px 1px 0 #2A241C;
 }
 
