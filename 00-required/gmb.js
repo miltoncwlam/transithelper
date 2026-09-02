@@ -33,6 +33,7 @@ async function gmbGet(path, cache, ttlMs) {
     headers: { Accept: 'application/json', 'User-Agent': 'TransitBuddy/1.0' },
     signal: AbortSignal.timeout(8000)
   });
+  if (res.status === 404) return [];
   if (!res.ok) throw new Error(`GMB HTTP ${res.status}`);
   const json = await res.json();
   const data = json.data ?? json;
@@ -191,16 +192,23 @@ function asDirections(item) {
 export async function gmbLookup(cache, routeCode) {
   const code = String(routeCode || '').trim();
   if (!code) return [];
+  const jobs = await gmbRouteJobs(cache);
+  const needle = code.toUpperCase();
+  let targets = jobs.filter((job) => String(job.code).toUpperCase() === needle);
+  if (!targets.length && !jobs.length) {
+    targets = REGIONS.map((region) => ({ region, code }));
+  }
+  if (!targets.length) return [];
   const out = [];
-  await Promise.all(REGIONS.map(async (region) => {
+  await Promise.all(targets.map(async ({ region, code: regionCode }) => {
     try {
       const data = await gmbGet(
-        `/route/${region}/${encodeURIComponent(code)}`,
+        `/route/${region}/${encodeURIComponent(regionCode)}`,
         cache,
         12 * 60 * 60 * 1000
       );
       const items = Array.isArray(data) ? data : (data ? [data] : []);
-      for (const item of items) out.push(...servicesFromItem(region, code, item));
+      for (const item of items) out.push(...servicesFromItem(region, regionCode, item));
     } catch {
       // region has no matching route
     }

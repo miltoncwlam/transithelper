@@ -144,6 +144,19 @@ test('search still lists 673 when live lookup fails', async ({ page }) => {
   await expect(panel).toContainText(/中環|Central/);
 });
 
+test('search lists GMB 811', async ({ page }) => {
+  test.setTimeout(90000);
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  const panel = page.locator('.panel.active');
+  await panel.getByLabel(/路線，例如|Route, for example/).fill('811');
+  await panel.getByRole('button', { name: /^查詢$|^Find$/ }).click();
+  await expect(panel).not.toContainText(/查詢逾時|The search timed out|沒有此路線|No matching route/);
+  await expect(page.getByRole('button', { name: /專線小巴.*811|GMB.*811/ }).first()).toBeVisible({ timeout: 20000 });
+  await page.getByRole('button', { name: /專線小巴.*811|GMB.*811/ }).first().click();
+  await expect(panel.getByRole('combobox', { name: /選擇上車站|Choose boarding stop/ })).toBeVisible({ timeout: 40000 });
+});
+
 test('search lists NLB 1 and 3M', async ({ page }) => {
   test.setTimeout(90000);
   await page.goto('/');

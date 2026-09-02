@@ -302,6 +302,7 @@ try {
   await checkSearch('3M', 'NLB', SEARCH_MS);
   await checkSearch('A35', 'NLB', SEARCH_MS);
   await checkSearch('673', 'KMB', Math.max(SEARCH_MS, 15000));
+  await checkSearch('811', 'GMB', Math.max(SEARCH_MS, 10000));
 
   const search673 = await get('/api/search-live?route=673');
   if (!search673.ok) fail(`search-live 673 HTTP ${search673.status}`);
@@ -320,7 +321,9 @@ try {
   else {
     const keep = search11.json.keep || [];
     const hasGmb = keep.some((z) => String(z.service?.co || '').toUpperCase() === 'GMB' && z.service?.gmb_route_id);
-    console.log('ok search-live 11', keep.length, 'choices', hasGmb ? 'includes GMB' : 'no GMB (honest empty)');
+    const lookup11 = gmb11.json.data || [];
+    if (lookup11.length && !hasGmb) fail('search-live 11 missing GMB after lookup returned services');
+    else console.log('ok search-live 11', keep.length, 'choices', hasGmb ? 'includes GMB' : 'no GMB (honest empty)');
   }
 
   async function checkLine(label, body, expectColor) {
