@@ -181,10 +181,19 @@ The long TransitBuddy chat had **272 user messages**. System pings (“restart d
 - Draw **official Transport Department** bus paths, not guessed road-follow lines.
 - **Removed GPS nearby-stop map** that overwrote arrivals (user: “it destroys the whole things”).
 
+---
+
+## 2.4.2 — 2026-08-25 · `bbe6711`
+
 ### Fixed
-- Road-follow lines U-turned onto the opposite carriageway or traced the same street twice (`bbe6711`).
-- Lantau (NLB) missing; live search turtle-slow; broken route lines (`ba4bc50`).
-- Clicking a new route must hide the previous line.
+- Route lines U-turned onto the opposite carriageway or traced the same street twice.
+
+---
+
+## 2.4.1 — 2026-08-25 · `ba4bc50`
+
+### Fixed
+- Live search turtle-slow; Lantau (NLB) missing; road lines jumping across the map.
 
 ---
 
@@ -198,7 +207,20 @@ The long TransitBuddy chat had **272 user messages**. System pings (“restart d
 
 ### Changed
 - Friend UI colours: not blank white; “kid feel” but not over-colourful (soft crayon restyle in the same week).
-- Vercel must not show 「無法連線到本機 3001 埠」 — production is same-origin `/api`, not localhost (`7cb8317`, `20c6a20`). Citybus names missing; stop picker simplified.
+
+---
+
+## 2.3.3 — 2026-08-25 · `20c6a20`
+
+### Fixed
+- Vercel timeouts and missing Citybus names; simpler stop picker.
+
+---
+
+## 2.3.2 — 2026-08-25 · `7cb8317`
+
+### Fixed
+- Production showed 「無法連線到本機 3001 埠」. Same-origin `/api` failures are not a localhost outage.
 
 ---
 
