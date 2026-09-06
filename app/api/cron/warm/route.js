@@ -4,6 +4,7 @@ export const maxDuration = 60;
 import { warmDirectory } from '@/lib/directory.js';
 import { startGtfsLoad } from '@/00-required/gtfs.js';
 import { json } from '@/lib/http.js';
+import { graphStats, currentTopology } from '@/00-required/topology.js';
 
 export async function GET(request) {
   const secret = process.env.CRON_SECRET;
@@ -22,7 +23,8 @@ export async function GET(request) {
       stops: directory.stops.length,
       citybusStops: directory.stops.filter((stop) => stop.co === 'CTB').length,
       gmbStops: directory.stops.filter((stop) => stop.co === 'GMB').length,
-      gtfsTrips: gtfs?.rows?.length || 0
+      gtfsTrips: gtfs?.rows?.length || 0,
+      topology: graphStats(currentTopology())
     });
   } catch (error) {
     return json({ error: error.message }, 502);

@@ -6,8 +6,10 @@ import { addStops } from './addStops.js';
 import { gmbRouteStops, gmbStopEta } from './gmb.js';
 import { attachStopMeta, clusterEtas, expandNearby, kmbFetchOrEmpty, namedStop, stopPlaceKey } from './kmb.js';
 import { nlbEta, nlbRouteStops } from './nlb.js';
+import { mtrBusRouteStops } from './mtrbus.js';
 import { etasForStop } from './stopEta.js';
 import { lookupStopMap } from './stopName.js';
+import { stopUid } from './topology.js';
 
 const ROUTE_STOP_TTL = 24 * 60 * 60 * 1000;
 const ETA_TTL = 8 * 1000;
@@ -19,14 +21,14 @@ const MAX_BACKUPS = 2;
 const TRIP_MATCH_MS = 10 * 60 * 1000;
 const NEARBY_CAP = 8;
 
-function serviceCompany(row) {
+export function serviceCompany(row) {
   if (row?.co) return String(row.co).toUpperCase();
   if (row?.gmb_route_id) return 'GMB';
   if (row?.nlb_route_id) return 'NLB';
   return 'KMB';
 }
 
-function walkMs(fromStop, toStop) {
+export function walkMs(fromStop, toStop) {
   if (!fromStop || !toStop) return 90 * 1000;
   const meters = Math.hypot(
     (Number(fromStop.lat) - Number(toStop.lat)) * 111000,
@@ -36,7 +38,7 @@ function walkMs(fromStop, toStop) {
   return Math.round(Math.max(45 * 1000, (meters / 1.3) * 1000 + 30000));
 }
 
-async function routeStops(cache, stopMap, service) {
+export async function routeStops(cache, stopMap, service) {
   const co = serviceCompany(service);
   if (co === 'GMB') {
     const rows = await gmbRouteStops(cache, service);
@@ -50,6 +52,11 @@ async function routeStops(cache, stopMap, service) {
   }
   if (co === 'CTB') {
     const rows = await citybusRouteStops(cache, service, stopMap);
+    addStops(rows);
+    return rows;
+  }
+  if (co === 'MTRB') {
+    const rows = await mtrBusRouteStops(cache, service);
     addStops(rows);
     return rows;
   }
@@ -81,7 +88,7 @@ function raceMs(work, ms, fallback) {
   ]);
 }
 
-function metresBetween(a, b) {
+export function metresBetween(a, b) {
   const metres = Math.hypot(
     (Number(a.lat) - Number(b.lat)) * 111000,
     (Number(a.long) - Number(b.long)) * 102000
@@ -95,7 +102,7 @@ function usableHopMetres(metres) {
   return metres;
 }
 
-function hopTravelMs(metres) {
+export function hopTravelMs(metres) {
   const dist = usableHopMetres(metres);
   if (dist >= 2000) return (dist / 12.5) * 1000;
   if (dist >= 800) return (dist / 8.3) * 1000 + 8000;
@@ -114,6 +121,9 @@ function fasterThanHighwayMs(metres) {
 
 const TDAS_TTL = 15 * 60 * 1000;
 const TDAS_URL = 'https://tdas-api.hkemobility.gov.hk/tdas/api/route';
+const TDAS_LONG_HOP_M = 2000;
+/** Car speed below this (from TDAS `jSpeed`) is shown as 擠塞（估計）. */
+export const TDAS_JAM_CAR_KMH = 25;
 
 /**
  * TDAS car speed → franchised-bus speed on the same path (km/h).
@@ -127,43 +137,53 @@ const TDAS_URL = 'https://tdas-api.hkemobility.gov.hk/tdas/api/route';
  *
  *  v_c=20 → 18;  v_c=75 → 63;  v_c=110 → 63 (not 70+).
  */
-function busKmhFromCarKmh(carKmh) {
+export function busKmhFromCarKmh(carKmh) {
   const vc = Number(carKmh);
-  if (!Number.isFinite(vc) || vc <= 0) return 45;
+  if (!Number.isFinite(vc) || vc <= 0) return null;
   if (vc <= 40) return Math.max(8, 0.9 * vc);
   return Math.min(63, 36 + 0.77 * (vc - 40));
 }
 
-function tdasResponseMs(json) {
+export function tdasRideFromJson(json) {
   const distM = Number(json?.distM);
-  const speedMatch = /(\d+)/.exec(String(json?.jSpeed || ''));
+  const speedMatch = /(\d+(?:\.\d+)?)/.exec(String(json?.jSpeed || ''));
   const carKmh = speedMatch ? Number(speedMatch[1]) : null;
-  if (distM > 0) {
-    const busKmh = busKmhFromCarKmh(carKmh);
-    return Math.round((distM / (busKmh / 3.6)) * 1000);
-  }
-  const parts = String(json?.eta || '').split(':').map(Number);
-  if (parts.length >= 2 && parts.every(Number.isFinite)) {
-    const carMs = ((parts[0] * 60) + parts[1]) * 60 * 1000;
-    const busKmh = busKmhFromCarKmh(carKmh);
-    const scaleFrom = carKmh > 0 ? carKmh : 45;
-    return Math.round(carMs * (scaleFrom / busKmh));
-  }
-  return null;
+  const busKmh = busKmhFromCarKmh(carKmh);
+  if (!(distM > 0) || busKmh == null) return null;
+  const ms = Math.round((distM / (busKmh / 3.6)) * 1000);
+  if (!ms || ms < 60 * 1000) return null;
+  return {
+    ms,
+    carKmh,
+    jam: carKmh > 0 && carKmh < TDAS_JAM_CAR_KMH
+  };
 }
 
-async function tdasHopMs(cache, fromStop, toStop, departAtMs) {
+export function tdasDepartInMinutes(departAtMs, nowMs = Date.now()) {
+  const offset = (new Date(departAtMs).getTime() - nowMs) / 60000;
+  if (!Number.isFinite(offset)) return 0;
+  return Math.max(0, Math.round(offset / 15) * 15);
+}
+
+/**
+ * HKeMobility TDAS hop. Empty / timeout / no `jSpeed` → null (caller keeps 編定).
+ * `departIn` is part of the cache key so days-ahead buckets stay distinct.
+ */
+export async function estimateRideMs(cache, fromStop, toStop, departAtMs, opts = {}) {
   const lat1 = Number(fromStop?.lat);
   const lng1 = Number(fromStop?.long);
   const lat2 = Number(toStop?.lat);
   const lng2 = Number(toStop?.long);
   if (![lat1, lng1, lat2, lng2].every(Number.isFinite)) return null;
-  const key = `tdas-bus-v4:${fromStop.stop || lat1}:${toStop.stop || lat2}`;
+  const metres = metresBetween(fromStop, toStop);
+  if (Number.isFinite(metres) && metres < TDAS_LONG_HOP_M && opts.longHopOnly !== false) return null;
+  const departIn = tdasDepartInMinutes(departAtMs, opts.nowMs);
+  const key = `tdas-bus-v5:${fromStop.stop || lat1}:${toStop.stop || lat2}:${departIn}`;
   const cached = cache?.get(key);
   if (cached) return cached;
-  const departIn = Math.max(0, Math.round((new Date(departAtMs).getTime() - Date.now()) / 60000 / 15) * 15);
+  const fetchFn = opts.fetch || fetch;
   try {
-    const res = await fetch(TDAS_URL, {
+    const res = await fetchFn(TDAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': 'TransitBuddy/1.0' },
       body: JSON.stringify({
@@ -171,15 +191,20 @@ async function tdasHopMs(cache, fromStop, toStop, departAtMs) {
         end: { lat: lat2, long: lng2 },
         departIn
       }),
-      signal: AbortSignal.timeout(4000)
+      signal: opts.signal || AbortSignal.timeout(4000)
     });
-    if (!res.ok) return null;
-    const ms = tdasResponseMs(await res.json());
-    if (!ms || ms < 60 * 1000) return null;
-    return cache ? cache.set(key, ms, TDAS_TTL) : ms;
+    if (!res?.ok) return null;
+    const parsed = tdasRideFromJson(await res.json());
+    if (!parsed) return null;
+    return cache ? cache.set(key, parsed, TDAS_TTL) : parsed;
   } catch {
     return null;
   }
+}
+
+async function tdasHopMs(cache, fromStop, toStop, departAtMs) {
+  const row = await estimateRideMs(cache, fromStop, toStop, departAtMs);
+  return row?.ms || null;
 }
 
 function pairAcrossHop(prevSlots, nextSlots, minHopMs) {
@@ -267,7 +292,7 @@ function slotsFromEtas(etas) {
     .slice(0, 3);
 }
 
-async function firstRouteEtaTables(cache, first, seq, fromIdx, toIdx) {
+export async function firstRouteEtaTables(cache, first, seq, fromIdx, toIdx) {
   const empty = { bySeq: new Map(), byStop: new Map() };
   if (!first?.route || fromIdx < 0 || toIdx < fromIdx || !seq.length) return empty;
   const firstCo = serviceCompany(first);
@@ -343,7 +368,7 @@ function findTripDownstream(seq, fromIdx, toIdx, tables, startMs) {
   return best;
 }
 
-async function followBusAlongRoute(seq, fromIdx, toIdx, tables, startIso, cache) {
+export async function followBusAlongRoute(seq, fromIdx, toIdx, tables, startIso, cache) {
   const startMs = new Date(startIso).getTime();
   if (!Number.isFinite(startMs) || fromIdx < 0 || toIdx < fromIdx) {
     return { time: null, estimated: true, stops: [], leftBoard: false, boardLive: null };
@@ -454,7 +479,7 @@ async function followBusAlongRoute(seq, fromIdx, toIdx, tables, startIso, cache)
   };
 }
 
-async function attachRideTimes(cache, service, seq, item, fromIdx, toIdx) {
+export async function attachRideTimes(cache, service, seq, item, fromIdx, toIdx) {
   if (!seq?.length || fromIdx < 0 || toIdx < fromIdx) return item;
   const tables = await firstRouteEtaTables(cache, service, seq, fromIdx, toIdx);
   const followed = await followBusAlongRoute(seq, fromIdx, toIdx, tables, item.eta, cache);
@@ -470,17 +495,26 @@ async function attachRideTimes(cache, service, seq, item, fromIdx, toIdx) {
   };
 }
 
-function matchesDest(row, destStops, destIds) {
-  if (destIds.has(row.stop)) return true;
+export function matchesDest(row, destStops, destIds) {
+  const uid = stopUid(row);
+  if (destIds.has(uid)) return true;
+  if (destIds.has(row.stop)) {
+    const sameStop = (destStops || []).filter((dest) => dest.stop === row.stop);
+    if (!sameStop.length) return true;
+    if (sameStop.some((dest) => !dest.co || !row.co || String(dest.co).toUpperCase() === String(row.co).toUpperCase())) return true;
+  }
   return destStops.some((dest) => {
-    if (dest.stop === row.stop) return true;
+    if (dest.stop === row.stop) {
+      if (dest.co && row.co && String(dest.co).toUpperCase() !== String(row.co).toUpperCase()) return false;
+      return true;
+    }
     const metres = metresBetween(row, dest);
     if (metres <= 160) return true;
-    return metres <= 220 && stopPlaceKey(row) === stopPlaceKey(dest);
+    return metres <= 280 && stopPlaceKey(row) === stopPlaceKey(dest);
   });
 }
 
-function servesAfter(seq, fromId, destStops, destIds) {
+export function servesAfter(seq, fromId, destStops, destIds) {
   const fromIdx = seq.findIndex((row) => row.stop === fromId);
   if (fromIdx < 0) return null;
   const toIdx = seq.findIndex((row, i) => i > fromIdx && matchesDest(row, destStops, destIds));
@@ -488,7 +522,7 @@ function servesAfter(seq, fromId, destStops, destIds) {
   return { from: seq[fromIdx], to: seq[toIdx] };
 }
 
-function namedDest(eta) {
+export function namedDest(eta) {
   return {
     zh: eta.dest_tc || eta.dest_en || '',
     en: eta.dest_en || eta.dest_tc || ''
@@ -512,7 +546,7 @@ function emptyPlan(emptyReason, extra = {}) {
   };
 }
 
-async function etasAtStops(cache, stops, routes) {
+export async function etasAtStops(cache, stops, routes) {
   const lists = await mapPool(stops, 8, (stop) => etasForStop(cache, stop, routes));
   const rows = [];
   stops.forEach((stop, i) => {

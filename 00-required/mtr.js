@@ -197,6 +197,7 @@ export function publicMtrLines() {
   for (const [key, line] of Object.entries(MTR_LINES)) {
     out[key] = { ...line, routes: lineRoutes(key) };
   }
+  out.LRT = { ...LRT_LINE, routes: lineRoutes('LRT') };
   return out;
 }
 

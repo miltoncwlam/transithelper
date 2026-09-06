@@ -1,4 +1,5 @@
 import { getSupabase, getSupabaseAdmin } from './supabase.js';
+import { loadDiscountIndex, matchDiscount } from './discounts.js';
 
 let index = null;
 let loading = null;
@@ -183,6 +184,70 @@ export async function attachFaresToItems(list) {
     ...item,
     ...fareFields(lookupFare(fareIndex, item), { on_seq: item.on_seq, off_seq: item.off_seq })
   }));
+}
+
+export function octopusTransferTotal(firstHkd, secondHkd, discount) {
+  if (firstHkd == null || secondHkd == null) return null;
+  const first = Number(firstHkd);
+  let second = Number(secondHkd);
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+  if (discount?.discount_type === 'free') second = 0;
+  else if (discount?.discount_amount_hkd != null) second = Math.max(0, second - Number(discount.discount_amount_hkd));
+  return Math.round((first + second) * 10) / 10;
+}
+
+export function annotateJourneyFares(option, fareIndex, discountIndex) {
+  if (!option) return option;
+  if (option.kind === 'transfer' && option.second) {
+    const firstFields = fareFields(lookupFare(fareIndex, option.first), {
+      on_seq: option.firstOnSeq ?? option.on_seq,
+      off_seq: option.firstOffSeq ?? option.off_seq
+    });
+    const secondFields = fareFields(lookupFare(fareIndex, option.second), {
+      on_seq: option.secondOnSeq,
+      off_seq: option.secondOffSeq
+    });
+    const discount = discountIndex
+      ? matchDiscount(discountIndex, option.first?.route, option.second?.route, option.waitAfterFirstMinutes, {
+        fromCo: option.first?.co,
+        toCo: option.second?.co,
+        fromBound: option.first?.bound,
+        toBound: option.second?.bound
+      })
+      : null;
+    const octopus = octopusTransferTotal(
+      firstFields.section_fare_hkd ?? firstFields.full_fare_hkd,
+      secondFields.section_fare_hkd ?? secondFields.full_fare_hkd,
+      discount
+    );
+    return {
+      ...option,
+      first: { ...option.first, ...firstFields },
+      second: { ...option.second, ...secondFields },
+      discount: discount || undefined,
+      section_fare_hkd: octopus,
+      full_fare_hkd: octopusTransferTotal(firstFields.full_fare_hkd, secondFields.full_fare_hkd, null),
+      octopus_fare_hkd: octopus
+    };
+  }
+  const fields = fareFields(lookupFare(fareIndex, option.first || option), {
+    on_seq: option.on_seq,
+    off_seq: option.off_seq
+  });
+  const octopus = fields.section_fare_hkd ?? fields.full_fare_hkd ?? null;
+  return {
+    ...option,
+    first: option.first ? { ...option.first, ...fields } : option.first,
+    section_fare_hkd: fields.section_fare_hkd,
+    full_fare_hkd: fields.full_fare_hkd,
+    octopus_fare_hkd: octopus
+  };
+}
+
+export async function attachJourneyFares(list, opts = {}) {
+  const fareIndex = opts.fareIndex !== undefined ? opts.fareIndex : await getFareIndex();
+  const discountIndex = opts.discountIndex !== undefined ? opts.discountIndex : await loadDiscountIndex();
+  return (list || []).map((option) => annotateJourneyFares(option, fareIndex, discountIndex));
 }
 
 export async function fareForRoute(route, onSeq, offSeq) {

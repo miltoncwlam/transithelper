@@ -1,3 +1,4 @@
+import { stopPlaceKey } from './kmb.js';
 import { lookupStopMap, stopNameMissing } from './stopName.js';
 
 const BASE = 'https://rt.data.gov.hk/v2/transport/citybus';
@@ -11,8 +12,14 @@ export function isCitybusStopId(id) {
 }
 
 export function stopCompany(stop) {
-  if (stop?.co) return stop.co;
-  return isCitybusStopId(stop?.stop || stop) ? 'CTB' : 'KMB';
+  const co = String(stop?.co || '').toUpperCase();
+  if (co === 'CTB' || co === 'GMB' || co === 'NLB' || co === 'LWB' || co === 'KMB' || co === 'MTRB') return co;
+  if (stop?.gmb_route_id) return 'GMB';
+  if (stop?.nlb_route_id) return 'NLB';
+  const id = String(stop?.stop || stop || '');
+  if (/^\d{6}$/.test(id)) return 'CTB';
+  if (/^\d{7,}$/.test(id)) return 'GMB';
+  return 'KMB';
 }
 
 async function mapPool(items, limit, fn) {
@@ -89,6 +96,22 @@ async function cityFetch(path, cache, ttlMs) {
     }
   }
   throw lastError;
+}
+
+export async function citybusStopCatalog(cache) {
+  try {
+    const rows = await cityFetch('/stop', cache, STOP_TTL);
+    return (Array.isArray(rows) ? rows : []).map((row) => rememberStop({
+      stop: String(row.stop || ''),
+      name_tc: citybusName(row.name_tc, row.stop),
+      name_en: citybusName(row.name_en, row.stop),
+      lat: row.lat,
+      long: row.long,
+      co: 'CTB'
+    })).filter((row) => row.stop);
+  } catch {
+    return [];
+  }
 }
 
 export async function citybusRoutes(cache) {
@@ -247,6 +270,128 @@ function metresBetweenStops(a, b) {
     (Number(a.long) - Number(b.long)) * 102000
   );
   return Number.isFinite(metres) ? metres : Infinity;
+}
+
+const REGION_TEXT = [
+  { key: 'tko', re: /將軍澳|坑口|調景嶺|寶琳|康城|翠林|尚德|Tseung Kwan O|Hang Hau|Tiu Keng Leng|Po Lam|LOHAS/i },
+  { key: 'st', re: /沙田|第一城|火炭|大圍|馬鞍山|烏溪沙|圓洲角|石門|城門|廣源|City One|Sha Tin|Fo Tan|Ma On Shan|Tai Wai|Wu Kai Sha|Shek Mun/i },
+  { key: 'hkie', re: /柴灣|小西灣|筲箕灣|西灣河|太古|鰂魚涌|杏花|康怡|北角|Chai Wan|Sai Wan Ho|Tai Koo|Quarry Bay|North Point/i },
+  { key: 'kln', re: /觀塘|九龍灣|牛頭角|藍田|油塘|彩虹|黃大仙|鑽石山|Kwun Tong|Kowloon Bay|Lam Tin|Choi Hung/i },
+  { key: 'hkiw', re: /中環|金鐘|灣仔|銅鑼灣|上環|西環|堅尼地城|Central|Admiralty|Wan Chai|Causeway/i },
+  { key: 'ntn', re: /大埔|粉嶺|上水|大學|科學園|Tai Po|Fanling|Sheung Shui/i }
+];
+
+export function regionKeysFromText(text) {
+  const raw = String(text || '');
+  return REGION_TEXT.filter((row) => row.re.test(raw)).map((row) => row.key);
+}
+
+export function regionKeysFromCoords(lat, lng) {
+  const y = Number(lat);
+  const x = Number(lng);
+  if (!Number.isFinite(y) || !Number.isFinite(x)) return [];
+  const keys = [];
+  if (x >= 114.239 && y >= 22.28 && y <= 22.368) keys.push('tko');
+  if (y >= 22.36 && y <= 22.455 && x >= 114.16 && x <= 114.255) keys.push('st');
+  if (y >= 22.255 && y <= 22.305 && x >= 114.20 && x <= 114.27) keys.push('hkie');
+  if (y >= 22.30 && y <= 22.345 && x >= 114.18 && x <= 114.24) keys.push('kln');
+  return keys;
+}
+
+export function regionKeysForStop(stop) {
+  const fromText = regionKeysFromText(`${stop?.name_tc || ''}${stop?.name_en || ''}`);
+  const fromCoords = regionKeysFromCoords(stop?.lat, stop?.long);
+  return [...new Set([...fromText, ...fromCoords])];
+}
+
+export function regionKeysForService(service) {
+  return regionKeysFromText(`${service?.orig_tc || ''}${service?.dest_tc || ''}${service?.orig_en || ''}${service?.dest_en || ''}`);
+}
+
+function regionSet(stops) {
+  const keys = new Set();
+  for (const stop of stops || []) {
+    for (const key of regionKeysForStop(stop)) keys.add(key);
+  }
+  return keys;
+}
+
+export function scoreCitybusForJourney(service, originSeeds, destSeeds) {
+  if (String(service?.co || '').toUpperCase() !== 'CTB') return 0;
+  const routeKeys = new Set(regionKeysForService(service));
+  const originKeys = regionSet(originSeeds);
+  const destKeys = regionSet(destSeeds);
+  const originHit = [...originKeys].some((key) => routeKeys.has(key));
+  const destHit = [...destKeys].some((key) => routeKeys.has(key));
+  let score = 0;
+  if (originHit && destHit) score += 6;
+  else if (originHit || destHit) score += 2;
+  const blob = `${service.orig_tc || ''}${service.dest_tc || ''}${service.orig_en || ''}${service.dest_en || ''}`.replace(/\s/g, '');
+  for (const seed of [...(originSeeds || []), ...(destSeeds || [])]) {
+    const place = stopPlaceKey(seed);
+    if (place && place.length >= 2 && blob.includes(place)) score += 3;
+  }
+  return score;
+}
+
+function poleNearSeeds(stop, seeds, radius) {
+  return (seeds || []).some((seed) => {
+    const metres = metresBetweenStops(stop, seed);
+    if (Number.isFinite(metres) && metres <= radius) return true;
+    const here = stopPlaceKey(stop);
+    const there = stopPlaceKey(seed);
+    return !!(here && there && here === there);
+  });
+}
+
+/** Find Citybus poles at origin/dest places from route-stop, even when the /stop catalog is empty. */
+export async function citybusPolesAtPlaces(cache, routes, originSeeds, destSeeds, opts = {}) {
+  const radius = Math.max(150, Number(opts.radius) || 290);
+  const loadSeq = opts.loadSeq || ((service) => citybusRouteStops(cache, service, opts.stopMap));
+  const capRoutes = Math.min(8, Math.max(2, Number(opts.routeCap) || 8));
+  const preferred = opts.preferred;
+  const seen = new Set();
+  const scored = [];
+  for (const row of routes || []) {
+    if (String(row.co || '').toUpperCase() !== 'CTB') continue;
+    const key = `${String(row.route || '').toUpperCase()}|${row.bound || 'O'}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let score = scoreCitybusForJourney(row, originSeeds, destSeeds);
+    if (preferred && String(preferred.route || '').toUpperCase() === String(row.route || '').toUpperCase()) {
+      const prefBound = preferred.bound || row.bound;
+      if (!prefBound || String(prefBound) === String(row.bound || 'O')) score += 10;
+    }
+    if (score <= 0) continue;
+    scored.push({ row, score });
+  }
+  scored.sort((a, b) => b.score - a.score || String(a.row.route).localeCompare(String(b.row.route)));
+  const picked = scored.slice(0, capRoutes).map((item) => item.row);
+  if (preferred && String(preferred.co || '').toUpperCase() === 'CTB' && preferred.route) {
+    const prefKey = `${String(preferred.route).toUpperCase()}|${preferred.bound || 'O'}`;
+    if (!picked.some((row) => `${String(row.route).toUpperCase()}|${row.bound || 'O'}` === prefKey)) {
+      picked.unshift({ ...preferred, co: 'CTB' });
+    }
+  }
+  const origin = new Map();
+  const dest = new Map();
+  const out = opts.out || { origin: [], dest: [] };
+  const publish = () => {
+    out.origin = [...origin.values()];
+    out.dest = [...dest.values()];
+  };
+  await mapPool(picked.slice(0, capRoutes), 4, async (service) => {
+    const seq = await loadSeq(service);
+    for (const stop of seq || []) {
+      if (!stop?.stop) continue;
+      const pole = { ...stop, co: 'CTB' };
+      if (origin.size < 8 && poleNearSeeds(pole, originSeeds, radius)) origin.set(String(pole.stop), pole);
+      if (dest.size < 8 && poleNearSeeds(pole, destSeeds, radius)) dest.set(String(pole.stop), pole);
+    }
+    publish();
+  });
+  publish();
+  return out;
 }
 
 function citybusConnectScore(row, destStops) {

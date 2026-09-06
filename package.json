@@ -11,6 +11,7 @@
     "import-td-bus": "node scripts/import-td-bus.mjs",
     "import-bus-fares": "node scripts/import-bus-fares.mjs",
     "test": "playwright test",
+    "test:unit": "node --test tests/*.test.js",
     "sync-i18n": "node scripts/sync-i18n.mjs",
     "build-manual": "node scripts/build-manual.mjs",
     "bundle-standalone": "node scripts/sync-i18n.mjs && node scripts/bundle-standalone.mjs"

@@ -68,9 +68,11 @@ export function nearestStops(allStops, lat, lng, radius = 250, limit = 20) {
 export function expandNearby(seedStops, allStops, radius) {
   const found = new Map();
   const dist = new Map();
+  const keyOf = (stop) => `${String(stop?.co || 'KMB').toUpperCase()}:${stop?.stop}`;
   for (const seed of seedStops) {
-    found.set(seed.stop, seed);
-    dist.set(seed.stop, 0);
+    const seedKey = keyOf(seed);
+    found.set(seedKey, seed);
+    dist.set(seedKey, 0);
     const lat = Number(seed.lat);
     const lng = Number(seed.long);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
@@ -80,14 +82,62 @@ export function expandNearby(seedStops, allStops, radius) {
         (Number(stop.long) - lng) * 102000
       );
       if (!Number.isFinite(metres) || metres > radius) continue;
-      const prev = dist.get(stop.stop);
+      const key = keyOf(stop);
+      const prev = dist.get(key);
       if (prev == null || metres < prev) {
-        found.set(stop.stop, stop);
-        dist.set(stop.stop, metres);
+        found.set(key, stop);
+        dist.set(key, metres);
       }
     }
   }
-  return [...found.values()].sort((a, b) => (dist.get(a.stop) || 0) - (dist.get(b.stop) || 0));
+  return [...found.values()].sort((a, b) => (dist.get(keyOf(a)) || 0) - (dist.get(keyOf(b)) || 0));
+}
+
+/** Keep every picked pole; cap other nearby places so one terminus does not hide them. */
+export function expandNearbyDiverse(seedStops, allStops, radius, cap = 16, perArea = 3) {
+  const expanded = expandNearby(seedStops, allStops, radius);
+  const seedKeys = new Set((seedStops || []).map((row) => `${String(row.co || 'KMB').toUpperCase()}:${row.stop}`));
+  const seedAreas = new Set((seedStops || []).map((row) => stopPlaceKey(row)).filter(Boolean));
+  const limit = Math.max(1, Math.min(6, Number(perArea) || 3));
+  const max = Math.max(limit, Number(cap) || 16);
+  const out = [];
+  const seen = new Set();
+  const push = (stop) => {
+    if (!stop?.stop) return;
+    const key = `${String(stop.co || 'KMB').toUpperCase()}:${stop.stop}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(stop);
+  };
+  for (const stop of seedStops || []) push(stop);
+  const extraSeed = [];
+  const others = [];
+  for (const stop of expanded) {
+    const key = `${String(stop.co || 'KMB').toUpperCase()}:${stop.stop}`;
+    if (seedKeys.has(key)) continue;
+    const area = stopPlaceKey(stop) || String(stop.stop || '');
+    if (seedAreas.has(area)) extraSeed.push(stop);
+    else others.push(stop);
+  }
+  const otherReserve = others.length ? Math.min(6, Math.max(4, max - out.length)) : 0;
+  for (const stop of extraSeed) {
+    if (out.length >= max - otherReserve) break;
+    push(stop);
+  }
+  const areaCount = new Map();
+  for (const stop of others) {
+    if (out.length >= max) break;
+    const area = stopPlaceKey(stop) || String(stop.stop || '');
+    const n = areaCount.get(area) || 0;
+    if (n >= limit) continue;
+    areaCount.set(area, n + 1);
+    push(stop);
+  }
+  for (const stop of extraSeed) {
+    if (out.length >= max) break;
+    push(stop);
+  }
+  return out;
 }
 
 export function attachStopMeta(routeStops, stopMap) {

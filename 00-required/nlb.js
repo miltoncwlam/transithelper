@@ -163,12 +163,10 @@ export async function nlbEta(cache, stop, service) {
   }
 }
 
-export async function nlbStopEtas(cache, stop, routes) {
+export async function nlbStopEtas(cache, stop, _routes) {
   const stopId = String(typeof stop === 'object' ? stop.stop : stop || '');
-  let services = stopIndex.get(stopId) || [];
-  if (!services.length) {
-    services = (routes || []).filter((row) => row.co === 'NLB' && row.nlb_route_id);
-  }
+  const services = stopIndex.get(stopId) || [];
+  if (!services.length) return [];
   const lists = await mapPool(services, 4, (service) => nlbEta(cache, stopId, service));
   return lists.flat();
 }

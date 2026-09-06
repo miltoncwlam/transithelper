@@ -1013,10 +1013,26 @@ h3.font-bold {
   background: #F6E7A8 !important;
 }
 
-.app-shell .pg-choice {
-  background: #FFFDF8;
-  border-width: 2px;
-  border-color: #2A241C;
+.app-shell .journey-lead {
+  font-weight: 650;
+  line-height: 1.45;
+  margin: 0.35rem 0 0.2rem;
+}
+
+.app-shell .catch-up-card h3 {
+  margin: 0 0 8px;
+}
+
+.app-shell .catch-up-card p {
+  margin: 6px 0;
+}
+
+.app-shell .journey-also {
+  padding: 8px 12px;
+}
+
+.app-shell .journey-also-label {
+  margin: 0.75rem 0 0.2rem;
 }
 
 .app-shell .pg-co-kmb,
@@ -1024,6 +1040,7 @@ h3.font-bold {
 .app-shell .pg-co-ctb,
 .app-shell .pg-co-gmb,
 .app-shell .pg-co-nlb,
+.app-shell .pg-co-mtrb,
 .app-shell .pg-co-joint {
   background: #FFFDF8;
   border-color: #2A241C;
@@ -1050,6 +1067,10 @@ h3.font-bold {
   background: #2f6fed;
 }
 
+.app-shell .pg-co-mtrb .badge {
+  background: #9a3b26;
+}
+
 .app-shell .pg-choice:hover,
 .app-shell .pg-choice:focus-visible,
 .app-shell .pg-co-kmb:hover,
@@ -1062,6 +1083,8 @@ h3.font-bold {
 .app-shell .pg-co-gmb:focus-visible,
 .app-shell .pg-co-nlb:hover,
 .app-shell .pg-co-nlb:focus-visible,
+.app-shell .pg-co-mtrb:hover,
+.app-shell .pg-co-mtrb:focus-visible,
 .app-shell .pg-co-joint:hover,
 .app-shell .pg-co-joint:focus-visible {
   background: #2A241C;

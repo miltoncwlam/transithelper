@@ -2,6 +2,7 @@ import { citybusStopEtas, stopCompany } from './citybus.js';
 import { gmbStopEta } from './gmb.js';
 import { kmbFetchOrEmpty } from './kmb.js';
 import { nlbStopEtas } from './nlb.js';
+import { mtrBusStopEtas } from './mtrbus.js';
 
 const ETA_TTL = 8 * 1000;
 
@@ -53,6 +54,7 @@ export async function etasForStop(cache, stop, routes) {
   if (co === 'CTB') rows = await citybusStopEtas(cache, id);
   else if (co === 'GMB') rows = await gmbStopEta(cache, stop || id, null);
   else if (co === 'NLB') rows = await nlbStopEtas(cache, id, routes);
+  else if (co === 'MTRB') rows = await mtrBusStopEtas(cache, stop || id, routes);
   else {
     rows = (await kmbFetchOrEmpty(`/stop-eta/${encodeURIComponent(id)}`, cache, ETA_TTL))
       .map((eta) => ({ ...eta, co: eta.co || 'KMB' }));

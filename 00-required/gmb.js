@@ -273,10 +273,10 @@ export async function gmbStopEta(cache, stop, service = null) {
     let path;
     if (routeId && stopSeq) {
       path = `/eta/route-stop/${encodeURIComponent(routeId)}/${encodeURIComponent(routeSeq || 1)}/${encodeURIComponent(stopSeq)}`;
-    } else if (routeId && stopId) {
-      path = `/eta/route-stop/${encodeURIComponent(routeId)}/${encodeURIComponent(stopId)}`;
-    } else {
+    } else if (stopId) {
       path = `/eta/stop/${encodeURIComponent(stopId)}`;
+    } else {
+      return [];
     }
     const data = await gmbGet(path, cache, ETA_TTL);
     return parseGmbEtas(data, service);

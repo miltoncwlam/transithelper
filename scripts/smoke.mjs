@@ -225,6 +225,30 @@ try {
       else console.log('ok transfer connections', (connections.json.firstStops || []).length, 'firstStops', connections.json.emptyReason || 'live');
     }
 
+    const journeyIncomplete = await post('/api/journey-options', {});
+    if (!journeyIncomplete.ok) fail(`journey-options incomplete HTTP ${journeyIncomplete.status}`);
+    else if (journeyIncomplete.json.emptyReason !== 'incomplete') fail(`journey-options incomplete ${JSON.stringify(journeyIncomplete.json)}`);
+    else console.log('ok journey-options incomplete');
+
+    const journeySame = await post('/api/journey-options', {
+      originStops: [{ co: 'KMB', stop: board.stop }],
+      destinationStops: [{ co: 'KMB', stop: board.stop }],
+      nearby: false
+    });
+    if (!journeySame.ok) fail(`journey-options same-area HTTP ${journeySame.status}`);
+    else if (journeySame.json.emptyReason !== 'same_area') fail(`journey-options same-area ${JSON.stringify(journeySame.json)}`);
+    else console.log('ok journey-options same-area');
+
+    const journeyLive = await post('/api/journey-options', {
+      originStops: [{ co: 'KMB', stop: board.stop }],
+      destinationStops: [{ co: 'KMB', stop: dest.stop }],
+      nearby: false,
+      radius: 250
+    });
+    if (!journeyLive.ok) fail(`journey-options HTTP ${journeyLive.status}`);
+    else if (!Array.isArray(journeyLive.json.options)) fail(`journey-options missing options ${JSON.stringify(journeyLive.json)}`);
+    else console.log('ok journey-options', (journeyLive.json.options || []).length, 'options', journeyLive.json.emptyReason || 'live', journeyLive.json.observedOnly ? 'observed' : '');
+
     const ride = await post('/api/ride', {
       first: { route: '1', bound: 'O', service_type: '1' },
       boardStops: [board.stop],

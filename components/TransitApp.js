@@ -5,9 +5,11 @@ import { API_BASE, LOCAL_CONNECTION_REFUSED, SHOW_LOCAL_DEV_HINT } from '@/lib/a
 import { I18N } from '../lib/i18n.js';
 import { directoryKeep } from '../lib/routeSearch.js';
 import { pickFollowedTrain, publicMtrLines } from '../00-required/mtr.js';
+import { LRT_TERMINI } from '../00-required/lightrail.js';
 import { mtrLineColor } from '../lib/mtrColors.js';
 import { lineColorForCo } from '../lib/routeColors.js';
 import { displayStopName } from '../00-required/stopName.js';
+import { keepSilentJourneyList, mergeJourneyGroups, itineraryKey, samePlaceLabel, stopPlaceLabel } from '../lib/journeyGroups.js';
 import StopMap from './StopMap.js';
 import UserGuide from './UserGuide.js';
 import SearchableSelect from './SearchableSelect.js';
@@ -60,10 +62,12 @@ function coTone(row, companies) {
   const hasCtb = set.has('CTB');
   const hasGmb = set.has('GMB');
   const hasNlb = set.has('NLB');
-  const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB' && c !== 'NLB');
+  const hasMtrb = set.has('MTRB');
+  const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB' && c !== 'NLB' && c !== 'MTRB');
   if (hasCtb && hasFranchised) return 'pg-co-joint';
   if (hasGmb) return 'pg-co-gmb';
   if (hasNlb) return 'pg-co-nlb';
+  if (hasMtrb) return 'pg-co-mtrb';
   if (hasCtb) return 'pg-co-ctb';
   if (set.has('LWB')) return 'pg-co-lwb';
   return 'pg-co-kmb';
@@ -80,19 +84,27 @@ function cluster(a) {
   return a.filter((x, i) => !i || new Date(x) - new Date(a[i - 1]) > 90000);
 }
 
-function emptyReasonKey(reason) {
+function emptyReasonKey(reason, context = 'planner') {
   if (reason === 'no_first_bus') return 'noFirstBus';
-  if (reason === 'no_connection') return 'noConnection';
+  if (reason === 'no_connection') return context === 'transfer' ? 'noConnection' : context === 'pretrip' ? 'pretripEmpty' : 'noJourney';
   if (reason === 'no_departure') return 'noDeparture';
-  if (reason === 'timeout') return 'transferTimeout';
-  if (reason === 'incomplete') return 'incomplete';
+  if (reason === 'timeout') return context === 'transfer' ? 'transferTimeout' : 'journeyTimeout';
+  if (reason === 'same_area') return 'sameArea';
+  if (reason === 'incomplete') return 'needOriginDest';
   if (reason === 'need_board') return 'needBoard';
-  if (reason === 'empty' || reason === 'no_departure') return 'noLiveNow';
+  if (reason === 'empty') return 'noLiveNow';
+  if (reason === 'no_service') return 'pretripNoService';
+  if (reason === 'no_duration') return 'pretripNoDuration';
   return 'none';
 }
 
 function transferListsEmpty(json) {
   return !(json?.list || []).length && !(json?.departures || []).length && !(json?.directs || []).length;
+}
+
+function hktYmd(offsetDays = 0) {
+  const d = new Date(Date.now() + offsetDays * 86400000);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
 
 function origDestKey(s) {
@@ -274,6 +286,10 @@ export default function TransitApp() {
   const [offline, setOffline] = useState(false);
   const [tab, setTab] = useState('arrivals');
   const [refreshSec, setRefreshSec] = useState('30');
+  const [etaMode, setEtaMode] = useState('clock');
+  const [nearbyBoard, setNearbyBoard] = useState(null);
+  const [nearbyLoading, setNearbyLoading] = useState(false);
+  const [nearbyNote, setNearbyNote] = useState('');
 
   const [arrivalRoute, setArrivalRoute] = useState('');
   const [arrivalChoices, setArrivalChoices] = useState(null);
@@ -296,6 +312,16 @@ export default function TransitApp() {
   const [destinationResults, setDestinationResults] = useState(null);
   const [destination, setDestination] = useState(null);
   const [destBoxHidden, setDestBoxHidden] = useState(false);
+  const [originInput, setOriginInput] = useState('');
+  const [originResults, setOriginResults] = useState(null);
+  const [origin, setOrigin] = useState(null);
+  const [originBoxHidden, setOriginBoxHidden] = useState(false);
+  const [journeyOptions, setJourneyOptions] = useState(null);
+  const [journeyMessage, setJourneyMessage] = useState('');
+  const [pretripDate, setPretripDate] = useState(() => hktYmd(1));
+  const [pretripArriveBy, setPretripArriveBy] = useState('');
+  const [pretripResult, setPretripResult] = useState(null);
+  const [pretripMessage, setPretripMessage] = useState('');
   const [transferResult, setTransferResult] = useState(null);
   const [transferMessage, setTransferMessage] = useState('');
   const [transferPhase, setTransferPhase] = useState(null);
@@ -320,7 +346,10 @@ export default function TransitApp() {
   const [standaloneHint, setStandaloneHint] = useState(false);
   const [routeNearNote, setRouteNearNote] = useState('');
   const [routeLine, setRouteLine] = useState(null);
+  const [catchUp, setCatchUp] = useState(null);
+  const [catchUpLoading, setCatchUpLoading] = useState(false);
 
+  const nearbyPickRef = useRef(null);
   const stopCache = useRef(new Map());
   const routeLineSeq = useRef(0);
   const arrivalSearchSeq = useRef(0);
@@ -331,12 +360,25 @@ export default function TransitApp() {
   const arrivalBoardRef = useRef(null);
   const arrivalLiveRef = useRef(null);
   const transferSeq = useRef(0);
+  const journeySeq = useRef(0);
+  const journeyLockedRef = useRef(false);
+  const originRef = useRef(null);
+  const destinationRef = useRef(null);
   const arrivalRestored = useRef(false);
   const transferPhaseRef = useRef(null);
   const selectedDepartureRef = useRef(null);
   const selectedConnectionRef = useRef(null);
   const chosenDirectRef = useRef(null);
   const stopsLoad = useRef(null);
+  const catchUpSeq = useRef(0);
+  const catchUpQueryRef = useRef(null);
+
+  function clearCatchUp() {
+    catchUpSeq.current += 1;
+    catchUpQueryRef.current = null;
+    setCatchUp(null);
+    setCatchUpLoading(false);
+  }
 
   function resetTransferLock() {
     transferPhaseRef.current = null;
@@ -347,6 +389,8 @@ export default function TransitApp() {
     setSelectedDeparture(null);
     setSelectedConnection(null);
     setChosenDirect(null);
+    journeyLockedRef.current = false;
+    clearCatchUp();
   }
   const stopMap = useMemo(() => new Map(stops.map((x) => [x.stop, x])), [stops]);
 
@@ -380,15 +424,23 @@ export default function TransitApp() {
     if (Number.isNaN(date.getTime())) return null;
     return Math.max(0, Math.ceil((date - Date.now()) / 60000));
   };
-  const clk = useCallback((x) => {
+  const clkClock = useCallback((x) => {
     const date = new Date(x);
     if (Number.isNaN(date.getTime())) return '';
     return date.toLocaleTimeString(lang === 'zh' ? 'zh-HK' : 'en-HK', { hour: 'numeric', minute: '2-digit' });
   }, [lang]);
+  const clk = useCallback((x) => {
+    if (etaMode === 'countdown') {
+      const wait = mins(x);
+      if (wait == null) return '';
+      return t('minutes', wait);
+    }
+    return clkClock(x);
+  }, [etaMode, clkClock, t]);
 
   const api = useCallback(async (path, options = {}) => {
     const { timeoutMs: givenTimeout, ...fetchOpts } = options;
-    const heavy = path.startsWith('/api/transfer') || path.startsWith('/api/ride');
+    const heavy = path.startsWith('/api/transfer') || path.startsWith('/api/ride') || path.startsWith('/api/journey-options') || path.startsWith('/api/catch-up');
     const timeoutMs = givenTimeout || (heavy ? 30000 : 12000);
     const ctrl = new AbortController();
     const kill = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -414,7 +466,7 @@ export default function TransitApp() {
       return json;
     } catch (error) {
       if (error.name === 'AbortError') {
-        throw new Error(path.startsWith('/api/transfer') ? t('transferTimeout') : t('timeout'));
+        throw new Error(path.startsWith('/api/transfer') || path.startsWith('/api/journey-options') ? t('transferTimeout') : t('timeout'));
       }
       throw error;
     } finally {
@@ -490,6 +542,12 @@ export default function TransitApp() {
       stopCache.current.set(k, rows);
       return rows;
     }
+    if (serviceCo(s) === 'MTRB') {
+      const json = await api(`/api/mtrbus/route-stop/${encodeURIComponent(s.route)}`);
+      const rows = json.data || [];
+      stopCache.current.set(k, rows);
+      return rows;
+    }
     const d = s.bound === 'O' ? 'outbound' : 'inbound';
     const json = await api(`/api/kmb/route-stop/${encodeURIComponent(s.route)}/${d}/${s.service_type}`);
     const rows = json.data || [];
@@ -521,6 +579,17 @@ export default function TransitApp() {
       }
       if (serviceCo(s) === 'NLB' && s.nlb_route_id) {
         const json = await api(`/api/nlb/eta/${encodeURIComponent(s.nlb_route_id)}/${encodeURIComponent(stopId)}`);
+        return (json.data || []).filter((x) => x.eta).map((x) => ({
+          ...x,
+          dir: 'O',
+          service_type: '1',
+          route: x.route || s.route,
+          dest_tc: x.dest_tc || s.dest_tc,
+          dest_en: x.dest_en || s.dest_en
+        }));
+      }
+      if (serviceCo(s) === 'MTRB') {
+        const json = await api(`/api/mtrbus/eta/${encodeURIComponent(s.route)}/${encodeURIComponent(stopId)}`);
         return (json.data || []).filter((x) => x.eta).map((x) => ({
           ...x,
           dir: 'O',
@@ -610,11 +679,16 @@ export default function TransitApp() {
   }
 
   async function searchFirstByRoute(routeStr) {
+    const q = String((routeStr ?? firstRoute) || '').trim();
+    if (!q) {
+      setFirstChoices(null);
+      return;
+    }
     if (routeStr != null) setFirstRoute(routeStr);
     hideFirstService();
     const gen = firstSearchSeq.current;
     setFirstChoices({ loading: true });
-    const payload = await loadChoices(routeStr ?? firstRoute);
+    const payload = await loadChoices(q);
     if (gen !== firstSearchSeq.current) return;
     setFirstChoices(payload);
     if (payload.auto) pickFirst(payload.auto);
@@ -647,6 +721,8 @@ export default function TransitApp() {
     setFirstFares(null);
     setTransferResult(null);
     setTransferMessage('');
+    setJourneyOptions(null);
+    setJourneyMessage('');
     resetTransferLock();
   }
 
@@ -700,10 +776,30 @@ export default function TransitApp() {
     setFetchedStops({});
     setOpenStopKey(null);
     setRouteNearNote('');
+    clearCatchUp();
     const seq = await fetchStops(s);
     if (searchToken !== arrivalSearchSeq.current || pickToken !== arrivalPickSeq.current) return;
-    setArrivalGroups(groups(seq));
+    const nextGroups = groups(seq);
+    setArrivalGroups(nextGroups);
     requestRouteLine(s, seq);
+    const pending = nearbyPickRef.current;
+    nearbyPickRef.current = null;
+    if (pending?.stop) {
+      const idx = nextGroups.findIndex((g) => (g.stops || []).some((row) => String(row.stop) === String(pending.stop)));
+      if (idx >= 0) {
+        const g = nextGroups[idx];
+        setArrivalStopIndex(String(idx));
+        try {
+          const json = await api('/api/ride', {
+            method: 'POST',
+            body: JSON.stringify({ first: s, boardStops: (g.stops || []).map((row) => row.stop), destStops: [] })
+          });
+          setArrivalTimes({ trips: json.trips || [], destLabel: null, emptyReason: json.emptyReason });
+        } catch {
+          setArrivalTimes({ trips: [], destLabel: null, emptyReason: 'empty' });
+        }
+      }
+    }
     try {
       const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
       const json = await api(`/api/fares?${qs}`);
@@ -748,6 +844,7 @@ export default function TransitApp() {
     const v = String(index);
     setArrivalStopIndex(v);
     setArrivalTimes(null);
+    clearCatchUp();
     let dest = destIndex === undefined ? arrivalDestIndex : destIndex;
     if (dest !== '' && (v === '' || +dest <= +v)) {
       dest = '';
@@ -827,6 +924,63 @@ export default function TransitApp() {
     }, () => setRouteNearNote(t('geoDenied')), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
   }
 
+  function applyNearbyOrigin(cluster) {
+    if (!cluster?.stops?.length) return;
+    const group = {
+      label: lang === 'zh' ? (cluster.label_tc || cluster.name_tc) : (cluster.label_en || cluster.name_en),
+      stops: cluster.stops
+    };
+    setOrigin(group);
+    originRef.current = group;
+    setOriginBoxHidden(true);
+    setOriginResults(null);
+  }
+
+  async function fetchNearbyBoardAt(lat, lng, radiusM = 200) {
+    setNearbyLoading(true);
+    setNearbyNote('');
+    try {
+      const qs = new URLSearchParams({ lat: String(lat), lng: String(lng), radius: String(radiusM) });
+      const json = await api(`/api/nearby-board?${qs}`);
+      setNearbyBoard(json);
+      if (!(json.clusters || []).length) setNearbyNote(t('nearbyEmpty'));
+      return json;
+    } catch {
+      setNearbyBoard({ clusters: [] });
+      setNearbyNote(t('geoDenied'));
+      return null;
+    } finally {
+      setNearbyLoading(false);
+    }
+  }
+
+  function loadNearbyBoard() {
+    if (!navigator.geolocation) {
+      setNearbyNote(t('geoDenied'));
+      return;
+    }
+    setNearbyNote('');
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      await fetchNearbyBoardAt(pos.coords.latitude, pos.coords.longitude, 200);
+    }, () => setNearbyNote(t('geoDenied')), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+  }
+
+  function useOriginLocation() {
+    if (!navigator.geolocation) {
+      setNearbyNote(t('geoDenied'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const json = await fetchNearbyBoardAt(pos.coords.latitude, pos.coords.longitude, 150);
+      if (json?.originGroup || json?.clusters?.[0]) applyNearbyOrigin(json.clusters[0]);
+    }, () => setNearbyNote(t('geoDenied')), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+  }
+
+  function pickNearbyRow(cluster, row) {
+    nearbyPickRef.current = { stop: row.stop?.stop || row.stop };
+    pickArrival(row.service);
+  }
+
   const routeMapStops = useMemo(() => (
     arrivalGroups.map((g, i) => {
       const stop = g.stops?.[0];
@@ -836,6 +990,13 @@ export default function TransitApp() {
       return { ...stop, lat, lng, long: lng, seq: i + 1, index: i };
     }).filter(Boolean)
   ), [arrivalGroups]);
+
+  const catchMapIndex = useMemo(() => {
+    const id = catchUp?.catch?.stop;
+    if (!id || !arrivalGroups.length) return null;
+    const idx = arrivalGroups.findIndex((g) => (g.stops || []).some((row) => String(row.stop) === String(id)));
+    return idx >= 0 ? String(idx) : null;
+  }, [catchUp, arrivalGroups]);
 
   const pickFirst = useCallback(async (s, restore = {}) => {
     const token = firstSearchSeq.current;
@@ -847,7 +1008,14 @@ export default function TransitApp() {
     resetTransferLock();
     const seq = await fetchStops(s);
     if (token !== firstSearchSeq.current) return;
-    setFirstGroups(groups(seq));
+    const nextGroups = groups(seq);
+    setFirstGroups(nextGroups);
+    const originGroup = originRef.current || origin;
+    if (originGroup) {
+      const ids = new Set(stopIds(originGroup));
+      const idx = nextGroups.findIndex((g) => (g.stops || []).some((row) => ids.has(row.stop)));
+      if (idx >= 0) setBoardIndex(String(idx));
+    }
     try {
       const qs = new URLSearchParams({ route: s.route, co: serviceCo(s), bound: s.bound || '' });
       const json = await api(`/api/fares?${qs}`);
@@ -860,16 +1028,66 @@ export default function TransitApp() {
     else if (restore.inter != null) setInterchangeIndex('');
   }, [api, lang]);
 
-  function searchDest(q) {
+  function searchPlaces(q, setter) {
     const query = q.trim().toLowerCase();
     const g = groups(stops.filter((x) => query.length > 1 && (
       (x.name_en || '').toLowerCase().includes(query) || (x.name_tc || '').includes(query)
     ))).slice(0, 40);
-    setDestinationResults(g);
+    setter(g);
+  }
+
+  function searchDest(q) {
+    searchPlaces(q, setDestinationResults);
   }
 
   function stopIds(group) {
     return (group?.stops || []).map((x) => x.stop);
+  }
+
+  function stopRefs(group) {
+    return (group?.stops || []).map((x) => ({ co: x.co || 'KMB', stop: x.stop }));
+  }
+
+  function resolveStopRefs(refs, allStops) {
+    return (refs || []).map((ref) => {
+      if (ref && typeof ref === 'object') {
+        const co = String(ref.co || '').toUpperCase();
+        const id = String(ref.stop || '');
+        return allStops.find((row) => String(row.stop) === id && (!co || String(row.co || 'KMB').toUpperCase() === co))
+          || allStops.find((row) => String(row.stop) === id);
+      }
+      return allStops.find((row) => String(row.stop) === String(ref));
+    }).filter(Boolean);
+  }
+
+  function groupIndexByStops(fg, ids) {
+    const set = new Set(ids || []);
+    if (!set.size) return -1;
+    return (fg || []).findIndex((g) => (g.stops || []).some((row) => set.has(row.stop)));
+  }
+
+  function transferHomeItem() {
+    const originLabel = origin?.label || (boardIndex !== '' ? firstGroups[+boardIndex]?.label : '') || '';
+    const destLabel = destination?.label || '';
+    return {
+      type: 'transfer',
+      title: { zh: `${originLabel} → ${destLabel}`, en: `${originLabel} → ${destLabel}` },
+      subtitle: firstService
+        ? { zh: firstService.route, en: firstService.route }
+        : { zh: t('tabTransfer'), en: t('tabTransfer') },
+      payload: {
+        version: 2,
+        originLabel,
+        originStops: origin ? stopRefs(origin) : (boardIndex !== '' ? stopRefs(firstGroups[+boardIndex]) : []),
+        destLabel,
+        destStops: destination ? stopRefs(destination) : [],
+        first: firstService || undefined,
+        boardIndex,
+        interchangeIndex,
+        nearby,
+        radius
+      }
+    };
   }
 
   function kindLabel(kind) {
@@ -932,17 +1150,20 @@ export default function TransitApp() {
     const fg = opts.firstGroups ?? firstGroups;
     const interVal = opts.interchangeIndex ?? interchangeIndex;
     const boardVal = opts.boardIndex ?? boardIndex;
-    if (!f || !d || interVal === '') {
-      setTransferResult(null);
-      setTransferMessage(t('needFields'));
+    const boardStops = (opts.boardStops && opts.boardStops.length)
+      ? opts.boardStops
+      : (boardVal === '' ? [] : stopIds(fg[+boardVal]));
+    const interchangeStops = (opts.interchangeStops && opts.interchangeStops.length)
+      ? opts.interchangeStops
+      : (interVal === '' ? [] : stopIds(fg[+interVal]));
+    if (!f || !d || !boardStops.length || !interchangeStops.length) {
+      if (!opts.silent) {
+        setTransferResult(null);
+        setTransferMessage(!d || !f ? t('needOriginDest') : (!boardStops.length ? t('needBoard') : t('needFields')));
+      }
       return;
     }
-    if ((opts.boardIndex ?? boardIndex) === '') {
-      setTransferResult(null);
-      setTransferMessage(t('needBoard'));
-      return;
-    }
-    if (Number(interVal) < Number(boardVal)) {
+    if (interVal !== '' && boardVal !== '' && Number(interVal) < Number(boardVal)) {
       setTransferResult(null);
       setTransferMessage(t('needFields'));
       return;
@@ -973,7 +1194,9 @@ export default function TransitApp() {
       setTransferResult(null);
     }
     try {
-      const inter = fg[+interVal];
+      const inter = (interVal !== '' && fg[+interVal])
+        || fg[groupIndexByStops(fg, interchangeStops)]
+        || { label: '', stops: [] };
       const json = await api('/api/transfer', {
         method: 'POST',
         body: JSON.stringify({
@@ -983,8 +1206,8 @@ export default function TransitApp() {
           nearby: opts.nearby ?? nearby,
           radius: +(opts.radius ?? radius),
           first: f,
-          boardStops: boardVal === '' ? [] : stopIds(fg[+boardVal]),
-          interchangeStops: stopIds(inter),
+          boardStops,
+          interchangeStops,
           destinationStops: stopIds(d)
         })
       });
@@ -1042,9 +1265,441 @@ export default function TransitApp() {
     }
   }, [api, firstService, destination, firstGroups, interchangeIndex, boardIndex, nearby, radius, t, transferPhase, selectedDeparture, selectedConnection, transferResult]);
 
+  const searchJourneys = useCallback(async (opts = {}) => {
+    const o = opts.origin ?? originRef.current ?? origin;
+    const d = opts.destination ?? destinationRef.current ?? destination;
+    const f = Object.prototype.hasOwnProperty.call(opts, 'firstService') ? opts.firstService : firstService;
+    const fg = opts.firstGroups ?? firstGroups;
+    const interVal = opts.interchangeIndex ?? interchangeIndex;
+    if (!o?.stops?.length || !d?.stops?.length) {
+      setJourneyOptions(null);
+      setJourneyMessage(t('needOriginDest'));
+      return;
+    }
+    if (areaKey(o.stops[0]) && areaKey(o.stops[0]) === areaKey(d.stops[0])) {
+      setJourneyOptions(null);
+      setJourneyMessage(t('sameArea'));
+      return;
+    }
+    const seq = ++journeySeq.current;
+    const silent = !!opts.silent && !!(journeyOptions?.options || []).length;
+    if (!silent) {
+      journeyLockedRef.current = false;
+      resetTransferLock();
+      setTransferResult(null);
+      setTransferMessage('');
+      setJourneyOptions(null);
+      setJourneyMessage(t('searchingJourneys'));
+      if (!f) setFirstChoices(null);
+    }
+    try {
+      const json = await api('/api/journey-options', {
+        method: 'POST',
+        body: JSON.stringify({
+          originStops: stopRefs(o),
+          destinationStops: stopRefs(d),
+          nearby: opts.nearby ?? nearby,
+          radius: +(opts.radius ?? radius),
+          preferredFirst: f || undefined,
+          preferredInterchangeStops: interVal !== '' ? stopRefs(fg[+interVal]) : undefined
+        })
+      });
+      if (seq !== journeySeq.current) return;
+      if (silent && (journeyOptions?.options || []).length && !(json.options || []).length && keepSilentJourneyList(json.emptyReason)) {
+        setJourneyMessage('');
+        lastView.current = 't';
+        return;
+      }
+      setJourneyMessage('');
+      setJourneyOptions(json);
+      lastView.current = 't';
+    } catch (e) {
+      if (seq !== journeySeq.current) return;
+      if (!silent) {
+        setJourneyOptions(null);
+        setJourneyMessage(e.message || t('none'));
+      }
+    }
+  }, [api, origin, destination, firstService, firstGroups, interchangeIndex, nearby, radius, t, journeyOptions]);
+
+  const searchPretrip = useCallback(async () => {
+    const o = originRef.current ?? origin;
+    const d = destinationRef.current ?? destination;
+    if (!o?.stops?.length || !d?.stops?.length) {
+      setPretripResult(null);
+      setPretripMessage(t('needOriginDest'));
+      return;
+    }
+    if (areaKey(o.stops[0]) && areaKey(o.stops[0]) === areaKey(d.stops[0])) {
+      setPretripResult(null);
+      setPretripMessage(t('sameArea'));
+      return;
+    }
+    setPretripMessage(t('pretripSearching'));
+    setPretripResult(null);
+    try {
+      const json = await api('/api/pretrip', {
+        method: 'POST',
+        body: JSON.stringify({
+          originStops: stopRefs(o),
+          destinationStops: stopRefs(d),
+          nearby,
+          radius: +radius,
+          date: pretripDate,
+          arriveBy: pretripArriveBy || undefined
+        })
+      });
+      setPretripMessage('');
+      setPretripResult(json);
+    } catch (e) {
+      setPretripResult(null);
+      setPretripMessage(e.message || t('none'));
+    }
+  }, [api, origin, destination, nearby, radius, pretripDate, pretripArriveBy, t]);
+
+  const refreshChosenDirect = useCallback(async () => {
+    const row = chosenDirectRef.current;
+    const svc = row?.first;
+    if (!row?.eta || !svc) return;
+    try {
+      const json = await api('/api/ride', {
+        method: 'POST',
+        body: JSON.stringify({
+          first: svc,
+          boardStops: row.boardStops || [],
+          destStops: row.destinationStops || row.interchangeStops || []
+        })
+      });
+      if (!chosenDirectRef.current) return;
+      const target = new Date(row.eta).getTime();
+      const hit = (json.trips || []).find((trip) => Math.abs(new Date(trip.board || trip.eta).getTime() - target) < 2 * 60 * 1000);
+      if (!hit) return;
+      const next = {
+        ...row,
+        eta: hit.board || hit.eta || row.eta,
+        arrive: hit.arrive || row.arrive,
+        arrivalEstimated: hit.arrivalEstimated ?? row.arrivalEstimated,
+        rideMinutes: hit.rideMinutes ?? row.rideMinutes
+      };
+      chosenDirectRef.current = next;
+      setChosenDirect(next);
+    } catch {
+      // keep the locked trip
+    }
+  }, [api]);
+
+  function catchUpDue(eta, leftBoard) {
+    if (leftBoard) return true;
+    const wait = mins(eta);
+    return wait != null && wait <= 3;
+  }
+
+  function journeyCatchPayload(option) {
+    const groups = mergeJourneyGroups(journeyOptions?.options || []);
+    const key = itineraryKey(option || {});
+    const group = groups.find((row) => row.key === key) || groups[0];
+    return {
+      laterEtas: group?.laterEtas || [],
+      alternatives: groups
+        .filter((row) => row.key !== (group?.key || key))
+        .map((row) => ({
+          route: row.best.first?.route,
+          co: row.best.first?.co,
+          kind: row.best.kind,
+          eta: row.best.eta,
+          second: row.best.second,
+          dest: row.best.dest
+        }))
+        .filter((row) => row.eta)
+    };
+  }
+
+  const askCatchUp = useCallback((payload) => {
+    const token = ++catchUpSeq.current;
+    catchUpQueryRef.current = payload;
+    setCatchUpLoading(true);
+    const post = async (lat, lng) => {
+      const next = { ...payload };
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        next.lat = lat;
+        next.lng = lng;
+      }
+      catchUpQueryRef.current = next;
+      try {
+        const json = await api('/api/catch-up', {
+          method: 'POST',
+          body: JSON.stringify(next)
+        });
+        if (token !== catchUpSeq.current) return;
+        setCatchUp(json);
+      } catch {
+        if (token !== catchUpSeq.current) return;
+        setCatchUp({ catch: null, backup: null, missSame: null, missAlt: null, emptyReason: 'none' });
+      } finally {
+        if (token === catchUpSeq.current) setCatchUpLoading(false);
+      }
+    };
+    if (Number.isFinite(Number(payload?.lat)) && Number.isFinite(Number(payload?.lng ?? payload?.long))) {
+      post(Number(payload.lat), Number(payload.lng ?? payload.long));
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => post(pos.coords.latitude, pos.coords.longitude),
+        () => post(),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+      );
+      return;
+    }
+    post();
+  }, [api]);
+
+  function catchLiveLabel(estimated) {
+    return estimated ? t('stopTimeEst') : t('catchUpLive');
+  }
+
+  function renderCatchUpCard() {
+    if (!catchUpLoading && !catchUp) return null;
+    const pole = catchUp?.catch;
+    const backup = catchUp?.backup;
+    const missSame = catchUp?.missSame;
+    const missAlt = catchUp?.missAlt;
+    const empty = !!(catchUp && !pole && !backup && !missSame && !missAlt);
+    return (
+      <div className="note catch-up-card">
+        <h3 className="font-bold"><span className="badge">{t('catchUpTitle')}</span></h3>
+        {catchUpLoading ? <p className="muted">{t('catchUpSearching')}</p> : null}
+        {pole ? <p>{t('catchUpLine', pole.walkMinutes, loc(pole.name), pole.busMinutes, catchLiveLabel(pole.estimated))}</p> : null}
+        {backup ? <p className="muted">{t('catchUpBackup', backup.walkMinutes, loc(backup.name), backup.busMinutes, catchLiveLabel(backup.estimated))}</p> : null}
+        {!catchUpLoading && !pole && !missSame && !empty ? <p className="muted">{t('missSameNone')}</p> : null}
+        {missSame ? <p className="muted"><span className="badge">{t('missCost')}</span> {t('missSameNext', missSame.waitMinutes)}</p> : null}
+        {missAlt ? (
+          <p className="muted">
+            {missAlt.kind === 'transfer' && missAlt.second
+              ? t('missAltTransfer', missAlt.route, missAlt.second, missAlt.waitMinutes)
+              : t('missAltLive', missAlt.route, missAlt.waitMinutes)}
+          </p>
+        ) : null}
+        {empty && !catchUpLoading ? <p>{t('catchUpEmpty')}</p> : null}
+        <p className="muted">{t('catchUpHelp')}</p>
+      </div>
+    );
+  }
+
+  async function pickJourney(option) {
+    if (!option?.first) return;
+    journeyLockedRef.current = true;
+    lastView.current = 't';
+    const svc = option.first;
+    let fg = firstGroups;
+    if (!firstService || serviceCo(firstService) !== serviceCo(svc) || String(firstService.route) !== String(svc.route)
+      || String(firstService.bound || '') !== String(svc.bound || '') || String(firstService.service_type || '') !== String(svc.service_type || '')
+      || String(firstService.gmb_route_id || '') !== String(svc.gmb_route_id || '') || String(firstService.nlb_route_id || '') !== String(svc.nlb_route_id || '')) {
+      setFirstService(svc);
+      setFirstRoute(String(svc.route || ''));
+      setFirstChoices(null);
+      setFirstBoxHidden(true);
+      const seq = await fetchStops(svc);
+      fg = groups(seq);
+      setFirstGroups(fg);
+    }
+    const bIdx = groupIndexByStops(fg, option.boardStops);
+    const iIdx = groupIndexByStops(fg, option.interchangeStops);
+    if (bIdx >= 0) setBoardIndex(String(bIdx));
+    if (iIdx >= 0) setInterchangeIndex(String(iIdx));
+    if (option.kind === 'direct') {
+      const row = {
+        kind: 'direct',
+        route: svc.route,
+        co: svc.co,
+        first: svc,
+        dest: option.dest,
+        from: option.from,
+        to: option.to,
+        eta: option.eta,
+        arrive: option.arrive,
+        rideMinutes: option.rideMinutes,
+        totalMinutes: option.totalMinutes,
+        arrivalEstimated: option.arrivalEstimated,
+        boardStops: option.boardStops || [],
+        destinationStops: option.destinationStops || option.interchangeStops || [],
+        interchangeStops: option.interchangeStops || []
+      };
+      chosenDirectRef.current = row;
+      setChosenDirect(row);
+      transferPhaseRef.current = 'direct';
+      setTransferPhase('direct');
+      setTransferResult(null);
+      setTransferMessage('');
+      return;
+    }
+    await goTransfer({
+      firstService: svc,
+      firstGroups: fg,
+      destination,
+      boardStops: option.boardStops,
+      interchangeStops: option.interchangeStops,
+      boardIndex: bIdx >= 0 ? String(bIdx) : undefined,
+      interchangeIndex: iIdx >= 0 ? String(iIdx) : undefined,
+      phase: 'connections',
+      selectedDeparture: option.eta,
+      selectedConnection: option.second ? {
+        ...option.second,
+        kind: 'transfer',
+        dest: option.dest,
+        from: option.from,
+        to: option.to,
+        eta: option.connectionEta,
+        arrive: option.arrive,
+        catchable: option.catchable,
+        waitAfterFirstMinutes: option.waitAfterFirstMinutes,
+        rideMinutes: option.rideMinutes,
+        arrivalEstimated: option.arrivalEstimated
+      } : null
+    });
+  }
+
+  function renderJourneyGroups() {
+    const groups = mergeJourneyGroups(journeyOptions?.options || []);
+    if (!groups.length) return <p className="muted">{t(emptyReasonKey(journeyOptions.emptyReason || 'no_connection', 'planner'))}</p>;
+    const originLabel = origin?.label || '';
+    const destLabel = destination?.label || '';
+    return (
+      <>
+        {renderJourneyLead(groups[0], originLabel, destLabel, groups)}
+        {groups.length > 1 ? <p className="muted journey-also-label">{t('journeyAlso')}</p> : null}
+        {groups.slice(1).map((group, i) => renderJourneyAlso(group, i))}
+      </>
+    );
+  }
+
+  function laterClocks(group) {
+    const clocks = (group.laterEtas || []).map((eta) => clk(eta)).filter(Boolean);
+    if (!clocks.length) return '';
+    return t('journeyLater', clocks.join(lang === 'zh' ? '、' : ', '));
+  }
+
+  function renderJourneyLead(group, originLabel, destLabel, groups = []) {
+    const option = group.best;
+    const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
+    const boardClk = clk(option.eta);
+    const arriveClk = option.arrivalEstimated
+      ? `${clk(option.arrive)} ${t('stopTimeEst')}`
+      : clk(option.arrive);
+    const destName = stopPlaceLabel(option.to) || stopPlaceLabel(option.dest) || destLabel;
+    const boardName = stopPlaceLabel(option.from);
+    const boardWalkMins = option.boardWalkMinutes || (option.kind === 'direct' && option.walkMinutes && originLabel && !samePlaceLabel({ zh: originLabel, en: originLabel }, option.from) ? option.walkMinutes : 0);
+    const destWalkMins = option.destWalkMinutes || (option.kind === 'direct' && option.walkMinutes && !boardWalkMins ? option.walkMinutes : 0);
+    const walkUp = option.kind === 'direct' && boardWalkMins;
+    const destWalk = option.kind === 'direct' && destWalkMins;
+    const interName = stopPlaceLabel(option.from);
+    const lead = option.kind === 'transfer'
+      ? t('journeyFastestTransfer', option.first?.route, option.second?.route, boardClk, arriveClk, interName, destName)
+      : walkUp
+        ? t('journeyFastestWalk', boardWalkMins, boardName, option.first?.route, boardClk, arriveClk)
+        : t('journeyFastestDirect', option.first?.route, boardClk, arriveClk, destName);
+    const later = laterClocks(group);
+    const nextSame = group.laterEtas?.[0];
+    const nextWait = nextSame ? mins(nextSame) : null;
+    const alt = groups[1]?.best;
+    const altWait = alt?.eta ? mins(alt.eta) : null;
+    const showAlt = altWait != null && nextWait != null && altWait < nextWait;
+    return (
+      <div className={`item journey-box ${coTone(row)}`} key={group.key}>
+        <button className={`choice pg-choice ${coTone(row)}`} type="button" onClick={() => pickJourney(option)}>
+          <span className="badge">{option.cheaperBetter || group.cheaperBetter ? t('cheaperBadge') : t('bestObserved')}</span>
+          {serviceCo(row) !== 'KMB' ? <span className="badge">{coLabel(row)}</span> : null}
+          {option.kind === 'transfer' && option.second && serviceCo(option.second) !== 'KMB' ? <span className="badge">{coLabel(option.second)}</span> : null}
+          <div className="journey-lead">{lead}</div>
+          {(option.cheaperBetter || group.cheaperBetter) && option.slowerByMinutes && option.cheaperByHkd > 0
+            ? <div>{t('cheaperVsTime', option.slowerByMinutes, option.cheaperByHkd)}</div>
+            : null}
+          {(option.cheaperBetter || group.cheaperBetter) ? <div className="muted">{t('wageTimeNote')}</div> : null}
+          {later ? <div className="muted">{later}</div> : null}
+          {nextWait != null ? <div className="muted">{t('missSameNext', nextWait)}</div> : null}
+          {showAlt ? (
+            <div className="muted">
+              {alt.kind === 'transfer'
+                ? t('missAltTransfer', alt.first?.route, alt.second?.route, altWait)
+                : t('missAltLive', alt.first?.route || alt.route, altWait)}
+            </div>
+          ) : null}
+          {option.kind === 'transfer' && option.walkMinutes ? <div className="muted">{t('walkMins', option.walkMinutes)}</div> : null}
+          {walkUp ? <div className="muted">{t('boardWalkMins', boardWalkMins, boardName)}</div> : null}
+          {destWalk ? <div className="muted">{t('destWalkMins', destWalkMins)}</div> : null}
+          {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
+          {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+          {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : fareNote(option.first || row)}
+          <div className="muted">{t('takeThisJourney')}</div>
+        </button>
+      </div>
+    );
+  }
+
+  function renderJourneyAlso(group, i) {
+    const option = group.best;
+    const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
+    const boardClk = clk(option.eta);
+    const arriveClk = option.arrivalEstimated
+      ? `${clk(option.arrive)} ${t('stopTimeEst')}`
+      : clk(option.arrive);
+    const slower = group.slowerByMinutes;
+    const line = option.kind === 'transfer'
+      ? t('journeyAlsoTransfer', option.first?.route, option.second?.route, slower, boardClk, arriveClk)
+      : t('journeyAlsoDirect', option.first?.route, slower, boardClk, arriveClk);
+    const later = laterClocks(group);
+    return (
+      <div className={`item journey-also ${coTone(row)}`} key={group.key || i}>
+        <button className={`choice pg-choice ${coTone(row)}`} type="button" onClick={() => pickJourney(option)}>
+          {serviceCo(row) !== 'KMB' ? <span className="badge">{coLabel(row)}</span> : null}
+          {option.kind === 'transfer' && option.second && serviceCo(option.second) !== 'KMB' ? <span className="badge">{coLabel(option.second)}</span> : null}
+          <div>{line}{later ? ` · ${later}` : ''}</div>
+          {group.preferred && slower ? <div className="muted">{t('preferredSlower', slower)}</div> : null}
+          {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
+          {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+          {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : null}
+        </button>
+      </div>
+    );
+  }
+
+  function renderPretripOptions() {
+    const options = pretripResult?.options || [];
+    if (!options.length) {
+      return <p className="muted">{t(emptyReasonKey(pretripResult?.emptyReason || 'no_connection', 'pretrip'))}</p>;
+    }
+    return options.map((option, i) => {
+      const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
+      const rideLine = option.rideSource === 'tdas'
+        ? t('pretripRideTdas', option.rideMinutes)
+        : t('pretripRideSched', option.rideMinutes);
+      const title = option.kind === 'transfer'
+        ? `${option.first?.route} → ${option.second?.route}`
+        : option.first?.route;
+      return (
+        <div className={`item ${i === 0 ? 'journey-box' : 'journey-also'} ${coTone(row)}`} key={`${title}-${i}`}>
+          {i === 0 ? <span className="badge">{option.cheaperBetter ? t('cheaperBadge') : t('bestObserved')}</span> : null}
+          {option.jam ? <span className="badge">{t('pretripJam')}</span> : null}
+          <div className="journey-lead">{title}</div>
+          <div className="muted">{t('pretripNotLive')}</div>
+          {option.leaveHome ? <div>{t('pretripLeave', option.leaveHome)}</div> : null}
+          <div className="muted">{rideLine}</div>
+          {option.waitMinutes && option.headwayMinutes ? <div className="muted">{t('pretripWait', option.waitMinutes, option.headwayMinutes)}</div> : null}
+          {option.walkMinutes ? <div className="muted">{t('walkMins', option.walkMinutes)}</div> : null}
+          {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : null}
+          {option.cheaperBetter && option.slowerByMinutes && option.cheaperByHkd > 0
+            ? <div>{t('cheaperVsTime', option.slowerByMinutes, option.cheaperByHkd)}</div>
+            : null}
+          {option.cheaperBetter ? <div className="muted">{t('wageTimeNote')}</div> : null}
+        </div>
+      );
+    });
+  }
+
   const lineName = (line) => loc(line.name) || line.name;
   const stationLabel = (row) => (lang === 'zh' ? row[1] : row[2]);
-  function rideDestStations(line, origin) {
+  function rideDestStations(line, origin, lineKey = currentLineKey) {
+    if (lineKey === 'LRT') return LRT_TERMINI.filter((row) => row[0] !== origin);
     const stations = line?.stations || [];
     const routes = line?.routes;
     if (!routes?.length) return stations.filter((row) => row[0] !== origin);
@@ -1099,13 +1754,15 @@ export default function TransitApp() {
     const hasCtb = set.has('CTB');
     const hasGmb = set.has('GMB');
     const hasNlb = set.has('NLB');
-    const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB' && c !== 'NLB');
+    const hasMtrb = set.has('MTRB');
+    const hasFranchised = [...set].some((c) => c !== 'CTB' && c !== 'GMB' && c !== 'NLB' && c !== 'MTRB');
     if (hasCtb && hasFranchised) return t('coJoint');
     if (hasGmb) {
       const region = service?.gmb_region === 'HKI' ? t('regionHki') : service?.gmb_region === 'KLN' ? t('regionKln') : service?.gmb_region === 'NT' ? t('regionNt') : '';
       return region ? `${t('coGmb')} · ${region}` : t('coGmb');
     }
     if (hasNlb) return t('coNlb');
+    if (hasMtrb) return t('coMtrb');
     if (hasCtb) return t('coCtb');
     if (set.has('LWB')) return t('coLwb');
     return t('coKmb');
@@ -1150,6 +1807,7 @@ export default function TransitApp() {
     if (type === 'arrival') return t('typeArrival');
     if (type === 'transfer') return t('typeTransfer');
     if (type === 'mtr') return t('typeMtr');
+    if (type === 'nearby') return t('typeNearby');
     return type;
   }
 
@@ -1173,49 +1831,93 @@ export default function TransitApp() {
       setTab('transfer');
       setNearby(item.payload.nearby !== false);
       setRadius(String(item.payload.radius || '250'));
-      const s = item.payload.first;
-      const g = groups(await fetchStops(s));
-      setFirstService(s);
-      setFirstChoices(null);
-      setFirstBoxHidden(true);
-      setFirstGroups(g);
-      const bIdx = item.payload.boardIndex ?? '';
-      const iIdx = item.payload.interchangeIndex;
-      setBoardIndex(bIdx);
-      setInterchangeIndex(iIdx);
+      resetTransferLock();
+      setChosenDirect(null);
+      setJourneyOptions(null);
       const allStops = await ensureStops();
-      const byId = new Map(allStops.map((row) => [row.stop, row]));
+      const destStops = resolveStopRefs(item.payload.destStops, allStops);
       const dest = {
         label: item.payload.destLabel,
-        stops: (item.payload.destStops || []).map((id) => byId.get(id)).filter(Boolean)
+        stops: destStops.length ? destStops : (item.payload.destStops || []).map((id) => allStops.find((row) => row.stop === id)).filter(Boolean)
       };
       setDestination(dest);
-      setChosenDirect(null);
+      destinationRef.current = dest;
       setDestBoxHidden(true);
-      resetTransferLock();
-      await goTransfer({
-        firstService: s,
-        firstGroups: g,
-        destination: dest,
-        boardIndex: bIdx,
-        interchangeIndex: iIdx,
-        nearby: item.payload.nearby !== false,
-        radius: item.payload.radius || '250',
-        phase: 'departures',
-        selectedDeparture: null
-      });
+      let originGroup = null;
+      if (item.payload.originStops?.length) {
+        const ostops = resolveStopRefs(item.payload.originStops, allStops);
+        if (ostops.length) originGroup = { label: item.payload.originLabel || areaName(ostops[0]), stops: ostops };
+      }
+      const s = item.payload.first;
+      let g = [];
+      const bIdx = item.payload.boardIndex ?? '';
+      const iIdx = item.payload.interchangeIndex;
+      if (s) {
+        g = groups(await fetchStops(s));
+        setFirstService(s);
+        setFirstRoute(String(s.route || ''));
+        setFirstChoices(null);
+        setFirstBoxHidden(true);
+        setFirstGroups(g);
+        setBoardIndex(bIdx);
+        setInterchangeIndex(iIdx == null ? '' : String(iIdx));
+        if (!originGroup && bIdx !== '' && g[+bIdx]) originGroup = g[+bIdx];
+      } else {
+        setFirstService(null);
+        setFirstGroups([]);
+        setBoardIndex('');
+        setInterchangeIndex('');
+      }
+      if (originGroup) {
+        setOrigin(originGroup);
+        originRef.current = originGroup;
+        setOriginBoxHidden(true);
+      }
+      const hasLegacyInter = iIdx != null && iIdx !== '';
+      if (item.payload.version >= 2 || !s || !hasLegacyInter) {
+        await searchJourneys({
+          origin: originGroup,
+          destination: dest,
+          firstService: s || null,
+          firstGroups: g,
+          interchangeIndex: iIdx == null ? '' : String(iIdx),
+          nearby: item.payload.nearby !== false,
+          radius: item.payload.radius || '250'
+        });
+      } else {
+        await goTransfer({
+          firstService: s,
+          firstGroups: g,
+          destination: dest,
+          boardIndex: bIdx,
+          interchangeIndex: String(iIdx),
+          nearby: item.payload.nearby !== false,
+          radius: item.payload.radius || '250',
+          phase: 'departures',
+          selectedDeparture: null
+        });
+      }
     } else if (item.type === 'mtr') {
       setTab('mtr');
       setMtrLine(item.payload.line);
       setMtrStation(item.payload.station);
       setMtrDest(item.payload.dest || '');
       await showMtr(item.payload.line, item.payload.station, item.payload.dest || '');
+    } else if (item.type === 'nearby') {
+      setTab('arrivals');
+      if (item.payload.lat != null && item.payload.lng != null) {
+        await fetchNearbyBoardAt(item.payload.lat, item.payload.lng, item.payload.radius || 200);
+      } else {
+        loadNearbyBoard();
+      }
     }
   }
 
   useEffect(() => {
     const stored = localStorage.getItem('tb-lang');
     if (stored === 'en' || stored === 'zh') setLang(stored);
+    const mode = localStorage.getItem('tb-eta-mode');
+    if (mode === 'clock' || mode === 'countdown') setEtaMode(mode);
     setRecents(readRecents());
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -1350,11 +2052,20 @@ export default function TransitApp() {
       if (tab === 'arrivals' && lastView.current === 'a' && arrivalService && arrivalStopIndex !== '') {
         showArrival(arrivalService, arrivalGroups, arrivalStopIndex);
       }
-      if (tab === 'transfer' && lastView.current === 't' && !chosenDirectRef.current) goTransfer({ silent: true });
+      if (tab === 'transfer' && lastView.current === 't') {
+        if (chosenDirectRef.current) refreshChosenDirect();
+        else if (selectedDepartureRef.current || transferPhaseRef.current === 'connections') goTransfer({ silent: true });
+        else if ((originRef.current || origin) && (destinationRef.current || destination) && !journeyLockedRef.current) {
+          searchJourneys({ silent: true });
+        }
+      }
       if (tab === 'mtr' && lastView.current === 'm') showMtr();
+      if (catchUpQueryRef.current && (tab === 'arrivals' || tab === 'transfer')) {
+        askCatchUp(catchUpQueryRef.current);
+      }
     }, +refreshSec * 1000);
     return () => clearInterval(id);
-  }, [tab, refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, showMtr, chosenDirect, mtrDest]);
+  }, [tab, refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, searchJourneys, refreshChosenDirect, showMtr, chosenDirect, mtrDest, origin, destination, askCatchUp]);
 
   useEffect(() => {
     if (tab !== 'mtr' || !currentLineKey || !currentSta) return;
@@ -1376,6 +2087,21 @@ export default function TransitApp() {
     });
     return () => cancelAnimationFrame(id);
   }, [arrivalStopIndex, arrivalTimes]);
+
+  useEffect(() => {
+    originRef.current = origin;
+  }, [origin]);
+
+  useEffect(() => {
+    destinationRef.current = destination;
+  }, [destination]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      if (originInput.trim().length > 1) searchPlaces(originInput, setOriginResults);
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [originInput, stops, lang]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -1480,7 +2206,7 @@ export default function TransitApp() {
     if (fetchedStops[key] === 'loading' || fetchedStops[key]?.terminus || (Array.isArray(fetchedStops[key]) && fetchedStops[key].length)) {
       return fetchedStops[key];
     }
-    if (!line || !sta || !destCode) {
+    if (line === 'LRT' || !line || !sta || !destCode) {
       setFetchedStops((prev) => ({ ...prev, [key]: [] }));
       return [];
     }
@@ -1528,9 +2254,14 @@ export default function TransitApp() {
               ) : null}
               {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
             </div>
-            <span className="mins">{t('minutes', wait)}</span>
+            <span className="mins">{etaMode === 'countdown' ? clkClock(board) : t('minutes', wait)}</span>
           </div>
           {renderStopTimes(stopId, x.stops, opts.fetchStops ? () => loadArrivalStops(x) : null)}
+          {opts.onCatchUp && catchUpDue(board) ? (
+            <button className="tab mt-2" type="button" onClick={() => opts.onCatchUp(x, trips)}>
+              {t('catchThis')}
+            </button>
+          ) : null}
         </div>
       );
     }).filter(Boolean);
@@ -1626,9 +2357,9 @@ export default function TransitApp() {
   ];
 
   const transferEmpty = transferResult?.json?.emptyReason && !(transferResult.json.list || []).length && !(transferResult.json.departures || []).length && !(transferResult.json.directs || []).length
-    ? t(emptyReasonKey(transferResult.json.emptyReason))
+    ? t(emptyReasonKey(transferResult.json.emptyReason, 'transfer'))
     : '';
-  const findLabel = t('transferFind');
+  const findLabel = t('journeyFind');
   const resultPhase = chosenDirect ? 'direct' : (transferResult?.json?.phase || transferPhase);
 
   return (
@@ -1658,6 +2389,18 @@ export default function TransitApp() {
             {t('langBtn')}
           </Button>
           <Button className={`tab pg-guide${tab === 'guide' ? ' active' : ''}`} variant={tab === 'guide' ? 'default' : 'outline'} type="button" onClick={() => setTab('guide')}>{t('guideBtn')}</Button>
+          <Select value={etaMode} onValueChange={(next) => {
+            setEtaMode(next);
+            localStorage.setItem('tb-eta-mode', next);
+          }}>
+            <SelectTrigger className="w-[7.5rem]" aria-label={t('etaClock')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="clock">{t('etaClock')}</SelectItem>
+              <SelectItem value="countdown">{t('etaCountdown')}</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={refreshSec} onValueChange={setRefreshSec}>
             <SelectTrigger className="w-[9.5rem]" aria-label={t('refresh15')}>
               <SelectValue />
@@ -1682,6 +2425,62 @@ export default function TransitApp() {
       <section className={`panel${tab === 'arrivals' ? ' active' : ''}`}>
         <div className="card">
           <h2 className="text-lg font-bold">{t('arrivalsHeading')}</h2>
+          <div className="row-actions mt-2">
+            <Button variant="outline" className="tab" type="button" onClick={loadNearbyBoard}>{t('nearbyBoardBtn')}</Button>
+          </div>
+          {nearbyLoading ? <p className="muted mt-2">{t('loading')}</p> : null}
+          {nearbyNote ? <p className="muted mt-2">{nearbyNote}</p> : null}
+          {nearbyBoard?.clusters?.length ? (
+            <div className="mt-3 nearby-board">
+              <h3 className="font-bold">{t('nearbyBoardHeading')}</h3>
+              <p className="muted">{t('nearbyBoardHelp')}</p>
+              <div className="row-actions">
+                <button className="tab" type="button" onClick={() => saveHome({
+                  type: 'nearby',
+                  title: { zh: '回家附近', en: 'Home nearby' },
+                  subtitle: { zh: nearbyBoard.clusters[0]?.label_tc || '', en: nearbyBoard.clusters[0]?.label_en || '' },
+                  payload: { lat: nearbyBoard.lat, lng: nearbyBoard.lng, radius: nearbyBoard.radius, kind: 'home' }
+                })}>{t('saveNearbyHome')}</button>
+                <button className="tab" type="button" onClick={() => saveHome({
+                  type: 'nearby',
+                  title: { zh: '返工附近', en: 'Work nearby' },
+                  subtitle: { zh: nearbyBoard.clusters[0]?.label_tc || '', en: nearbyBoard.clusters[0]?.label_en || '' },
+                  payload: { lat: nearbyBoard.lat, lng: nearbyBoard.lng, radius: nearbyBoard.radius, kind: 'work' }
+                })}>{t('saveNearbyWork')}</button>
+              </div>
+              {nearbyBoard.clusters.map((cluster) => (
+                <div className="mt-3" key={cluster.id}>
+                  <div className="muted">{lang === 'zh' ? cluster.label_tc : cluster.label_en}{cluster.metres != null ? ` · ${t('nearbyMetres', cluster.metres)}` : ''}</div>
+                  {(cluster.buses || []).map((row, i) => (
+                    <button
+                      className={`choice pg-choice ${coTone(row.service)}`}
+                      type="button"
+                      key={`${cluster.id}-b-${row.service.route}-${i}`}
+                      onClick={() => pickNearbyRow(cluster, row)}
+                    >
+                      <span className="badge">{coLabel(row.service)}</span> <b>{row.service.route}</b>
+                      <div>{rn(row.service)}</div>
+                      <div className="muted">{clk(row.eta)}</div>
+                    </button>
+                  ))}
+                  {(cluster.gmbs || []).length ? <div className="muted mt-2">{t('nearbyGmb')}</div> : null}
+                  {(cluster.gmbs || []).map((row, i) => (
+                    <button
+                      className={`choice pg-choice ${coTone(row.service)}`}
+                      type="button"
+                      key={`${cluster.id}-g-${row.service.gmb_route_id || row.service.route}-${i}`}
+                      onClick={() => pickNearbyRow(cluster, row)}
+                    >
+                      <span className="badge">{coLabel(row.service)}</span> <b>{row.service.route}</b>
+                      <div>{rn(row.service)}</div>
+                      <div className="muted">{clk(row.eta)}</div>
+                    </button>
+                  ))}
+                  {!(cluster.buses || []).length && !(cluster.gmbs || []).length ? <p className="muted">{t('nearbyEmpty')}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
           {!arrivalService && recents.routes.length ? (
             <div className="mt-2">
               <div className="muted">{t('recentRoutes')}</div>
@@ -1741,6 +2540,7 @@ export default function TransitApp() {
                     ]}
                     onChange={async (v) => {
                       setArrivalDestIndex(v);
+                      clearCatchUp();
                       await showArrival(arrivalService, arrivalGroups, arrivalStopIndex, v);
                     }}
                   />
@@ -1750,7 +2550,22 @@ export default function TransitApp() {
                 <div ref={arrivalLiveRef}>
                   <h3 className="font-bold mt-3">{arrivalGroups[+arrivalStopIndex]?.label}{arrivalTimes.destLabel ? ` → ${arrivalTimes.destLabel}` : ''}</h3>
                   {fareNote(arrivalService, { hideScheduled: !!(arrivalTimes?.destLabel && arrivalTimes?.trips?.some((row) => row.rideMinutes > 0)) })}
-                  {etaList(arrivalTimes, { fetchStops: true })}
+                  {etaList(arrivalTimes, {
+                    fetchStops: true,
+                    onCatchUp: (trip, trips) => {
+                      const g = arrivalGroups[+arrivalStopIndex];
+                      const destG = arrivalDestIndex !== '' ? arrivalGroups[+arrivalDestIndex] : null;
+                      if (!arrivalService || !g) return;
+                      askCatchUp({
+                        first: arrivalService,
+                        boardStops: stopIds(g),
+                        destStops: destG ? stopIds(destG) : [],
+                        eta: trip.board,
+                        laterEtas: (trips || []).map((row) => row.board).filter((eta) => eta && eta !== trip.board)
+                      });
+                    }
+                  })}
+                  {renderCatchUpCard()}
                   <div className="row-actions">
                     <button className="tab" type="button" onClick={() => {
                       const g = arrivalGroups[+arrivalStopIndex];
@@ -1773,7 +2588,7 @@ export default function TransitApp() {
                     mode="route"
                     center={[routeMapStops[0].lat, routeMapStops[0].lng]}
                     routeStops={routeMapStops}
-                    selectedIndex={arrivalStopIndex}
+                    selectedIndex={catchMapIndex ?? arrivalStopIndex}
                     path={routeLine?.coords}
                     lineColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
                     markerColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
@@ -1811,64 +2626,56 @@ export default function TransitApp() {
               </SelectContent>
             </Select>
           </div>
-          <div className={`mt-4${firstBoxHidden ? ' hidden' : ''}`}>
-            <b>{t('firstRouteLabel')}</b>
+          <div className={`mt-4${originBoxHidden ? ' hidden' : ''}`}>
+            <b>{t('originLabel')}</b>
             <div className="search-row mt-1">
-              <Input className="field" placeholder={t('routePlaceholder')} value={firstRoute} onChange={(e) => setFirstRoute(e.target.value)} aria-label={t('firstRouteLabel')} />
-              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchFirstByRoute()}>{t('find')}</Button>
+              <Input className="field" placeholder={t('originPlaceholder')} value={originInput} onChange={(e) => setOriginInput(e.target.value)} aria-label={t('originLabel')} />
+              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchPlaces(originInput, setOriginResults)}>{t('find')}</Button>
+              <Button variant="outline" className="tab" type="button" onClick={useOriginLocation}>{t('useMyLocation')}</Button>
             </div>
-            <div>{renderChoiceList(firstChoices, (s) => pickFirst(s))}</div>
+            <div className="mt-2">
+              {originResults
+                ? (originResults.length
+                  ? (
+                    <ScrollArea className="h-72 rounded-md border">
+                    <Command className="rounded-none border-0">
+                      <CommandInput placeholder={t('stopSearch')} />
+                      <CommandList>
+                        <CommandEmpty>{t('noStops')}</CommandEmpty>
+                        <CommandGroup>
+                          {originResults.map((x, i) => (
+                            <CommandItem key={`o-${x.label}-${i}`} value={x.label} onSelect={() => {
+                              setOrigin(x);
+                              originRef.current = x;
+                              setOriginBoxHidden(true);
+                              const ids = new Set(stopIds(x));
+                              const idx = firstGroups.findIndex((g) => (g.stops || []).some((row) => ids.has(row.stop)));
+                              if (idx >= 0) setBoardIndex(String(idx));
+                              setJourneyOptions(null);
+                              journeyLockedRef.current = false;
+                              resetTransferLock();
+                            }}>{x.label}</CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                    </ScrollArea>
+                  )
+                  : <p className="muted">{t('noStops')}</p>)
+                : null}
+            </div>
           </div>
-          {firstService ? (
+          {origin ? (
             <div className="note">
-              <b>{firstService.route}</b>
-              <div>{rn(firstService)}</div>
-              {fareNote(firstService)}
-              <Button variant="outline" className="tab mt-2" type="button" onClick={() => setFirstBoxHidden(false)}>{t('change')}</Button>
-            </div>
-          ) : null}
-          {firstService ? (
-            <div className="md-grid-2 mt-4">
-              <SearchableSelect
-                label={t('boardStop')}
-                value={boardIndex}
-                placeholder={t('notSelected')}
-                searchPlaceholder={t('stopSearch')}
-                emptyText={t('noStopMatch')}
-                options={[
-                  { value: '', label: t('notSelected') },
-                  ...firstGroups.map((g, i) => ({
-                    value: String(i),
-                    label: fareLabel(g, terminusFareForGroup(firstFares, g))
-                  }))
-                ]}
-                onChange={(v) => {
-                  setBoardIndex(v);
-                  if (interchangeIndex !== '' && (v === '' || +interchangeIndex < +v)) setInterchangeIndex('');
-                }}
-              />
-              <SearchableSelect
-                label={t('interchangeStop')}
-                value={interchangeIndex}
-                placeholder={t('chooseInterchange')}
-                searchPlaceholder={t('stopSearch')}
-                emptyText={t('noStopMatch')}
-                options={[
-                  { value: '', label: t('chooseInterchange') },
-                  ...firstGroups.map((g, i) => (
-                    boardIndex !== '' && i >= +boardIndex
-                      ? { value: String(i), label: fareLabel(g, odFare(firstGroups[+boardIndex], g, firstFares) || terminusFareForGroup(firstFares, g)) }
-                      : null
-                  )).filter(Boolean)
-                ]}
-                onChange={setInterchangeIndex}
-              />
+              <b>{t('originArea')}</b>
+              <div>{origin.label}</div>
+              <Button variant="outline" className="tab mt-2" type="button" onClick={() => setOriginBoxHidden(false)}>{t('change')}</Button>
             </div>
           ) : null}
           <div className={`mt-4${destBoxHidden ? ' hidden' : ''}`}>
             <b>{t('destLabel')}</b>
             <div className="search-row mt-1">
-              <Input className="field" placeholder={t('destPlaceholder')} value={destinationInput} onChange={(e) => setDestinationInput(e.target.value)} />
+              <Input className="field" placeholder={t('destPlaceholder')} value={destinationInput} onChange={(e) => setDestinationInput(e.target.value)} aria-label={t('destLabel')} />
               <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchDest(destinationInput)}>{t('find')}</Button>
             </div>
             <div className="mt-2">
@@ -1882,9 +2689,13 @@ export default function TransitApp() {
                         <CommandEmpty>{t('noStops')}</CommandEmpty>
                         <CommandGroup>
                           {destinationResults.map((x, i) => (
-                            <CommandItem key={x.label + i} value={x.label} onSelect={() => {
+                            <CommandItem key={`d-${x.label}-${i}`} value={x.label} onSelect={() => {
                               setDestination(x);
+                              destinationRef.current = x;
                               setDestBoxHidden(true);
+                              setJourneyOptions(null);
+                              journeyLockedRef.current = false;
+                              resetTransferLock();
                             }}>{x.label}</CommandItem>
                           ))}
                         </CommandGroup>
@@ -1903,40 +2714,111 @@ export default function TransitApp() {
               <Button variant="outline" className="tab mt-2" type="button" onClick={() => setDestBoxHidden(false)}>{t('change')}</Button>
             </div>
           ) : null}
+          {origin && destination ? (
+            <div className="note mt-4">
+              <b>{t('pretripHeading')}</b>
+              <p className="muted mt-1">{t('pretripHelp')}</p>
+              <label className="block mt-2">
+                <span className="muted">{t('pretripDate')}</span>
+                <Input className="field mt-1" type="date" value={pretripDate} onChange={(e) => setPretripDate(e.target.value)} aria-label={t('pretripDate')} />
+              </label>
+              <label className="block mt-2">
+                <span className="muted">{t('pretripArriveBy')}</span>
+                <Input className="field mt-1" type="time" value={pretripArriveBy} onChange={(e) => setPretripArriveBy(e.target.value)} aria-label={t('pretripArriveBy')} />
+              </label>
+              <Button className="btn btn-block mt-3 w-full" type="button" onClick={() => searchPretrip()}>{t('pretripFind')}</Button>
+              {pretripMessage ? <div className="note mt-2">{pretripMessage}</div> : null}
+              {pretripResult ? <div className="mt-2">{renderPretripOptions()}</div> : null}
+            </div>
+          ) : null}
+          <div className={`mt-4${firstBoxHidden ? ' hidden' : ''}`}>
+            <b>{t('firstRouteLabel')}</b>
+            <p className="muted mt-1">{t('optionalRouteHelp')}</p>
+            <div className="search-row mt-1">
+              <Input className="field" placeholder={t('routePlaceholder')} value={firstRoute} onChange={(e) => setFirstRoute(e.target.value)} aria-label={t('firstRouteLabel')} />
+              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchFirstByRoute()}>{t('find')}</Button>
+            </div>
+            <div>{renderChoiceList(firstChoices, (s) => pickFirst(s))}</div>
+          </div>
+          {firstService ? (
+            <div className="note">
+              <b>{firstService.route}</b>
+              <div>{rn(firstService)}</div>
+              {fareNote(firstService)}
+              <Button variant="outline" className="tab mt-2" type="button" onClick={() => setFirstBoxHidden(false)}>{t('change')}</Button>
+            </div>
+          ) : null}
+          {firstService ? (
+            <div className="mt-4">
+              <SearchableSelect
+                label={t('optionalInterchange')}
+                value={interchangeIndex}
+                placeholder={t('notSelected')}
+                searchPlaceholder={t('stopSearch')}
+                emptyText={t('noStopMatch')}
+                options={[
+                  { value: '', label: t('notSelected') },
+                  ...firstGroups.map((g, i) => (
+                    boardIndex === '' || i >= +boardIndex
+                      ? {
+                          value: String(i),
+                          label: fareLabel(g, (boardIndex !== '' ? odFare(firstGroups[+boardIndex], g, firstFares) : null) || terminusFareForGroup(firstFares, g))
+                        }
+                      : null
+                  )).filter(Boolean)
+                ]}
+                onChange={setInterchangeIndex}
+              />
+            </div>
+          ) : null}
           <Button
             className="btn btn-block mt-4 w-full"
             type="button"
             aria-label={findLabel}
-            onClick={() => {
-              resetTransferLock();
-              goTransfer({ phase: 'departures', selectedDeparture: null });
-            }}
+            onClick={() => searchJourneys()}
           >{findLabel}</Button>
           <div>
+            {journeyMessage ? <div className="note">{journeyMessage}</div> : null}
+            {journeyOptions && !chosenDirect && !transferResult ? (
+              <>
+                <p className="muted mt-3">{t('observedOnly')}</p>
+                {journeyOptions.preferredMissing ? <p className="muted mt-2">{t('preferredMissing')}</p> : null}
+                {journeyOptions.coverage?.complete && (journeyOptions.coverage.complete.ctb === false || journeyOptions.coverage.complete.gmb === false)
+                  ? <p className="muted mt-2">{t('graphStillLoading')}</p> : null}
+                {(journeyOptions.options || []).length
+                  ? renderJourneyGroups()
+                  : <p className="muted">{t(emptyReasonKey(journeyOptions.emptyReason || 'no_connection', 'planner'))}</p>}
+                <div className="row-actions">
+                  <button className="tab" type="button" onClick={() => saveHome(transferHomeItem())}>{t('saveHome')}</button>
+                </div>
+              </>
+            ) : null}
             {transferMessage ? <div className="note">{transferMessage}</div> : null}
             {chosenDirect ? (
               <>
                 <div className="note">{t('chosenDirect')}</div>
                 {renderTransferItem(chosenDirect, 0)}
+                {catchUpDue(chosenDirect.eta) ? (
+                  <button className="tab mt-2" type="button" onClick={() => {
+                    const extra = journeyCatchPayload(chosenDirect);
+                    askCatchUp({
+                      first: chosenDirect.first || firstService,
+                      boardStops: chosenDirect.boardStops || (boardIndex !== '' ? stopIds(firstGroups[+boardIndex]) : []),
+                      destStops: chosenDirect.destinationStops || (destination ? stopIds(destination) : []),
+                      eta: chosenDirect.eta,
+                      laterEtas: extra.laterEtas,
+                      alternatives: extra.alternatives
+                    });
+                  }}>{t('catchThis')}</button>
+                ) : null}
+                {renderCatchUpCard()}
                 <button className="tab mt-2" type="button" onClick={() => {
                   resetTransferLock();
-                  goTransfer({ phase: 'departures', selectedDeparture: null });
+                  setTransferResult(null);
+                  searchJourneys();
                 }}>{t('changeDeparture')}</button>
                 <div className="row-actions">
-                  <button className="tab" type="button" onClick={() => saveHome({
-                    type: 'transfer',
-                    title: { zh: `${firstService.route} → ${destination.label}`, en: `${firstService.route} → ${destination.label}` },
-                    subtitle: { zh: `${transferResult?.inter?.label || ''} 轉車`, en: `Transfer at ${transferResult?.inter?.label || ''}` },
-                    payload: {
-                      first: firstService,
-                      boardIndex,
-                      interchangeIndex,
-                      destLabel: destination.label,
-                      destStops: stopIds(destination),
-                      nearby,
-                      radius
-                    }
-                  })}>{t('saveHome')}</button>
+                  <button className="tab" type="button" onClick={() => saveHome(transferHomeItem())}>{t('saveHome')}</button>
                 </div>
               </>
             ) : null}
@@ -1988,7 +2870,7 @@ export default function TransitApp() {
                           ) : null}
                         </>
                       )
-                      : <p className="muted">{t(emptyReasonKey(transferResult.json.emptyReason || 'no_departure'))}</p>}
+                      : <p className="muted">{t(emptyReasonKey(transferResult.json.emptyReason || 'no_departure', 'transfer'))}</p>}
                     <h3 className="font-bold mt-4">{t('directHeading')}</h3>
                     {earliestByRoute(transferResult.json.directs || []).length
                       ? earliestByRoute(transferResult.json.directs || []).map((x, i) => (
@@ -1997,8 +2879,14 @@ export default function TransitApp() {
                           className={`item choice pg-choice ${coTone(x)}`}
                           type="button"
                             onClick={() => {
-                            chosenDirectRef.current = x;
-                            setChosenDirect(x);
+                            const row = {
+                              ...x,
+                              first: firstService,
+                              boardStops: x.boardStops || (boardIndex !== '' ? stopIds(firstGroups[+boardIndex]) : []),
+                              destinationStops: x.destinationStops || (destination ? stopIds(destination) : [])
+                            };
+                            chosenDirectRef.current = row;
+                            setChosenDirect(row);
                             transferPhaseRef.current = 'direct';
                             setTransferPhase('direct');
                             lastView.current = 't';
@@ -2040,16 +2928,32 @@ export default function TransitApp() {
                         {transferResult.json.arrivalEstimated ? (
                           <div className="muted mt-2">{t('firstArrivalGuessed')}</div>
                         ) : null}
+                        {catchUpDue(transferResult.json.boardDeparture, transferResult.json.leftBoard) ? (
+                          <button className="tab mt-2" type="button" onClick={() => {
+                            const extra = journeyCatchPayload({
+                              kind: 'transfer',
+                              first: firstService,
+                              boardStops: boardIndex !== '' ? stopIds(firstGroups[+boardIndex]) : [],
+                              eta: transferResult.json.boardDeparture
+                            });
+                            askCatchUp({
+                              first: firstService,
+                              boardStops: boardIndex !== '' ? stopIds(firstGroups[+boardIndex]) : [],
+                              destStops: interchangeIndex !== '' ? stopIds(firstGroups[+interchangeIndex]) : (destination ? stopIds(destination) : []),
+                              eta: transferResult.json.boardDeparture,
+                              laterEtas: extra.laterEtas,
+                              alternatives: extra.alternatives
+                            });
+                          }}>{t('catchThis')}</button>
+                        ) : null}
+                        {renderCatchUpCard()}
                         {renderStopTimes('transfer-first', transferResult.json.firstStops)}
                       </div>
                     ) : null}
                     <button className="tab mt-2" type="button" onClick={() => {
-                        selectedDepartureRef.current = null;
-                        selectedConnectionRef.current = null;
-                        transferPhaseRef.current = 'departures';
-                        setSelectedDeparture(null);
-                        setSelectedConnection(null);
-                        goTransfer({ phase: 'departures', selectedDeparture: null, selectedConnection: null });
+                        resetTransferLock();
+                        setTransferResult(null);
+                        searchJourneys();
                       }}>{t('changeDeparture')}</button>
                     {transferResult.json.watch?.selected || selectedConnection ? (
                       <div className="note mt-4">
@@ -2101,20 +3005,7 @@ export default function TransitApp() {
                   </>
                 )}
                 <div className="row-actions">
-                  <button className="tab" type="button" onClick={() => saveHome({
-                    type: 'transfer',
-                    title: { zh: `${firstService.route} → ${destination.label}`, en: `${firstService.route} → ${destination.label}` },
-                    subtitle: { zh: `${transferResult.inter.label} 轉車`, en: `Transfer at ${transferResult.inter.label}` },
-                    payload: {
-                      first: firstService,
-                      boardIndex,
-                      interchangeIndex,
-                      destLabel: destination.label,
-                      destStops: stopIds(destination),
-                      nearby,
-                      radius
-                    }
-                  })}>{t('saveHome')}</button>
+                  <button className="tab" type="button" onClick={() => saveHome(transferHomeItem())}>{t('saveHome')}</button>
                 </div>
               </>
             ) : null}
@@ -2170,7 +3061,7 @@ export default function TransitApp() {
               emptyText={t('noStopMatch')}
               options={[
                 { value: '', label: t('chooseRideDest') },
-                ...rideDestStations(currentLine, currentSta).map((row) => ({ value: row[0], label: stationLabel(row) }))
+                ...rideDestStations(currentLine, currentSta, currentLineKey).map((row) => ({ value: row[0], label: stationLabel(row) }))
               ]}
               onChange={(dest) => {
                 setMtrDest(dest);
@@ -2184,13 +3075,16 @@ export default function TransitApp() {
             {mtrResult && mtrResult.line === currentLineKey && mtrResult.sta === currentSta ? (
               <>
                 {mtrResult.delayed ? <div className="note">{t('mtrDelayed')}</div> : null}
+                {currentLineKey === 'LRT' ? <p className="muted mt-2">{t('lrtThisStop')}</p> : null}
+                {mtrResult.destRelaxed ? <p className="muted mt-2">{t('lrtDestNotTerminus')}</p> : null}
                 {(mtrResult.trains || []).length
                   ? mtrResult.trains.map((x, i) => {
                     const wait = x.arrive ? (x.arriveMinutes ?? mins(x.arrive)) : (x.minutes != null ? x.minutes : mins(x.time));
                     const when = x.time ? clk(x.time) : '';
                     const plat = x.platform ? t('platform', x.platform) : '';
                     const destName = loc(mtrResult.dest);
-                    const destRide = !!(destName && !mtrResult.destRelaxed);
+                    const isLrt = currentLineKey === 'LRT' || x.line === 'LRT';
+                    const destRide = !!(!isLrt && destName && !mtrResult.destRelaxed);
                     const lineLabel = loc(x.lineName);
                     const boarding = mtrResult?.sta || currentSta;
                     const terminus = !!(x.terminus || (x.destCode && String(x.destCode).toUpperCase() === String(boarding).toUpperCase()));
@@ -2209,10 +3103,13 @@ export default function TransitApp() {
                               <div className="muted">{clk(x.arrive)} {t('rideArrives')}{lang === 'zh' ? '' : ' '}{destName}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
                             ) : null}
                             {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+                            {isLrt && i === 0 && mtrResult.trains[1]?.time ? (
+                              <div className="muted">{t('missSameNext', mins(mtrResult.trains[1].time) ?? mtrResult.trains[1].minutes)}</div>
+                            ) : null}
                           </div>
-                          <span className="mins">{wait == null ? '' : t('minutes', wait)}</span>
+                          <span className="mins">{wait == null ? '' : (etaMode === 'countdown' ? clkClock(x.time || x.arrive) : t('minutes', wait))}</span>
                         </div>
-                        {renderStopTimes(stopId, terminus ? { terminus: true } : x.stops, terminus || x.stops?.length > 1 ? null : () => loadMtrStops(x))}
+                        {isLrt ? null : renderStopTimes(stopId, terminus ? { terminus: true } : x.stops, terminus || x.stops?.length > 1 ? null : () => loadMtrStops(x))}
                       </div>
                     );
                   })
