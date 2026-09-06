@@ -12,3 +12,4 @@ Hong Kong live transit helper. Product is a few taps and a fast honest answer.
 - Transfer Buddy stays locked on the chosen trip’s live status; never snap to the next bus.
 - Local app is port **3001**. Do not commit `.env.local`. After i18n/guide: `npm run sync-i18n`; after guide: `npm run build-manual`.
 - Do not block MTR on the KMB directory. Do not wait for a “Show next trains” click to fetch when the 港鐵 tab is open.
+- After every product change: bump Version x.y.z and write a detailed `CHANGELOG.md` entry (see `.cursor/rules/versioning.mdc`).

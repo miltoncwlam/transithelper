@@ -1,0 +1,20 @@
+---
+description: Bump Version x.y.z and write a detailed CHANGELOG after every product change
+alwaysApply: true
+---
+
+# Versioning
+
+Always **Version x.y.z** — three integers, one number per place. Never `V1.11`, `v1.2`, or a two-part tag.
+
+- **x (major):** new product surface or breaking behaviour (paste HTML → Next.js, a new planner, removing a whole mode).
+- **y (minor):** user-visible feature (GMB, map picker, 查看各站時間, 出門規劃).
+- **z (patch):** fix, copy, deploy, CI, or a small tweak.
+
+After you finish a change, before you stop:
+
+1. Pick x / y / z from **what changed for the user**, not from commit count.
+2. Set `package.json` `"version"` to that string.
+3. Prepend [`CHANGELOG.md`](CHANGELOG.md) with `## x.y.z — YYYY-MM-DD` and **detailed** bullets: the user request, what was wrong, what you changed, and any honesty notes (估計 / empty feed). One bullet per distinct behaviour. Quote the route/stop that drove the fix when there was one.
+4. Git tag `vX.Y.Z` on that commit. Push the tag when you push. For minor/major, also `gh release create`.
+5. Chat-only experiments that never landed in code do not get a version. Skipping the changelog is not allowed.
