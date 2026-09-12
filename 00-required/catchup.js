@@ -1,10 +1,7 @@
-/** Catch this locked trip at a later stop, or the wait if you miss it. Never snap to the next vehicle. */
+/** Next live clock if you miss the locked trip. Never chase this vehicle to a later pole. */
 import { namedStop } from './kmb.js';
-import { lookupStopMap } from './stopName.js';
 import {
   firstRouteEtaTables,
-  followBusAlongRoute,
-  matchesDest,
   metresBetween,
   routeStops,
   serviceCompany,
@@ -180,16 +177,11 @@ export function pickCatchPoles({ seq, boardIdx, destIdx, followed, here, nowMs, 
   return { catch: catchPole, backup };
 }
 
-function resolveStop(stopMap, id, co) {
-  return lookupStopMap(stopMap, id, co) || null;
-}
-
 export async function planCatchUp(cache, stopMap, body = {}, routes = [], opts = {}) {
   const nowMs = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
   const first = body.first;
   const eta = body.eta || body.board;
   const boardIds = new Set((body.boardStops || []).map((id) => String(id)));
-  const destIds = new Set((body.destStops || []).map((id) => String(id)));
   if (!first?.route || !boardIds.size || !eta) {
     return emptyResult('incomplete');
   }
@@ -198,7 +190,7 @@ export async function planCatchUp(cache, stopMap, body = {}, routes = [], opts =
   let missSame = nextLiveClock(body.laterEtas, eta, nowMs);
   const missAlt = pickMissAlt(body.alternatives, locked, missSame, nowMs);
 
-  if (isLightRail(first, body)) {
+  if (missSame || isLightRail(first, body)) {
     return packResult({ catch: null, backup: null, missSame, missAlt });
   }
 
@@ -209,41 +201,13 @@ export async function planCatchUp(cache, stopMap, body = {}, routes = [], opts =
     return packResult({ catch: null, backup: null, missSame, missAlt });
   }
 
-  const destStops = [...destIds]
-    .map((id) => resolveStop(stopMap, id, first.co) || seq.find((row) => String(row.stop) === id))
-    .filter(Boolean);
-  const destIdx = destStops.length
-    ? seq.findIndex((row, i) => i > boardIdx && matchesDest(row, destStops, destIds))
-    : -1;
-  const toIdx = destIdx >= 0 ? destIdx : seq.length - 1;
-
-  const followAlong = opts.followAlong || followBusAlongRoute;
   let tables = opts.tables || null;
-  if (!tables && !opts.followAlong) {
+  if (!tables) {
     const loadTables = opts.loadTables || ((svc, rows, fromIdx, untilIdx) => (
       firstRouteEtaTables(cache, svc, rows, fromIdx, untilIdx)
     ));
-    tables = await loadTables(first, seq, boardIdx, toIdx);
+    tables = await loadTables(first, seq, boardIdx, boardIdx);
   }
-  if (!missSame && tables) {
-    missSame = nextLiveClock(clocksFromTables(seq[boardIdx], tables), eta, nowMs);
-  }
-
-  const followed = await followAlong(seq, boardIdx, toIdx, tables || { bySeq: new Map(), byStop: new Map() }, eta, cache);
-  const boardStop = seq[boardIdx];
-  const lat = Number(body.lat);
-  const lng = Number(body.lng ?? body.long);
-  const here = Number.isFinite(lat) && Number.isFinite(lng)
-    ? { lat, long: lng }
-    : boardStop;
-  const poles = pickCatchPoles({
-    seq,
-    boardIdx,
-    destIdx,
-    followed,
-    here,
-    nowMs,
-    thisStopOnly: false
-  });
-  return packResult({ ...poles, missSame, missAlt });
+  missSame = nextLiveClock(clocksFromTables(seq[boardIdx], tables), eta, nowMs);
+  return packResult({ catch: null, backup: null, missSame, missAlt });
 }

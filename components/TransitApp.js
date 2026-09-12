@@ -1045,13 +1045,6 @@ export default function TransitApp() {
     }).filter(Boolean)
   ), [arrivalGroups]);
 
-  const catchMapIndex = useMemo(() => {
-    const id = catchUp?.catch?.stop;
-    if (!id || !arrivalGroups.length) return null;
-    const idx = arrivalGroups.findIndex((g) => (g.stops || []).some((row) => String(row.stop) === String(id)));
-    return idx >= 0 ? String(idx) : null;
-  }, [catchUp, arrivalGroups]);
-
   const pickFirst = useCallback(async (s, restore = {}) => {
     const token = firstSearchSeq.current;
     setFirstService(s);
@@ -1458,7 +1451,7 @@ export default function TransitApp() {
           route: row.best.first?.route,
           co: row.best.first?.co,
           kind: row.best.kind,
-          eta: row.best.eta,
+          eta: row.best.arrive || row.best.eta,
           second: row.best.second,
           dest: row.best.dest
         }))
@@ -1466,21 +1459,56 @@ export default function TransitApp() {
     };
   }
 
+  async function askArrivalMiss(trip, trips) {
+    const g = arrivalGroups[+arrivalStopIndex];
+    if (!arrivalService || !g || !trip) return;
+    lockArrivalTrip(trip);
+    const destG = arrivalDestIndex !== '' ? arrivalGroups[+arrivalDestIndex] : null;
+    const payload = {
+      first: arrivalService,
+      boardStops: stopIds(g),
+      destStops: destG ? stopIds(destG) : [],
+      eta: tripBoard(trip),
+      laterEtas: (trips || []).map((row) => tripBoard(row)).filter((eta) => eta && !sameClock(eta, tripBoard(trip)))
+    };
+    askCatchUp(payload);
+    if (!destG) return;
+    try {
+      const json = await api('/api/journey-options', {
+        method: 'POST',
+        body: JSON.stringify({
+          originStops: stopRefs(g),
+          destinationStops: stopRefs(destG),
+          nearby: true,
+          radius: +radius || 250
+        })
+      });
+      if (!catchUpQueryRef.current) return;
+      const lockedRoute = String(arrivalService.route || '').toUpperCase();
+      const alternatives = (json.options || [])
+        .filter((opt) => String(opt.first?.route || '').toUpperCase() !== lockedRoute)
+        .map((opt) => ({
+          route: opt.first?.route,
+          co: opt.first?.co,
+          kind: opt.kind,
+          eta: opt.arrive || opt.eta,
+          second: opt.second,
+          dest: opt.dest
+        }))
+        .filter((row) => row.eta && row.route);
+      askCatchUp({ ...catchUpQueryRef.current, alternatives });
+    } catch {}
+  }
+
   const askCatchUp = useCallback((payload) => {
     const token = ++catchUpSeq.current;
     catchUpQueryRef.current = payload;
     setCatchUpLoading(true);
-    const post = async (lat, lng) => {
-      const next = { ...payload };
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        next.lat = lat;
-        next.lng = lng;
-      }
-      catchUpQueryRef.current = next;
+    (async () => {
       try {
         const json = await api('/api/catch-up', {
           method: 'POST',
-          body: JSON.stringify(next)
+          body: JSON.stringify(payload)
         });
         if (token !== catchUpSeq.current) return;
         setCatchUp(json);
@@ -1490,49 +1518,26 @@ export default function TransitApp() {
       } finally {
         if (token === catchUpSeq.current) setCatchUpLoading(false);
       }
-    };
-    if (Number.isFinite(Number(payload?.lat)) && Number.isFinite(Number(payload?.lng ?? payload?.long))) {
-      post(Number(payload.lat), Number(payload.lng ?? payload.long));
-      return;
-    }
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => post(pos.coords.latitude, pos.coords.longitude),
-        () => post(),
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
-      );
-      return;
-    }
-    post();
+    })();
   }, [api]);
-
-  function catchLiveLabel(estimated) {
-    return estimated ? t('stopTimeEst') : t('catchUpLive');
-  }
 
   function renderCatchUpCard() {
     if (!catchUpLoading && !catchUp) return null;
-    const pole = catchUp?.catch;
-    const backup = catchUp?.backup;
     const missSame = catchUp?.missSame;
     const missAlt = catchUp?.missAlt;
-    const empty = !!(catchUp && !pole && !backup && !missSame && !missAlt);
     return (
       <div className="note catch-up-card">
         <h3 className="font-bold"><span className="badge">{t('catchUpTitle')}</span></h3>
-        {catchUpLoading ? <p className="muted">{t('catchUpSearching')}</p> : null}
-        {pole ? <p>{t('catchUpLine', pole.walkMinutes, loc(pole.name), pole.busMinutes, catchLiveLabel(pole.estimated))}</p> : null}
-        {backup ? <p className="muted">{t('catchUpBackup', backup.walkMinutes, loc(backup.name), backup.busMinutes, catchLiveLabel(backup.estimated))}</p> : null}
-        {!catchUpLoading && !pole && !missSame && !empty ? <p className="muted">{t('missSameNone')}</p> : null}
-        {missSame ? <p className="muted"><span className="badge">{t('missCost')}</span> {t('missSameNext', missSame.waitMinutes)}</p> : null}
+        {catchUpLoading && !catchUp ? <p className="muted">{t('catchUpSearching')}</p> : null}
+        {missSame ? <p><span className="badge">{t('missCost')}</span> {t('missSameNext', missSame.waitMinutes)}</p> : null}
+        {!catchUpLoading && !missSame ? <p className="muted">{t('missSameNone')}</p> : null}
         {missAlt ? (
-          <p className="muted">
+          <p>
             {missAlt.kind === 'transfer' && missAlt.second
               ? t('missAltTransfer', missAlt.route, missAlt.second, missAlt.waitMinutes)
               : t('missAltLive', missAlt.route, missAlt.waitMinutes)}
           </p>
         ) : null}
-        {empty && !catchUpLoading ? <p>{t('catchUpEmpty')}</p> : null}
         <p className="muted">{t('catchUpHelp')}</p>
       </div>
     );
@@ -2141,11 +2146,19 @@ export default function TransitApp() {
       }
       if (tab === 'mtr' && lastView.current === 'm') showMtr();
       if (catchUpQueryRef.current && (tab === 'arrivals' || tab === 'transfer')) {
-        askCatchUp(catchUpQueryRef.current);
+        const q = catchUpQueryRef.current;
+        if (tab === 'arrivals' && arrivalTimes?.trips?.length && q?.eta) {
+          askCatchUp({
+            ...q,
+            laterEtas: arrivalTimes.trips.map((row) => tripBoard(row)).filter((eta) => eta && !sameClock(eta, q.eta))
+          });
+        } else {
+          askCatchUp(q);
+        }
       }
     }, +refreshSec * 1000);
     return () => clearInterval(id);
-  }, [tab, refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, showArrival, goTransfer, searchJourneys, refreshChosenDirect, showMtr, chosenDirect, mtrDest, origin, destination, askCatchUp]);
+  }, [tab, refreshSec, arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex, arrivalTimes, showArrival, goTransfer, searchJourneys, refreshChosenDirect, showMtr, chosenDirect, mtrDest, origin, destination, askCatchUp]);
 
   useEffect(() => {
     if (tab !== 'mtr' || !currentLineKey || !currentSta) return;
@@ -2349,11 +2362,6 @@ export default function TransitApp() {
           {opts.onLock && !lockedEta ? (
             <button className="tab mt-2" type="button" onClick={() => opts.onLock(x, trips)}>{t('takeThisJourney')}</button>
           ) : null}
-          {opts.onCatchUp && canCatchUp(board) && (!lockedEta || lockedHere) ? (
-            <button className="tab mt-2" type="button" onClick={() => opts.onCatchUp(x, trips)}>
-              {t('catchThis')}
-            </button>
-          ) : null}
         </div>
       );
     }).filter(Boolean);
@@ -2363,6 +2371,7 @@ export default function TransitApp() {
           <div className="note">
             <h3 className="font-bold">{t('watchingTrip')}</h3>
             <p className="muted">{t('watchingTripLive')}</p>
+            {opts.onMiss ? <button className="tab mt-2" type="button" onClick={() => opts.onMiss(matched || opts.lockedTrip, shown)}>{t('catchThis')}</button> : null}
             {opts.onUnlock ? <button className="tab mt-2" type="button" onClick={opts.onUnlock}>{t('changeDeparture')}</button> : null}
           </div>
         ) : null}
@@ -2671,18 +2680,8 @@ export default function TransitApp() {
                       clearArrivalLock();
                       clearCatchUp();
                     },
-                    onCatchUp: (trip, trips) => {
-                      const g = arrivalGroups[+arrivalStopIndex];
-                      const destG = arrivalDestIndex !== '' ? arrivalGroups[+arrivalDestIndex] : null;
-                      if (!arrivalService || !g) return;
-                      lockArrivalTrip(trip);
-                      askCatchUp({
-                        first: arrivalService,
-                        boardStops: stopIds(g),
-                        destStops: destG ? stopIds(destG) : [],
-                        eta: trip.board,
-                        laterEtas: (trips || []).map((row) => row.board).filter((eta) => eta && eta !== trip.board)
-                      });
+                    onMiss: (trip, trips) => {
+                      askArrivalMiss(trip, trips);
                     }
                   })}
                   {renderCatchUpCard()}
@@ -2708,7 +2707,7 @@ export default function TransitApp() {
                     mode="route"
                     center={[routeMapStops[0].lat, routeMapStops[0].lng]}
                     routeStops={routeMapStops}
-                    selectedIndex={catchMapIndex ?? arrivalStopIndex}
+                    selectedIndex={arrivalStopIndex}
                     path={routeLine?.coords}
                     lineColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}
                     markerColor={routeLine?.color || lineColorForCo(serviceCo(arrivalService))}

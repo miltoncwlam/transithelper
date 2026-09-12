@@ -6,9 +6,21 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.3.0**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.4.0**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.4.0 — 2026-09-12
+
+### Changed
+- Locking a departure **is** 趕車. **就乘這一程** locks that clock. **錯過了** is the button if you miss it: the next live trip of the same route at this pole, and a faster live option when a destination is set (Arrivals dest, or Transfer Buddy’s compare list).
+- The old 趕車助手 walk — “步行約 9 分鐘到青華苑，此班約 9 分鐘到” — is gone. The app does not send you to the next stop to chase this bus. An empty feed stays empty. The next bus is never labelled as catching this trip.
+
+### Tests
+- Unit: planCatchUp does not return a later pole; miss-cost still uses the second clock at this stop.
+- Playwright: 就乘 then 錯過了 shows next-of-route (and 85X on Transfer); Arrivals no longer shows a walk-to-later-stop row.
 
 ---
 

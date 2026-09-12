@@ -65,9 +65,15 @@ test('incomplete without a locked clock', async () => {
   assert.equal(result.catch, null);
 });
 
-test('live catch-up two stops down', async () => {
+test('does not chase the locked trip to a later pole', async () => {
   const locked = minutesFrom(now, -1);
-  const result = await catchCase({ eta: locked, lat: a.lat, lng: a.long }, {
+  const nextSame = minutesFrom(now, 12);
+  const result = await catchCase({
+    eta: locked,
+    laterEtas: [nextSame],
+    lat: a.lat,
+    lng: a.long
+  }, {
     boardLive: null,
     leftBoard: true,
     estimated: false,
@@ -79,31 +85,10 @@ test('live catch-up two stops down', async () => {
       { stop: 'D', name: { zh: '終點站', en: 'Terminus' }, time: minutesFrom(now, 12), estimated: true }
     ]
   });
-  assert.equal(result.catch.stop, 'C');
-  assert.equal(result.catch.name.zh, '太和邨');
-  assert.equal(result.catch.estimated, false);
-  assert.ok(result.catch.walkMinutes >= 1);
-  assert.equal(result.catch.busMinutes, 6);
-  assert.equal(result.emptyReason, null);
-});
-
-test('estimated hop from last live match is labelled 估計', async () => {
-  const locked = minutesFrom(now, 2);
-  const result = await catchCase({ eta: locked, lat: a.lat, lng: a.long }, {
-    boardLive: locked,
-    leftBoard: false,
-    estimated: true,
-    time: minutesFrom(now, 8),
-    stops: [
-      { stop: 'A', name: { zh: '本站', en: 'Here' }, time: locked, estimated: false },
-      { stop: 'B', name: { zh: '下一站', en: 'Next' }, time: minutesFrom(now, 5), estimated: true },
-      { stop: 'C', name: { zh: '太和邨', en: 'Tai Wo Estate' }, time: minutesFrom(now, 8), estimated: true },
-      { stop: 'D', name: { zh: '終點站', en: 'Terminus' }, time: minutesFrom(now, 14), estimated: true }
-    ]
-  });
-  assert.ok(result.catch);
-  assert.equal(result.catch.estimated, true);
-  assert.ok(['B', 'C'].includes(result.catch.stop));
+  assert.equal(result.catch, null);
+  assert.equal(result.backup, null);
+  assert.equal(result.missSame.eta, nextSame);
+  assert.equal(result.missSame.waitMinutes, 12);
 });
 
 test('empty downstream is not the next vehicle at this pole', async () => {
