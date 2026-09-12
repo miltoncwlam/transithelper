@@ -13,7 +13,8 @@ Scheme: **x.y.z** — major / minor / patch. Git tags are `vX.Y.Z`.
 | 3.0.2 | `v3.0.2` | This changelog scheme |
 | 3.0.3 | `v3.0.3` | Clock vs countdown, MTR Bus ETAs, nearby-board honesty |
 | 3.1.0 | `v3.1.0` | Home / work nearby as live boards you reopen |
-| 3.2.0 | `v3.2.0` | Nearby board auto-loads when there is no last bus (current) |
+| 3.2.0 | `v3.2.0` | Nearby board auto-loads when there is no last bus |
+| 3.3.0 | `v3.3.0` | Lock + 趕這一班 on Arrivals; catch-up not limited to 3 minutes (current) |
 
 ```bash
 git fetch origin --tags

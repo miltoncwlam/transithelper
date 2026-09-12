@@ -6,9 +6,22 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.2.0**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.3.0**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.3.0 — 2026-09-12
+
+### Changed
+- **趕這一班** is no longer only for a wait of three minutes or less. Any live clock (or a bus that already left the pole) can open 趕車助手, on **巴士／小巴** route search and on **轉乘助手**.
+- Standard bus search now has the same lock as Transfer Buddy. Each live trip has **就乘這一程**. Auto-refresh stays on that clock and does not snap to the next bus. **趕這一班** also locks that trip. Tapping a nearby-board clock locks that same clock after the stop loads. Changing the boarding stop or searching a new route clears the lock; changing destination keeps it.
+- If the locked clock leaves the operator feed, the app keeps showing that trip. The next bus of the same route is still listed, but it is not labelled 趕這一班. An empty feed stays empty.
+
+### Tests
+- Unit tests: catch-up allowed at 7 and 15 minutes; lock follows a ticking clock and does not pick the next bus.
+- Playwright: Transfer Buddy 趕 still appears at an 8-minute wait; Arrivals with mocked 7- and 15-minute clocks shows two 趕 buttons, 就乘 locks, and 趕 opens the catch-up card.
 
 ---
 

@@ -30,6 +30,8 @@ test('guide and user manual', async ({ page, request }) => {
   await expect(page.locator('.guide')).toContainText(/回家附近|home nearby/);
   await expect(page.locator('.guide')).toContainText(/輕鐵|Light Rail/);
   await expect(page.locator('.guide')).toContainText(/趕車助手|Catch-up helper/);
+  await expect(page.locator('.guide')).toContainText(/就乘這一程|Take this trip/);
+  await expect(page.locator('.guide')).toContainText(/不限於三分鐘|not limited to three minutes/);
   const pdf = await request.get('/user-manual.pdf');
   expect(pdf.ok()).toBeTruthy();
   expect(pdf.headers()['content-type'] || '').toMatch(/pdf/);
@@ -771,7 +773,7 @@ test('catch-up helper follows the locked trip and shows miss-cost', async ({ pag
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(mockJourneyOptions({ etaMinutes: 1 }))
+      body: JSON.stringify(mockJourneyOptions({ etaMinutes: 8 }))
     });
   });
   await page.route('**/api/catch-up', async (route) => {
@@ -817,4 +819,89 @@ test('catch-up helper follows the locked trip and shows miss-cost', async ({ pag
   await expect(transfer.locator('.catch-up-card')).toContainText(/85X/);
   expect(posted[0]?.first?.route).toBe('1');
   expect(posted[0]?.laterEtas?.length).toBeGreaterThan(0);
+});
+
+test('arrivals lock and catch-up work beyond three minutes', async ({ page }) => {
+  test.setTimeout(120000);
+  const eta7 = new Date(Date.now() + 7 * 60000).toISOString();
+  const eta15 = new Date(Date.now() + 15 * 60000).toISOString();
+  const posted = [];
+  await page.addInitScript(() => {
+    localStorage.setItem('tb-arrival', JSON.stringify({
+      route: '1',
+      service: {
+        route: '1',
+        co: 'KMB',
+        bound: 'O',
+        service_type: '1',
+        orig_tc: '竹園邨',
+        dest_tc: '尖沙咀碼頭',
+        orig_en: 'Chuk Yuen',
+        dest_en: 'Star Ferry'
+      },
+      stopIndex: 0,
+      destIndex: ''
+    }));
+  });
+  await page.route('**/api/kmb/route-stop/**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      data: [{
+        stop: 'A',
+        name_tc: '竹園邨總站',
+        name_en: 'Chuk Yuen Estate Bus Terminus',
+        lat: 22.345,
+        long: 114.193,
+        seq: 1
+      }]
+    })
+  }));
+  await page.route('**/api/ride', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ trips: [{ board: eta7 }, { board: eta15 }], emptyReason: null })
+    });
+  });
+  await page.route('**/api/catch-up', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    posted.push(route.request().postDataJSON() || {});
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        catch: {
+          stop: 'C',
+          name: { zh: '太和邨', en: 'Tai Wo Estate' },
+          seqIndex: 2,
+          walkMinutes: 4,
+          busMinutes: 6,
+          busEta: new Date(Date.now() + 6 * 60000).toISOString(),
+          estimated: false
+        },
+        backup: null,
+        missSame: { eta: new Date(Date.now() + 15 * 60000).toISOString(), waitMinutes: 15 },
+        missAlt: null,
+        emptyReason: null
+      })
+    });
+  });
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  const panel = page.locator('.panel.active');
+  await expect(panel.locator('.arrival-board')).toBeVisible({ timeout: 40000 });
+  await expect(panel.getByRole('button', { name: /趕這一班|Catch this bus/ })).toHaveCount(2);
+  await expect(panel.getByRole('button', { name: /就乘這一程|Take this trip/ })).toHaveCount(2);
+  await panel.getByRole('button', { name: /就乘這一程|Take this trip/ }).first().click();
+  await expect(panel).toContainText(/正在留意這一班|Watching this trip/);
+  await expect(panel).toContainText(/不會改成下一班|does not switch to the next bus/);
+  await expect(panel.getByRole('button', { name: /改選班次|Choose a different bus/ })).toBeVisible();
+  await expect(panel.getByRole('button', { name: /趕這一班|Catch this bus/ })).toHaveCount(1);
+  await panel.getByRole('button', { name: /趕這一班|Catch this bus/ }).click();
+  await expect(panel.locator('.catch-up-card')).toContainText(/趕車助手|Catch-up helper/);
+  await expect(panel.locator('.catch-up-card')).toContainText(/太和邨|Tai Wo Estate/);
+  expect(posted[0]?.first?.route).toBe('1');
+  expect(posted[0]?.eta).toBe(eta7);
 });

@@ -13,6 +13,7 @@ import { keepSilentJourneyList, mergeJourneyGroups, itineraryKey, samePlaceLabel
 import { etaPrimaryText } from '../lib/etaDisplay.js';
 import { collapseNearbyKinds, nearbyCollectionTitle, nearbyKindOf, replaceNearbyKind, splitHomes } from '../lib/nearbyCollections.js';
 import { hasRestorableArrival } from '../lib/arrivalPref.js';
+import { canCatchUp, pickLockedTrip, sameClock, tripBoard } from '../lib/tripLock.js';
 import StopMap from './StopMap.js';
 import UserGuide from './UserGuide.js';
 import SearchableSelect from './SearchableSelect.js';
@@ -227,11 +228,13 @@ function readArrivalPref() {
 
 function writeArrivalPref(next) {
   try {
+    const cur = readArrivalPref();
     localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
-      route: next.route || '',
-      service: next.service || null,
-      stopIndex: next.stopIndex ?? '',
-      destIndex: next.destIndex ?? ''
+      route: next.route !== undefined ? next.route : (cur.route || ''),
+      service: next.service !== undefined ? next.service : (cur.service || null),
+      stopIndex: next.stopIndex !== undefined ? next.stopIndex : (cur.stopIndex ?? ''),
+      destIndex: next.destIndex !== undefined ? next.destIndex : (cur.destIndex ?? ''),
+      lockedEta: next.lockedEta !== undefined ? (next.lockedEta || '') : (cur.lockedEta || '')
     }));
   } catch {}
 }
@@ -351,6 +354,7 @@ export default function TransitApp() {
   const [routeLine, setRouteLine] = useState(null);
   const [catchUp, setCatchUp] = useState(null);
   const [catchUpLoading, setCatchUpLoading] = useState(false);
+  const [arrivalLock, setArrivalLock] = useState(null);
 
   const nearbyPickRef = useRef(null);
   const stopCache = useRef(new Map());
@@ -376,12 +380,31 @@ export default function TransitApp() {
   const stopsLoad = useRef(null);
   const catchUpSeq = useRef(0);
   const catchUpQueryRef = useRef(null);
+  const arrivalLockRef = useRef(null);
 
   function clearCatchUp() {
     catchUpSeq.current += 1;
     catchUpQueryRef.current = null;
     setCatchUp(null);
     setCatchUpLoading(false);
+  }
+
+  function clearArrivalLock() {
+    arrivalLockRef.current = null;
+    setArrivalLock(null);
+    writeArrivalPref({ lockedEta: '' });
+  }
+
+  function lockArrivalTrip(trip) {
+    const eta = tripBoard(trip);
+    if (!canCatchUp(eta)) return;
+    const next = { eta, trip };
+    arrivalLockRef.current = next;
+    setArrivalLock(next);
+    writeArrivalPref({ lockedEta: eta });
+    if (catchUpQueryRef.current) {
+      catchUpQueryRef.current = { ...catchUpQueryRef.current, eta };
+    }
   }
 
   function resetTransferLock() {
@@ -719,6 +742,8 @@ export default function TransitApp() {
     setOpenStopKey(null);
     setRouteNearNote('');
     setRouteLine(null);
+    clearCatchUp();
+    clearArrivalLock();
     lastView.current = null;
   }
 
@@ -788,6 +813,7 @@ export default function TransitApp() {
     setOpenStopKey(null);
     setRouteNearNote('');
     clearCatchUp();
+    clearArrivalLock();
     const seq = await fetchStops(s);
     if (searchToken !== arrivalSearchSeq.current || pickToken !== arrivalPickSeq.current) return;
     const nextGroups = groups(seq);
@@ -806,6 +832,11 @@ export default function TransitApp() {
             body: JSON.stringify({ first: s, boardStops: (g.stops || []).map((row) => row.stop), destStops: [] })
           });
           setArrivalTimes({ trips: json.trips || [], destLabel: null, emptyReason: json.emptyReason });
+          lastView.current = 'a';
+          writeArrivalPref({ route: s.route, service: s, stopIndex: String(idx), destIndex: '' });
+          const hit = pending.eta ? pickLockedTrip(json.trips || [], pending.eta) : null;
+          if (hit) lockArrivalTrip(hit);
+          else if (pending.eta) lockArrivalTrip({ board: pending.eta });
         } catch {
           setArrivalTimes({ trips: [], destLabel: null, emptyReason: 'empty' });
         }
@@ -838,7 +869,13 @@ export default function TransitApp() {
           destStops: destGroup ? stopIds(destGroup) : []
         })
       });
-      setArrivalTimes({ trips: json.trips || [], destLabel: destGroup?.label || null, emptyReason: json.emptyReason });
+      const trips = json.trips || [];
+      setArrivalTimes({ trips, destLabel: destGroup?.label || null, emptyReason: json.emptyReason });
+      const lockedEta = arrivalLockRef.current?.eta;
+      if (lockedEta) {
+        const hit = pickLockedTrip(trips, lockedEta);
+        if (hit) lockArrivalTrip(hit);
+      }
     } catch {
       setArrivalTimes({ trips: [], destLabel: destGroup?.label || null, emptyReason: 'empty' });
     }
@@ -856,6 +893,7 @@ export default function TransitApp() {
     setArrivalStopIndex(v);
     setArrivalTimes(null);
     clearCatchUp();
+    clearArrivalLock();
     let dest = destIndex === undefined ? arrivalDestIndex : destIndex;
     if (dest !== '' && (v === '' || +dest <= +v)) {
       dest = '';
@@ -993,7 +1031,7 @@ export default function TransitApp() {
   }
 
   function pickNearbyRow(cluster, row) {
-    nearbyPickRef.current = { stop: row.stop?.stop || row.stop };
+    nearbyPickRef.current = { stop: row.stop?.stop || row.stop, eta: row.eta };
     pickArrival(row.service);
   }
 
@@ -1405,9 +1443,7 @@ export default function TransitApp() {
   }, [api]);
 
   function catchUpDue(eta, leftBoard) {
-    if (leftBoard) return true;
-    const wait = mins(eta);
-    return wait != null && wait <= 3;
+    return canCatchUp(eta, leftBoard);
   }
 
   function journeyCatchPayload(option) {
@@ -2044,6 +2080,11 @@ export default function TransitApp() {
         setArrivalStopIndex(idx);
         const destIdx = pref.destIndex != null && pref.destIndex !== '' ? String(pref.destIndex) : '';
         setArrivalDestIndex(destIdx);
+        if (pref.lockedEta) {
+          const seed = { eta: pref.lockedEta, trip: { board: pref.lockedEta } };
+          arrivalLockRef.current = seed;
+          setArrivalLock(seed);
+        }
         await showArrival(s, g, idx, destIdx);
       } catch {}
       finally {
@@ -2089,7 +2130,7 @@ export default function TransitApp() {
   useEffect(() => {
     const id = setInterval(() => {
       if (tab === 'arrivals' && lastView.current === 'a' && arrivalService && arrivalStopIndex !== '') {
-        showArrival(arrivalService, arrivalGroups, arrivalStopIndex);
+        showArrival(arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex);
       }
       if (tab === 'transfer' && lastView.current === 't') {
         if (chosenDirectRef.current) refreshChosenDirect();
@@ -2274,10 +2315,18 @@ export default function TransitApp() {
     const destLabel = isRide ? input.destLabel : null;
     if (isRide && input.emptyReason === 'no_dest') return <p className="muted">{t('noRideDest')}</p>;
     if (!trips.length) return <p className="muted">{t(isRide ? 'noLiveNow' : 'noEta')}</p>;
-    const rows = trips.map((x, i) => {
+    const lockedEta = opts.lockedEta;
+    const matched = lockedEta ? pickLockedTrip(trips, lockedEta) : null;
+    const shown = lockedEta && matched
+      ? [matched, ...trips.filter((row) => !sameClock(tripBoard(row), lockedEta))]
+      : lockedEta && !matched && opts.lockedTrip
+        ? [opts.lockedTrip, ...trips]
+        : trips;
+    const rows = shown.map((x, i) => {
       const board = x.board || x;
       const wait = x.arrive ? mins(x.arrive) : mins(board);
-      if (wait == null) return null;
+      const lockedHere = !!(lockedEta && sameClock(board, lockedEta));
+      if (wait == null && !lockedHere) return null;
       const service = x.route
         ? <><span className="badge">{coLabel(x)}</span> <b>{x.route}</b>{loc(x.dest) ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</div> : null}</>
         : <b>{clk(board)}</b>;
@@ -2286,17 +2335,21 @@ export default function TransitApp() {
         <div className={`item ${x.route ? coTone(x) : ''}`} key={`${x.route || ''}-${board}-${i}`}>
           <div className="eta">
             <div>
-              {destLabel && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}{service}
+              {lockedHere ? <span className="badge">{t('watchingTrip')}</span> : null}
+              {destLabel && i === 0 && !lockedHere ? <span className="badge">{t('earliestArrival')}</span> : null}{service}
               {x.route ? <div className="muted">{clkClock(board)} {t('rideDeparts')}</div> : null}
               {x.arrive ? (
                 <div className="muted">{clkClock(x.arrive)} {t('rideArrives')}{destLabel ? `${lang === 'zh' ? '' : ' '}${destLabel}` : ''}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
               ) : null}
               {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
             </div>
-            <span className="mins">{etaPrimaryText(etaMode, { clock: clkClock(board), minutesText: t('minutes', wait) })}</span>
+            <span className="mins">{etaPrimaryText(etaMode, { clock: clkClock(board), minutesText: wait == null ? '' : t('minutes', wait) })}</span>
           </div>
           {renderStopTimes(stopId, x.stops, opts.fetchStops ? () => loadArrivalStops(x) : null)}
-          {opts.onCatchUp && catchUpDue(board) ? (
+          {opts.onLock && !lockedEta ? (
+            <button className="tab mt-2" type="button" onClick={() => opts.onLock(x, trips)}>{t('takeThisJourney')}</button>
+          ) : null}
+          {opts.onCatchUp && canCatchUp(board) && (!lockedEta || lockedHere) ? (
             <button className="tab mt-2" type="button" onClick={() => opts.onCatchUp(x, trips)}>
               {t('catchThis')}
             </button>
@@ -2304,7 +2357,18 @@ export default function TransitApp() {
         </div>
       );
     }).filter(Boolean);
-    return rows.length ? rows : <p className="muted">{t(isRide ? 'noLiveNow' : 'noEta')}</p>;
+    return (
+      <>
+        {lockedEta ? (
+          <div className="note">
+            <h3 className="font-bold">{t('watchingTrip')}</h3>
+            <p className="muted">{t('watchingTripLive')}</p>
+            {opts.onUnlock ? <button className="tab mt-2" type="button" onClick={opts.onUnlock}>{t('changeDeparture')}</button> : null}
+          </div>
+        ) : null}
+        {rows.length ? rows : <p className="muted">{t(isRide ? 'noLiveNow' : 'noEta')}</p>}
+      </>
+    );
   };
 
   function fareChip(n) {
@@ -2600,10 +2664,18 @@ export default function TransitApp() {
                   {fareNote(arrivalService, { hideScheduled: !!(arrivalTimes?.destLabel && arrivalTimes?.trips?.some((row) => row.rideMinutes > 0)) })}
                   {etaList(arrivalTimes, {
                     fetchStops: true,
+                    lockedEta: arrivalLock?.eta,
+                    lockedTrip: arrivalLock?.trip,
+                    onLock: (trip) => lockArrivalTrip(trip),
+                    onUnlock: () => {
+                      clearArrivalLock();
+                      clearCatchUp();
+                    },
                     onCatchUp: (trip, trips) => {
                       const g = arrivalGroups[+arrivalStopIndex];
                       const destG = arrivalDestIndex !== '' ? arrivalGroups[+arrivalDestIndex] : null;
                       if (!arrivalService || !g) return;
+                      lockArrivalTrip(trip);
                       askCatchUp({
                         first: arrivalService,
                         boardStops: stopIds(g),
