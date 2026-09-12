@@ -10,6 +10,9 @@ import { mtrLineColor } from '../lib/mtrColors.js';
 import { lineColorForCo } from '../lib/routeColors.js';
 import { displayStopName } from '../00-required/stopName.js';
 import { keepSilentJourneyList, mergeJourneyGroups, itineraryKey, samePlaceLabel, stopPlaceLabel } from '../lib/journeyGroups.js';
+import { etaPrimaryText } from '../lib/etaDisplay.js';
+import { collapseNearbyKinds, nearbyCollectionTitle, nearbyKindOf, replaceNearbyKind, splitHomes } from '../lib/nearbyCollections.js';
+import { hasRestorableArrival } from '../lib/arrivalPref.js';
 import StopMap from './StopMap.js';
 import UserGuide from './UserGuide.js';
 import SearchableSelect from './SearchableSelect.js';
@@ -365,6 +368,7 @@ export default function TransitApp() {
   const originRef = useRef(null);
   const destinationRef = useRef(null);
   const arrivalRestored = useRef(false);
+  const nearbyAutoStarted = useRef(false);
   const transferPhaseRef = useRef(null);
   const selectedDepartureRef = useRef(null);
   const selectedConnectionRef = useRef(null);
@@ -436,6 +440,13 @@ export default function TransitApp() {
       return t('minutes', wait);
     }
     return clkClock(x);
+  }, [etaMode, clkClock, t]);
+  const etaMins = useCallback((iso) => {
+    const wait = mins(iso);
+    return etaPrimaryText(etaMode, {
+      clock: clkClock(iso),
+      minutesText: wait == null ? '' : t('minutes', wait)
+    });
   }, [etaMode, clkClock, t]);
 
   const api = useCallback(async (path, options = {}) => {
@@ -947,7 +958,7 @@ export default function TransitApp() {
       return json;
     } catch {
       setNearbyBoard({ clusters: [] });
-      setNearbyNote(t('geoDenied'));
+      setNearbyNote(t('nearbyFail'));
       return null;
     } finally {
       setNearbyLoading(false);
@@ -956,13 +967,18 @@ export default function TransitApp() {
 
   function loadNearbyBoard() {
     if (!navigator.geolocation) {
+      setNearbyLoading(false);
       setNearbyNote(t('geoDenied'));
       return;
     }
     setNearbyNote('');
+    setNearbyLoading(true);
     navigator.geolocation.getCurrentPosition(async (pos) => {
       await fetchNearbyBoardAt(pos.coords.latitude, pos.coords.longitude, 200);
-    }, () => setNearbyNote(t('geoDenied')), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+    }, () => {
+      setNearbyLoading(false);
+      setNearbyNote(t('geoDenied'));
+    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
   }
 
   function useOriginLocation() {
@@ -1107,11 +1123,11 @@ export default function TransitApp() {
         {dest ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{dest}</div> : null}
         <div>{loc(x.from)} → {loc(x.to)}</div>
         <div className="eta">
-          <b>{clk(x.eta)}</b>
-          <span className="mins">{t('minutes', mins(x.eta))}</span>
+          <b>{clkClock(x.eta)}</b>
+          <span className="mins">{etaMins(x.eta)}</span>
         </div>
         {x.arrive ? (
-          <div className="muted">{clk(x.arrive)} {t('rideArrives')} {loc(x.to)}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}{x.totalMinutes != null ? ` · ${t('totalMins', x.totalMinutes)}` : ''}</div>
+          <div className="muted">{clkClock(x.arrive)} {t('rideArrives')} {loc(x.to)}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}{x.totalMinutes != null ? ` · ${t('totalMins', x.totalMinutes)}` : ''}</div>
         ) : null}
         {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
         {x.kind === 'transfer' && x.catchable !== false && x.waitAfterFirstMinutes != null ? (
@@ -1772,11 +1788,11 @@ export default function TransitApp() {
     const local = readLocalHomes();
     try {
       const json = await api('/api/homes');
-      const rows = mergeHomes(json.data || [], local);
+      const rows = collapseNearbyKinds(mergeHomes(json.data || [], local));
       setHomes(rows);
       setHomeError('');
     } catch (error) {
-      const rows = sortHomes(local);
+      const rows = collapseNearbyKinds(sortHomes(local));
       setHomes(rows);
       setHomeError(rows.length ? '' : error.message);
     }
@@ -1789,12 +1805,28 @@ export default function TransitApp() {
       pinned: false,
       ...item
     };
-    writeLocalHomes([localRow, ...readLocalHomes().filter((row) => JSON.stringify(row.payload) !== JSON.stringify(item.payload))]);
-    setTab('home');
+    const kind = nearbyKindOf(item);
+    const previous = kind
+      ? readLocalHomes().filter((row) => nearbyKindOf(row) === kind)
+      : readLocalHomes().filter((row) => JSON.stringify(row.payload) === JSON.stringify(item.payload));
+    const nextLocal = kind
+      ? replaceNearbyKind(readLocalHomes(), kind, localRow)
+      : [localRow, ...readLocalHomes().filter((row) => JSON.stringify(row.payload) !== JSON.stringify(item.payload))];
+    writeLocalHomes(nextLocal);
+    setHomes(sortHomes(nextLocal));
+    if (item.type !== 'nearby') setTab('home');
+    else setNearbyNote(kind === 'work' ? t('nearbySavedWork') : t('nearbySavedHome'));
     try {
+      for (const old of previous) {
+        if (old.id && !String(old.id).startsWith('local-')) {
+          await api(`/api/homes/${old.id}`, { method: 'DELETE' }).catch(() => {});
+        }
+      }
       const json = await api('/api/homes', { method: 'POST', body: JSON.stringify(item) });
       if (json.data?.id) {
-        writeLocalHomes([json.data, ...readLocalHomes().filter((row) => row.id !== localRow.id && row.id !== json.data.id)]);
+        writeLocalHomes(kind
+          ? replaceNearbyKind(readLocalHomes().filter((row) => row.id !== localRow.id), kind, json.data)
+          : [json.data, ...readLocalHomes().filter((row) => row.id !== localRow.id && row.id !== json.data.id)]);
       }
       setHomeError('');
     } catch {
@@ -1978,9 +2010,16 @@ export default function TransitApp() {
   }, []);
 
   useEffect(() => {
+    if (nearbyAutoStarted.current) return;
+    nearbyAutoStarted.current = true;
+    if (hasRestorableArrival(readArrivalPref())) return;
+    loadNearbyBoard();
+  }, []);
+
+  useEffect(() => {
     if (arrivalRestored.current || !routes.length) return;
     const pref = readArrivalPref();
-    if (!pref.service || pref.stopIndex === '' || pref.stopIndex == null) {
+    if (!hasRestorableArrival(pref)) {
       arrivalRestored.current = true;
       return;
     }
@@ -2156,7 +2195,7 @@ export default function TransitApp() {
             {list.map((stop, i) => (
               <li key={`${stop.stop || stop.name?.zh || i}-${stop.time || i}`}>
                 <span>{loc(stop.name)}</span>
-                <span>{clk(stop.time)}{stop.estimated ? ` · ${t('stopTimeEst')}` : ''}</span>
+                <span>{clkClock(stop.time)}{stop.estimated ? ` · ${t('stopTimeEst')}` : ''}</span>
               </li>
             ))}
           </ol>
@@ -2248,13 +2287,13 @@ export default function TransitApp() {
           <div className="eta">
             <div>
               {destLabel && i === 0 ? <span className="badge">{t('earliestArrival')}</span> : null}{service}
-              {x.route ? <div className="muted">{clk(board)} {t('rideDeparts')}</div> : null}
+              {x.route ? <div className="muted">{clkClock(board)} {t('rideDeparts')}</div> : null}
               {x.arrive ? (
-                <div className="muted">{clk(x.arrive)} {t('rideArrives')}{destLabel ? `${lang === 'zh' ? '' : ' '}${destLabel}` : ''}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
+                <div className="muted">{clkClock(x.arrive)} {t('rideArrives')}{destLabel ? `${lang === 'zh' ? '' : ' '}${destLabel}` : ''}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
               ) : null}
               {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
             </div>
-            <span className="mins">{etaMode === 'countdown' ? clkClock(board) : t('minutes', wait)}</span>
+            <span className="mins">{etaPrimaryText(etaMode, { clock: clkClock(board), minutesText: t('minutes', wait) })}</span>
           </div>
           {renderStopTimes(stopId, x.stops, opts.fetchStops ? () => loadArrivalStops(x) : null)}
           {opts.onCatchUp && catchUpDue(board) ? (
@@ -2427,6 +2466,15 @@ export default function TransitApp() {
           <h2 className="text-lg font-bold">{t('arrivalsHeading')}</h2>
           <div className="row-actions mt-2">
             <Button variant="outline" className="tab" type="button" onClick={loadNearbyBoard}>{t('nearbyBoardBtn')}</Button>
+            {splitHomes(homes).collections.map((item) => (
+              <Button
+                key={item.id}
+                variant="outline"
+                className="tab"
+                type="button"
+                onClick={() => openHome(item)}
+              >{loc(nearbyCollectionTitle(nearbyKindOf(item)))}</Button>
+            ))}
           </div>
           {nearbyLoading ? <p className="muted mt-2">{t('loading')}</p> : null}
           {nearbyNote ? <p className="muted mt-2">{nearbyNote}</p> : null}
@@ -2437,13 +2485,13 @@ export default function TransitApp() {
               <div className="row-actions">
                 <button className="tab" type="button" onClick={() => saveHome({
                   type: 'nearby',
-                  title: { zh: '回家附近', en: 'Home nearby' },
+                  title: nearbyCollectionTitle('home'),
                   subtitle: { zh: nearbyBoard.clusters[0]?.label_tc || '', en: nearbyBoard.clusters[0]?.label_en || '' },
                   payload: { lat: nearbyBoard.lat, lng: nearbyBoard.lng, radius: nearbyBoard.radius, kind: 'home' }
                 })}>{t('saveNearbyHome')}</button>
                 <button className="tab" type="button" onClick={() => saveHome({
                   type: 'nearby',
-                  title: { zh: '返工附近', en: 'Work nearby' },
+                  title: nearbyCollectionTitle('work'),
                   subtitle: { zh: nearbyBoard.clusters[0]?.label_tc || '', en: nearbyBoard.clusters[0]?.label_en || '' },
                   payload: { lat: nearbyBoard.lat, lng: nearbyBoard.lng, radius: nearbyBoard.radius, kind: 'work' }
                 })}>{t('saveNearbyWork')}</button>
@@ -2843,10 +2891,10 @@ export default function TransitApp() {
                                 {dest ? <div>{t('towards')}{lang === 'zh' ? '' : ' '}{dest}</div> : null}
                                 {fareNote(transferResult.json.firstFare || firstService)}
                                 <div className="eta">
-                                  <b>{clk(row.eta)}</b>
-                                  <span className="mins">{t('minutes', mins(row.eta))}</span>
+                                  <b>{clkClock(row.eta)}</b>
+                                  <span className="mins">{etaMins(row.eta)}</span>
                                 </div>
-                                {row.arrive ? <div className="muted">{clk(row.arrive)} {t('rideArrives')}{row.rideMinutes != null ? ` · ${t('rideMins', row.rideMinutes)}` : ''}</div> : null}
+                                {row.arrive ? <div className="muted">{clkClock(row.arrive)} {t('rideArrives')}{row.rideMinutes != null ? ` · ${t('rideMins', row.rideMinutes)}` : ''}</div> : null}
                                 {row.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
                                 <div className="muted">{t('pickDeparture')}</div>
                               </button>
@@ -2863,7 +2911,7 @@ export default function TransitApp() {
                                   type="button"
                                   onClick={() => goTransfer({ phase: 'connections', selectedDeparture: row.eta })}
                                 >
-                                  {clk(row.eta)} · {t('minutes', mins(row.eta))}
+                                  {clkClock(row.eta)} · {t('minutes', mins(row.eta))}
                                 </Button>
                               ))}
                             </div>
@@ -2897,10 +2945,10 @@ export default function TransitApp() {
                           <div>{loc(x.from)} → {loc(x.to)}</div>
                           {fareNote(x)}
                           <div className="eta">
-                            <b>{clk(x.eta)}</b>
-                            <span className="mins">{t('minutes', mins(x.eta))}</span>
+                            <b>{clkClock(x.eta)}</b>
+                            <span className="mins">{etaMins(x.eta)}</span>
                           </div>
-                          {x.arrive ? <div className="muted">{clk(x.arrive)} {t('rideArrives')} {loc(x.to)}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div> : null}
+                          {x.arrive ? <div className="muted">{clkClock(x.arrive)} {t('rideArrives')} {loc(x.to)}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div> : null}
                         </button>
                       ))
                       : <p className="muted">{t('noDirect')}</p>}
@@ -2915,15 +2963,15 @@ export default function TransitApp() {
                         {transferResult.json.firstArrivalAtInterchange ? (
                           <>
                             <div className="eta mt-2">
-                              <b>{clk(transferResult.json.firstArrivalAtInterchange)}</b>
-                              <span className="mins">{mins(transferResult.json.firstArrivalAtInterchange) == null ? '' : t('minutes', mins(transferResult.json.firstArrivalAtInterchange))}</span>
+                              <b>{clkClock(transferResult.json.firstArrivalAtInterchange)}</b>
+                              <span className="mins">{etaMins(transferResult.json.firstArrivalAtInterchange)}</span>
                             </div>
                             <div className="muted">{t('firstArrival')}</div>
                           </>
                         ) : null}
                         {fareNote(transferResult.json.firstFare || firstService)}
                         {transferResult.json.boardDeparture && !transferResult.json.leftBoard ? (
-                          <div className="muted mt-2">{t('boardAt')}：{clk(transferResult.json.boardDeparture)}</div>
+                          <div className="muted mt-2">{t('boardAt')}：{clkClock(transferResult.json.boardDeparture)}</div>
                         ) : null}
                         {transferResult.json.arrivalEstimated ? (
                           <div className="muted mt-2">{t('firstArrivalGuessed')}</div>
@@ -3080,7 +3128,7 @@ export default function TransitApp() {
                 {(mtrResult.trains || []).length
                   ? mtrResult.trains.map((x, i) => {
                     const wait = x.arrive ? (x.arriveMinutes ?? mins(x.arrive)) : (x.minutes != null ? x.minutes : mins(x.time));
-                    const when = x.time ? clk(x.time) : '';
+                    const when = x.time ? clkClock(x.time) : '';
                     const plat = x.platform ? t('platform', x.platform) : '';
                     const destName = loc(mtrResult.dest);
                     const isLrt = currentLineKey === 'LRT' || x.line === 'LRT';
@@ -3100,14 +3148,14 @@ export default function TransitApp() {
                             <b>{t('towards')}{lang === 'zh' ? '' : ' '}{loc(x.dest)}</b>
                             {clockLine ? <div className="muted">{clockLine}{destRide ? ` · ${t('rideDeparts')}` : ''}</div> : null}
                             {x.arrive && destRide ? (
-                              <div className="muted">{clk(x.arrive)} {t('rideArrives')}{lang === 'zh' ? '' : ' '}{destName}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
+                              <div className="muted">{clkClock(x.arrive)} {t('rideArrives')}{lang === 'zh' ? '' : ' '}{destName}{x.rideMinutes != null ? ` · ${t('rideMins', x.rideMinutes)}` : ''}</div>
                             ) : null}
                             {x.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
                             {isLrt && i === 0 && mtrResult.trains[1]?.time ? (
                               <div className="muted">{t('missSameNext', mins(mtrResult.trains[1].time) ?? mtrResult.trains[1].minutes)}</div>
                             ) : null}
                           </div>
-                          <span className="mins">{wait == null ? '' : (etaMode === 'countdown' ? clkClock(x.time || x.arrive) : t('minutes', wait))}</span>
+                          <span className="mins">{wait == null ? '' : etaPrimaryText(etaMode, { clock: clkClock(x.time || x.arrive), minutesText: t('minutes', wait) })}</span>
                         </div>
                         {isLrt ? null : renderStopTimes(stopId, terminus ? { terminus: true } : x.stops, terminus || x.stops?.length > 1 ? null : () => loadMtrStops(x))}
                       </div>
@@ -3141,32 +3189,75 @@ export default function TransitApp() {
           <p className="muted">{t('homeHelp')}</p>
           <div>
             {homeError ? <div className="note">{homeError}</div> : null}
-            {!homes.length ? <p className="muted mt-3">{t('homeEmpty')}</p> : null}
-            {homes.map((item) => (
-              <div className="item" key={item.id}>
-                <b>{loc(item.title)}</b>
-                {item.pinned ? <span className="badge"> {t('pin')}</span> : null}
-                <div className="muted">{loc(item.subtitle)} · {typeLabel(item.type)}</div>
-                <div className="row-actions">
-                  <button className="btn" type="button" onClick={() => openHome(item)}>{t('open')}</button>
-                  <button className="tab" type="button" onClick={async () => {
-                    const nextPinned = !item.pinned;
-                    writeLocalHomes(readLocalHomes().map((row) => row.id === item.id ? { ...row, pinned: nextPinned } : row));
-                    try {
-                      await api(`/api/homes/${item.id}`, { method: 'PATCH', body: JSON.stringify({ pinned: nextPinned }) });
-                    } catch {}
-                    renderHome();
-                  }}>{item.pinned ? t('unpin') : t('pin')}</button>
-                  <button className="tab" type="button" onClick={async () => {
-                    writeLocalHomes(readLocalHomes().filter((row) => row.id !== item.id));
-                    try {
-                      await api(`/api/homes/${item.id}`, { method: 'DELETE' });
-                    } catch {}
-                    renderHome();
-                  }}>{t('remove')}</button>
-                </div>
-              </div>
-            ))}
+            {(() => {
+              const { collections, routes } = splitHomes(homes);
+              if (!homes.length) return <p className="muted mt-3">{t('homeEmpty')}</p>;
+              return (
+                <>
+                  {collections.length ? (
+                    <div className="mt-3">
+                      <h3 className="font-bold">{t('nearbyCollectionsHeading')}</h3>
+                      <p className="muted">{t('nearbyCollectionsHelp')}</p>
+                      {collections.map((item) => (
+                        <div className="item" key={item.id}>
+                          <b>{loc(nearbyCollectionTitle(nearbyKindOf(item)))}</b>
+                          {item.pinned ? <span className="badge"> {t('pin')}</span> : null}
+                          <div className="muted">{loc(item.subtitle)} · {t('typeNearby')}</div>
+                          <div className="row-actions">
+                            <button className="btn" type="button" onClick={() => openHome(item)}>{t('openNearbyLive')}</button>
+                            <button className="tab" type="button" onClick={async () => {
+                              const nextPinned = !item.pinned;
+                              writeLocalHomes(readLocalHomes().map((row) => row.id === item.id ? { ...row, pinned: nextPinned } : row));
+                              try {
+                                await api(`/api/homes/${item.id}`, { method: 'PATCH', body: JSON.stringify({ pinned: nextPinned }) });
+                              } catch {}
+                              renderHome();
+                            }}>{item.pinned ? t('unpin') : t('pin')}</button>
+                            <button className="tab" type="button" onClick={async () => {
+                              writeLocalHomes(readLocalHomes().filter((row) => row.id !== item.id));
+                              try {
+                                await api(`/api/homes/${item.id}`, { method: 'DELETE' });
+                              } catch {}
+                              renderHome();
+                            }}>{t('remove')}</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {routes.length ? (
+                    <div className="mt-4">
+                      <h3 className="font-bold">{t('savedRoutesHeading')}</h3>
+                      {routes.map((item) => (
+                        <div className="item" key={item.id}>
+                          <b>{loc(item.title)}</b>
+                          {item.pinned ? <span className="badge"> {t('pin')}</span> : null}
+                          <div className="muted">{loc(item.subtitle)} · {typeLabel(item.type)}</div>
+                          <div className="row-actions">
+                            <button className="btn" type="button" onClick={() => openHome(item)}>{t('open')}</button>
+                            <button className="tab" type="button" onClick={async () => {
+                              const nextPinned = !item.pinned;
+                              writeLocalHomes(readLocalHomes().map((row) => row.id === item.id ? { ...row, pinned: nextPinned } : row));
+                              try {
+                                await api(`/api/homes/${item.id}`, { method: 'PATCH', body: JSON.stringify({ pinned: nextPinned }) });
+                              } catch {}
+                              renderHome();
+                            }}>{item.pinned ? t('unpin') : t('pin')}</button>
+                            <button className="tab" type="button" onClick={async () => {
+                              writeLocalHomes(readLocalHomes().filter((row) => row.id !== item.id));
+                              try {
+                                await api(`/api/homes/${item.id}`, { method: 'DELETE' });
+                              } catch {}
+                              renderHome();
+                            }}>{t('remove')}</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              );
+            })()}
           </div>
         </div>
       </section>

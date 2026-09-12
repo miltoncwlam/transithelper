@@ -8,6 +8,7 @@ const useLocalApiBase = fs.existsSync(localApiBase) && !process.env.VERCEL;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  allowedDevOrigins: ['127.0.0.1'],
   outputFileTracingIncludes: {
     '*': [
       './node_modules/@swc/helpers/**/*',

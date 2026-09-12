@@ -9,7 +9,7 @@ import {
   metresBetween,
   uidOf
 } from '../00-required/clusters.js';
-import { groupNearbyStops } from '../00-required/nearbyBoard.js';
+import { groupNearbyStops, nearbyBoard } from '../00-required/nearbyBoard.js';
 import { planJourneyOptions } from '../00-required/journey.js';
 import { addGraphService, addGraphStop, emptyGraph } from '../00-required/topology.js';
 
@@ -165,4 +165,33 @@ test('gps origin uses nearest poles when originStops is empty', async () => {
     }
   );
   assert.ok(result.options.some((row) => row.first?.route === '1'));
+});
+
+test('nearby board groups buses and GMB and skips empty clocks', async () => {
+  const kmb = { ...stop('K1', { name_tc: '碼頭', lat: 22.2975, long: 114.1722 }), metres: 10 };
+  const gmb = { ...stop('G1', { co: 'GMB', name_tc: '碼頭', lat: 22.29755, long: 114.17225 }), metres: 12 };
+  const result = await nearbyBoard(null, [kmb, gmb], [], kmb.lat, kmb.long, {
+    etasForStop: async (_cache, pole) => {
+      if (pole.stop === 'K1') {
+        return [
+          { co: 'KMB', route: '1', dir: 'O', eta: new Date(Date.now() + 180000).toISOString(), dest_tc: '尖沙咀碼頭' },
+          { co: 'KMB', route: '1A', dir: 'O', eta: null, dest_tc: '中環' }
+        ];
+      }
+      return [{ co: 'GMB', route: '26', dir: 'O', eta: new Date(Date.now() + 240000).toISOString(), dest_tc: '尖沙咀' }];
+    }
+  });
+  assert.equal(result.clusters.length, 1);
+  assert.deepEqual(result.clusters[0].buses.map((row) => row.service.route), ['1']);
+  assert.deepEqual(result.clusters[0].gmbs.map((row) => row.service.route), ['26']);
+});
+
+test('nearby board stays empty when every pole has an empty feed', async () => {
+  const pole = { ...stop('K1', { name_tc: '碼頭', lat: 22.2975, long: 114.1722 }), metres: 10 };
+  const result = await nearbyBoard(null, [pole], [], pole.lat, pole.long, {
+    etasForStop: async () => []
+  });
+  assert.equal(result.clusters.length, 1);
+  assert.equal(result.clusters[0].buses.length, 0);
+  assert.equal(result.clusters[0].gmbs.length, 0);
 });

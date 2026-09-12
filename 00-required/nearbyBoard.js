@@ -87,6 +87,7 @@ export async function nearbyBoard(cache, allStops, routes, lat, lng, opts = {}) 
   const origin = { lat: Number(lat), long: Number(lng) };
   const nearby = nearestStops(allStops, lat, lng, radius, Math.min(60, Number(opts.limit) || 40));
   const clusters = groupNearbyStops(nearby, origin);
+  const fetchEtas = opts.etasForStop || etasForStop;
   const poleBudget = Math.min(ETA_POLE_CAP, clusters.reduce((n, c) => n + Math.min(4, c.stops.length), 0));
   let used = 0;
   const live = [];
@@ -94,7 +95,7 @@ export async function nearbyBoard(cache, allStops, routes, lat, lng, opts = {}) 
     const poles = cluster.stops.slice(0, 4);
     const take = poles.slice(0, Math.max(0, poleBudget - used));
     used += take.length;
-    const lists = await mapPool(take, 6, (stop) => etasForStop(cache, stop, routes).catch(() => []));
+    const lists = await mapPool(take, 6, (stop) => fetchEtas(cache, stop, routes).catch(() => []));
     const byKey = new Map();
     take.forEach((stop, i) => {
       for (const eta of lists[i] || []) {

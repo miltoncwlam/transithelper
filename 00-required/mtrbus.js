@@ -1,3 +1,5 @@
+import { MTR_BUS_STOPS } from './mtrbusStops.js';
+
 /** MTR Bus / Feeder Bus live schedule. POST-only official API; empty body = empty UI. */
 const BASE = 'https://rt.data.gov.hk/v1/transport/mtr/bus/getSchedule';
 const TTL = 8 * 1000;
@@ -67,7 +69,7 @@ function parseSeconds(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function etaFromBus(bus) {
+export function etaFromBus(bus) {
   if (bus?.isScheduled === '1') return null;
   const sec = parseSeconds(bus?.arrivalTimeInSecond);
   if (sec == null) {
@@ -78,18 +80,36 @@ function etaFromBus(bus) {
   return new Date(Date.now() + sec * 1000).toISOString();
 }
 
+async function mapPool(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i;
+      i += 1;
+      out[idx] = await fn(items[idx], idx);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) || 0 }, worker));
+  return out;
+}
+
 export function mtrBusStopsFromSchedule(payload, routeName) {
   const route = String(routeName || payload?.routeName || '').toUpperCase();
-  return (payload?.busStop || []).map((row, i) => ({
-    stop: String(row.busStopId || ''),
-    seq: i + 1,
-    co: 'MTRB',
-    name_tc: row.busStopNameChi || row.busStopNameEng || '',
-    name_en: row.busStopNameEng || row.busStopNameChi || '',
-    lat: row.latitude != null ? Number(row.latitude) : null,
-    long: row.longitude != null ? Number(row.longitude) : null,
-    route
-  })).filter((row) => row.stop);
+  return (payload?.busStop || []).map((row, i) => {
+    const id = String(row.busStopId || '');
+    const named = MTR_BUS_STOPS[id] || {};
+    return {
+      stop: id,
+      seq: i + 1,
+      co: 'MTRB',
+      name_tc: row.busStopNameChi || row.busStopNameEng || named.name_tc || '',
+      name_en: row.busStopNameEng || row.busStopNameChi || named.name_en || '',
+      lat: row.latitude != null ? Number(row.latitude) : (named.lat ?? null),
+      long: row.longitude != null ? Number(row.longitude) : (named.long ?? null),
+      route
+    };
+  }).filter((row) => row.stop);
 }
 
 export async function mtrBusRouteStops(cache, service) {
@@ -101,14 +121,15 @@ export async function mtrBusRouteStops(cache, service) {
 export async function mtrBusStopEtas(cache, stop, routes) {
   const id = String(stop?.stop || stop || '');
   const hinted = String(stop?.route || '').toUpperCase();
+  const fromDir = [...new Set((routes || []).filter((row) => String(row.co).toUpperCase() === 'MTRB').map((row) => String(row.route).toUpperCase()))];
   const names = hinted
     ? [hinted]
-    : [...new Set((routes || []).filter((row) => String(row.co).toUpperCase() === 'MTRB').map((row) => String(row.route).toUpperCase()))];
-  const out = [];
-  for (const route of names.slice(0, 8)) {
+    : (fromDir.length ? fromDir : MTR_BUS_ROUTES.map((row) => row.route));
+  const lists = await mapPool(names, 4, async (route) => {
     const payload = await fetchSchedule(cache, route);
     const row = (payload?.busStop || []).find((item) => String(item.busStopId) === id);
-    if (!row) continue;
+    if (!row) return [];
+    const out = [];
     for (const bus of row.bus || []) {
       const eta = etaFromBus(bus);
       if (!eta) continue;
@@ -118,11 +139,10 @@ export async function mtrBusStopEtas(cache, stop, routes) {
         dir: 'O',
         eta,
         dest_tc: bus.destinationChi || bus.dest_ch || '',
-        dest_en: bus.destinationEng || bus.dest_en || '',
-        rmk_tc: bus.isScheduled === '1' ? '時間表' : '',
-        rmk_en: bus.isScheduled === '1' ? 'Scheduled' : ''
+        dest_en: bus.destinationEng || bus.dest_en || ''
       });
     }
-  }
-  return out;
+    return out;
+  });
+  return lists.flat();
 }

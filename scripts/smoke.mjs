@@ -19,6 +19,16 @@ async function get(path) {
   return { ok: res.ok, status: res.status, json };
 }
 
+async function getRetry(path, { tries = 3, delay = 900 } = {}) {
+  let last;
+  for (let i = 0; i < tries; i += 1) {
+    last = await get(path);
+    if (last.ok && (last.json.data || []).length) return last;
+    if (i < tries - 1) await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  return last;
+}
+
 async function post(path, body) {
   const res = await fetch(BASE + path, {
     method: 'POST',
@@ -140,7 +150,7 @@ try {
     } else console.log('ok Light Rail Tuen Mun Ferry Pier', trains.length, 'trains', lrt.json.emptyReason || 'live');
   }
 
-  const gmbLookup = await get('/api/gmb/lookup?route=811');
+  const gmbLookup = await getRetry('/api/gmb/lookup?route=811');
   if (!gmbLookup.ok) fail(`gmb 811 HTTP ${gmbLookup.status}`);
   else if (!(gmbLookup.json.data || []).length) fail('gmb 811 lookup empty');
   else if ((gmbLookup.json.data || []).some((row) => row.co !== 'GMB')) fail('gmb 811 mislabelled');
@@ -283,7 +293,7 @@ try {
     else console.log('ok citybus 1 inbound', ctb1.json.data.length, 'stops', named[0].name_tc || named[0].name_en);
   } else console.log('ok citybus 1 inbound empty from upstream');
 
-  const gmb11 = await get('/api/gmb/lookup?route=11');
+  const gmb11 = await getRetry('/api/gmb/lookup?route=11');
   if (!gmb11.ok) fail(`gmb 11 HTTP ${gmb11.status}`);
   else if (!(gmb11.json.data || []).length) fail('gmb 11 lookup empty');
   else {
@@ -303,7 +313,7 @@ try {
   else {
     const rows = routesDir.json.data || [];
     const cos = new Set(rows.map((row) => String(row.co || 'KMB').toUpperCase()));
-    for (const need of ['KMB', 'CTB', 'GMB', 'NLB']) {
+    for (const need of ['KMB', 'CTB', 'GMB', 'NLB', 'MTRB']) {
       if (!cos.has(need)) fail(`directory missing ${need}`);
     }
     const hasLwb = cos.has('LWB') || rows.some((row) => /^A\d+|E\d+|NA\d+|S\d+/i.test(String(row.route || '')) && String(row.co || '').toUpperCase() !== 'CTB');
@@ -327,6 +337,27 @@ try {
   await checkSearch('A35', 'NLB', SEARCH_MS);
   await checkSearch('673', 'KMB', Math.max(SEARCH_MS, 15000));
   await checkSearch('811', 'GMB', Math.max(SEARCH_MS, 10000));
+  await checkSearch('K12', 'MTRB', Math.max(SEARCH_MS, 10000));
+
+  const mtrbStops = await get('/api/mtrbus/route-stop/K12');
+  if (!mtrbStops.ok) fail(`mtrbus K12 HTTP ${mtrbStops.status}`);
+  else if (!(mtrbStops.json.data || []).length && mtrbStops.json.error) fail(`mtrbus K12 ${JSON.stringify(mtrbStops.json)}`);
+  else if ((mtrbStops.json.data || []).length && !(mtrbStops.json.data || []).some((row) => row.name_tc || row.name_en)) fail('mtrbus K12 all stops unnamed');
+  else if ((mtrbStops.json.data || []).some((row) => row.name_tc && String(row.name_tc) === String(row.stop))) fail('mtrbus K12 stop still showing id as name');
+  else console.log('ok MTR Bus K12', (mtrbStops.json.data || []).length, 'stops', mtrbStops.json.data?.find((row) => row.name_tc)?.name_tc || 'empty feed');
+
+  if ((mtrbStops.json.data || []).length) {
+    const pole = mtrbStops.json.data[0].stop;
+    const mtrbEta = await get(`/api/mtrbus/eta/K12/${encodeURIComponent(pole)}`);
+    if (!mtrbEta.ok) fail(`mtrbus K12 eta HTTP ${mtrbEta.status}`);
+    else if ((mtrbEta.json.data || []).some((row) => !row.eta)) fail(`mtrbus K12 invented empty eta ${JSON.stringify(mtrbEta.json.data.slice(0, 2))}`);
+    else console.log('ok MTR Bus K12 eta', (mtrbEta.json.data || []).length, 'live');
+  }
+
+  const nearbyBoard = await get('/api/nearby-board?lat=22.2975&lng=114.1722&radius=200');
+  if (!nearbyBoard.ok) fail(`nearby-board ${nearbyBoard.status} ${JSON.stringify(nearbyBoard.json)}`);
+  else if (!Array.isArray(nearbyBoard.json.clusters)) fail(`nearby-board missing clusters ${JSON.stringify(nearbyBoard.json)}`);
+  else console.log('ok nearby-board TST', nearbyBoard.json.clusters.length, 'clusters');
 
   const search673 = await get('/api/search-live?route=673');
   if (!search673.ok) fail(`search-live 673 HTTP ${search673.status}`);
@@ -343,9 +374,15 @@ try {
   const search11 = await get('/api/search-live?route=11');
   if (!search11.ok) fail(`search-live 11 HTTP ${search11.status}`);
   else {
-    const keep = search11.json.keep || [];
-    const hasGmb = keep.some((z) => String(z.service?.co || '').toUpperCase() === 'GMB' && z.service?.gmb_route_id);
+    let keep = search11.json.keep || [];
+    let hasGmb = keep.some((z) => String(z.service?.co || '').toUpperCase() === 'GMB' && z.service?.gmb_route_id);
     const lookup11 = gmb11.json.data || [];
+    if (lookup11.length && !hasGmb) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const retry = await get('/api/search-live?route=11');
+      keep = retry.json.keep || keep;
+      hasGmb = keep.some((z) => String(z.service?.co || '').toUpperCase() === 'GMB' && z.service?.gmb_route_id);
+    }
     if (lookup11.length && !hasGmb) fail('search-live 11 missing GMB after lookup returned services');
     else console.log('ok search-live 11', keep.length, 'choices', hasGmb ? 'includes GMB' : 'no GMB (honest empty)');
   }

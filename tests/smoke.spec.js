@@ -27,6 +27,7 @@ test('guide and user manual', async ({ page, request }) => {
   await expect(page.locator('.guide h2')).toContainText(/使用說明|How to use/);
   await expect(page.locator('.guide')).not.toContainText(/練習場|playground/i);
   await expect(page.locator('.guide')).toContainText(/附近到站|Nearby arrivals/);
+  await expect(page.locator('.guide')).toContainText(/回家附近|home nearby/);
   await expect(page.locator('.guide')).toContainText(/輕鐵|Light Rail/);
   await expect(page.locator('.guide')).toContainText(/趕車助手|Catch-up helper/);
   const pdf = await request.get('/user-manual.pdf');
@@ -46,6 +47,14 @@ test('saved homes do not steal the arrivals tab', async ({ page }) => {
       payload: { route: '1' },
       pinned: false,
       createdAt: new Date().toISOString()
+    }, {
+      id: 'local-nearby',
+      type: 'nearby',
+      title: { zh: '回家附近', en: 'Home nearby' },
+      subtitle: { zh: '尖沙咀碼頭', en: 'Star Ferry' },
+      payload: { lat: 22.2975, lng: 114.1722, radius: 200, kind: 'home' },
+      pinned: false,
+      createdAt: new Date().toISOString()
     }]));
   });
   await page.goto('/');
@@ -54,6 +63,7 @@ test('saved homes do not steal the arrivals tab', async ({ page }) => {
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
   await expect(page.locator('button.tab-home')).toHaveAttribute('data-state', 'inactive');
+  await expect(page.getByRole('button', { name: /^回家附近$|^Home nearby$/ })).toBeVisible();
 });
 
 test('last bus restores on first open without stealing the tab', async ({ page }) => {
@@ -84,7 +94,44 @@ test('last bus restores on first open without stealing the tab', async ({ page }
   await expect(panel.locator('.arrival-board')).toBeVisible({ timeout: 40000 });
   await expect(panel).toContainText(/九巴 1|KMB 1/);
   await expect(panel).toContainText(/竹園|Chuk Yuen/);
-  await expect(panel).toContainText(/分鐘|min|沒有|no bus|目前找不到/i, { timeout: 40000 });
+  await expect(panel.locator('.nearby-board')).toHaveCount(0);
+  await expect(panel).toContainText(/分鐘|min|沒有|no bus|目前找不到|\d{1,2}:\d{2}|上午|下午/i, { timeout: 40000 });
+});
+
+test('nearby board loads on first open when there is no last bus', async ({ page }) => {
+  const eta = new Date(Date.now() + 7 * 60000).toISOString();
+  await page.addInitScript(() => {
+    navigator.geolocation.getCurrentPosition = (ok) => {
+      ok({ coords: { latitude: 22.2975, longitude: 114.1722, accuracy: 20 } });
+    };
+  });
+  await page.route('**/api/nearby-board**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      lat: 22.2975,
+      lng: 114.1722,
+      radius: 200,
+      clusters: [{
+        id: 'c1',
+        metres: 20,
+        label_tc: '尖沙咀碼頭',
+        label_en: 'Star Ferry',
+        buses: [{
+          service: { co: 'KMB', route: '1', bound: 'O', dest_tc: '尖沙咀碼頭', dest_en: 'Star Ferry' },
+          eta,
+          stop: { stop: 'A', co: 'KMB' }
+        }],
+        gmbs: []
+      }]
+    })
+  }));
+  await page.goto('/');
+  await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('button.tab-home')).toHaveAttribute('data-state', 'inactive');
+  await expect(page.locator('.nearby-board')).toBeVisible();
+  await expect(page.locator('section.panel.active .search-row')).toBeVisible();
+  await expect(page.getByRole('button', { name: /附近到站|Nearby arrivals/ })).toBeVisible();
 });
 
 test('MTR tab includes Light Rail and defaults to Tsuen Wan line', async ({ page }) => {
@@ -181,6 +228,160 @@ test('search lists NLB 1 and 3M', async ({ page }) => {
   if (await idle3m.count()) await idle3m.first().click();
   await expect(page.locator('.panel.active')).toContainText(/嶼巴 3M|NLB 3M|九巴 3M|KMB 3M/);
 });
+
+test('search lists MTR Bus K12', async ({ page }) => {
+  test.setTimeout(90000);
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  const panel = page.locator('.panel.active');
+  await panel.getByLabel(/路線，例如|Route, for example/).fill('K12');
+  await panel.getByRole('button', { name: /^查詢$|^Find$/ }).click();
+  await expect(panel).not.toContainText(/查詢逾時|The search timed out|沒有此路線|No matching route/);
+  await expect(page.getByRole('button', { name: /港鐵巴士.*K12|MTR Bus.*K12/ }).first()).toBeVisible({ timeout: 20000 });
+  await page.getByRole('button', { name: /港鐵巴士.*K12|MTR Bus.*K12/ }).first().click();
+  await expect(panel.getByRole('combobox', { name: /選擇上車站|Choose boarding stop/ })).toBeVisible({ timeout: 40000 });
+});
+
+test('clock vs countdown follows the selected mode', async ({ page }) => {
+  const eta = new Date(Date.now() + 7 * 60000).toISOString();
+  await page.addInitScript(() => {
+    localStorage.setItem('tb-eta-mode', 'clock');
+    navigator.geolocation.getCurrentPosition = (ok) => {
+      ok({ coords: { latitude: 22.2975, longitude: 114.1722, accuracy: 20 } });
+    };
+  });
+  await page.route('**/api/nearby-board**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      lat: 22.2975,
+      lng: 114.1722,
+      radius: 200,
+      clusters: [{
+        id: 'c1',
+        metres: 20,
+        label_tc: '尖沙咀碼頭',
+        label_en: 'Star Ferry',
+        buses: [{
+          service: { co: 'KMB', route: '1', bound: 'O', dest_tc: '尖沙咀碼頭', dest_en: 'Star Ferry' },
+          eta,
+          stop: { stop: 'A', co: 'KMB' }
+        }],
+        gmbs: []
+      }]
+    })
+  }));
+  await page.goto('/');
+  await page.getByRole('button', { name: /附近到站|Nearby arrivals/ }).click();
+  const row = page.locator('.nearby-board .choice').first();
+  await expect(row).toBeVisible();
+  await expect(row).not.toContainText(/7 分鐘|7 min/);
+  await page.getByLabel(/鐘面|Clock/).click();
+  await page.getByRole('option', { name: /倒數|Countdown/ }).click();
+  await expect(row).toContainText(/分鐘|min/);
+});
+
+test('nearby board uses GPS and does not invent empty rows', async ({ page }) => {
+  test.setTimeout(90000);
+  await page.addInitScript(() => {
+    navigator.geolocation.getCurrentPosition = (ok) => {
+      ok({ coords: { latitude: 22.2975, longitude: 114.1722, accuracy: 20 } });
+    };
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: /附近到站|Nearby arrivals/ }).click();
+  const board = page.locator('.nearby-board');
+  const empty = page.getByText(/附近車站目前沒有公布|No live arrivals|未能載入附近|Could not load nearby|未能取得位置|Location was not available/);
+  await expect(board.or(empty)).toBeVisible({ timeout: 45000 });
+  if (await board.count()) {
+    await expect(board).toContainText(/附近實時到站|Live nearby/);
+    await expect(board).not.toContainText(/估計|est/);
+  }
+});
+
+test('home nearby stays on arrivals and reopens the live board', async ({ page }) => {
+  test.setTimeout(90000);
+  const eta = new Date(Date.now() + 7 * 60000).toISOString();
+  const board = {
+    lat: 22.2975,
+    lng: 114.1722,
+    radius: 200,
+    clusters: [{
+      id: 'c1',
+      metres: 20,
+      label_tc: '尖沙咀碼頭',
+      label_en: 'Star Ferry',
+      buses: [{
+        service: { co: 'KMB', route: '1', bound: 'O', dest_tc: '尖沙咀碼頭', dest_en: 'Star Ferry' },
+        eta,
+        stop: { stop: 'A', co: 'KMB' }
+      }],
+      gmbs: []
+    }]
+  };
+  await page.addInitScript(() => {
+    navigator.geolocation.getCurrentPosition = (ok) => {
+      ok({ coords: { latitude: 22.2975, longitude: 114.1722, accuracy: 20 } });
+    };
+  });
+  await page.route('**/api/nearby-board**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(board)
+  }));
+  const homes = { rows: [] };
+  await page.route('**/api/homes**', async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const method = req.method();
+    const idMatch = url.pathname.match(/\/api\/homes\/([^/?]+)$/);
+    if (method === 'GET' && !idMatch) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: homes.rows }) });
+    }
+    if (method === 'POST') {
+      const item = JSON.parse(req.postData() || '{}');
+      const kind = item.type === 'nearby'
+        ? (String(item.payload?.kind || '').toLowerCase() === 'work' ? 'work' : 'home')
+        : null;
+      if (kind) {
+        homes.rows = homes.rows.filter((row) => !(row.type === 'nearby'
+          && (String(row.payload?.kind || '').toLowerCase() === 'work' ? 'work' : 'home') === kind));
+      }
+      const row = { id: `srv-${Date.now()}`, createdAt: new Date().toISOString(), pinned: false, ...item };
+      homes.rows = [row, ...homes.rows];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: row }) });
+    }
+    if (method === 'DELETE' && idMatch) {
+      homes.rows = homes.rows.filter((row) => row.id !== decodeURIComponent(idMatch[1]));
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: homes.rows }) });
+  });
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await page.getByRole('button', { name: /附近到站|Nearby arrivals/ }).click();
+  await expect(page.locator('.nearby-board')).toBeVisible();
+  await page.getByRole('button', { name: /儲存為回家附近|Save as home nearby/ }).click();
+  await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('button.tab-home')).toHaveAttribute('data-state', 'inactive');
+  await expect(page.getByText(/已儲存回家附近|Saved as home nearby/)).toBeVisible();
+  const chip = page.getByRole('button', { name: /^回家附近$|^Home nearby$/ });
+  await expect(chip).toHaveCount(1);
+  await page.getByRole('button', { name: /儲存為回家附近|Save as home nearby/ }).click();
+  await expect(chip).toHaveCount(1);
+  await page.getByRole('tab', { name: /我的回家路線|My travel home/ }).click();
+  await expect(page.getByRole('heading', { name: /回家／返工附近|Home \/ work nearby/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /已儲存路線|Saved routes/ })).toHaveCount(0);
+  await page.getByRole('button', { name: /開啟實時到站|Open live board/ }).click();
+  await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('.nearby-board')).toBeVisible();
+  await expect(page.locator('section.panel.active .search-row')).toBeVisible();
+  await page.locator('.nearby-board .choice').first().click();
+  await expect(page.locator('.arrival-board')).toBeVisible({ timeout: 40000 });
+  await expect(page.locator('.arrival-board')).toContainText(/九巴|KMB/);
+  await expect(page.locator('.arrival-board')).toContainText('1');
+});
+
 
 test('picking a route draws the official line then hides it on a new search', async ({ page }) => {
   test.setTimeout(120000);

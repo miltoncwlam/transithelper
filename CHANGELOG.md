@@ -6,9 +6,49 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.0.2**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.2.0**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.2.0 — 2026-09-12
+
+### Changed
+- hkbus’s street question is “what is coming at this pole”. If there is **no last bus** to restore, Arrivals now loads **附近到站** from GPS on first open — you do not have to tap the button. An empty operator feed stays empty. Location denied still leaves the route box; it does not invent clocks.
+- A saved last bus still restores on Arrivals and skips auto nearby, so you are not prompted for GPS just to reopen yesterday’s trip. Saved 回家附近 / 返工附近 still do not steal the tab.
+
+### Tests
+- Unit tests for when a last-bus pref is restorable.
+- Playwright: first open with no last bus shows the mocked nearby board on Arrivals; last-bus restore still hides auto nearby.
+
+---
+
+## 3.1.0 — 2026-09-12
+
+### Changed
+- Home nearby / work nearby now behave like a live board you reopen, not a bookmark that dumps you onto 我的回家路線. Saving **儲存為回家附近** or **儲存為返工附近** stays on Arrivals and shows a short confirmation. Saving again replaces the previous place of that kind so there is only one home and one work.
+- Arrivals shows chips **回家附近** / **返工附近** so you can reopen that GPS board without searching. 我的回家路線 lists those collections above saved bus / transfer / MTR routes; **開啟實時到站** reloads what the operator is publishing now. An empty feed stays empty.
+- Saved collections still do not steal the arrivals tab on first open. Opening a collection focuses the nearby board and leaves the last typed trip below it.
+
+### Tests
+- Unit tests for one-home-one-work replace and collapsing duplicate collections.
+- Playwright: save stays on arrivals, a second save keeps one chip, Open reloads the mocked board, tapping a row still locks that trip.
+
+---
+
+## 3.0.3 — 2026-09-12
+
+### Fixed
+- 鐘面／倒數 was swapped: picking **鐘面** still put minutes in the big number, and **倒數** put the clock there. The prominent ETA now follows the control. 開車／到達 and 沿途各站 stay as wall clocks so a countdown view does not turn hop times into another wait.
+- Nearby-board fetch failures were labelled as “未能取得位置”. Location denial stays `geoDenied`; an API miss now says it could not load, and an empty operator feed still stays empty.
+- 港鐵巴士 stop ETAs only scanned the first eight feeder routes when the pole had no route hint, so a live **K18** (or later) at that pole never appeared. All published MTR Bus routes are queried; timetable-only (`isScheduled`) rows stay hidden.
+- K12 (and other MTR Bus) live `getSchedule` rows have stop ids but no names. The boarding list is now filled from MTR’s published data dictionary (八號花園, 大埔墟站, …), not left blank and not invented.
+
+### Tests
+- Unit tests for clock vs countdown, MTR Bus scheduled-vs-live parsing, and nearby board grouping (KMB vs GMB, empty feed).
+- Playwright: K12 search, clock toggle on nearby board, nearby GPS board.
+- API smoke: directory includes MTRB, K12 search-live / route-stop / eta, `/api/nearby-board` at TST.
 
 ---
 
