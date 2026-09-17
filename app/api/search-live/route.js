@@ -7,6 +7,15 @@ import { gmbLookup } from '@/00-required/gmb.js';
 import { keepFromDirectory, keepFromServices, probeKmbRoute, searchLive } from '@/lib/searchLive.js';
 
 const BUDGET_MS = 6500;
+const GMB_MS = 12000;
+
+function hasGmbKeep(keep) {
+  return (keep || []).some((z) => String(z.service?.co || '').toUpperCase() === 'GMB' && z.service?.gmb_route_id);
+}
+
+function later(ms, value) {
+  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+}
 
 function mergeKeep(primary, extra) {
   const keep = [...(primary?.keep || [])];
@@ -56,14 +65,17 @@ export async function GET(request) {
     const work = searchLive(cache, directory, route, { gmbPromise: gmbEarly });
     const result = await Promise.race([
       work,
-      new Promise((resolve) => setTimeout(() => resolve(null), remaining))
+      later(remaining, null)
     ]);
-    if (result && (result.keep || []).length) return json(result);
-    const gmbWait = Math.max(500, BUDGET_MS - (Date.now() - started));
-    const gmbRows = await Promise.race([
-      gmbEarly,
-      new Promise((resolve) => setTimeout(() => resolve([]), gmbWait))
-    ]);
+    if (result && (result.keep || []).length && (hasGmbKeep(result.keep) || (fallback.keep || []).length)) {
+      return json(result);
+    }
+    const gmbWait = hasGmbKeep(result?.keep)
+      ? 0
+      : Math.max(8000, GMB_MS - (Date.now() - started));
+    const gmbRows = gmbWait
+      ? await Promise.race([gmbEarly, later(gmbWait, [])])
+      : [];
     const gmbKeep = keepFromServices(route, Array.isArray(gmbRows) ? gmbRows : []);
     const merged = mergeKeep(result || fallback, gmbKeep);
     if ((merged.keep || []).length) return json(merged);
@@ -75,7 +87,7 @@ export async function GET(request) {
     try {
       const gmbRows = await Promise.race([
         gmbEarly,
-        new Promise((resolve) => setTimeout(() => resolve([]), 2000))
+        later(8000, [])
       ]);
       const gmbKeep = keepFromServices(route, Array.isArray(gmbRows) ? gmbRows : []);
       if ((gmbKeep.keep || []).length) return json(gmbKeep);

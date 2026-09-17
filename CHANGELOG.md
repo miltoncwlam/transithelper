@@ -6,9 +6,17 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.5.1**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.5.2**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.5.2 — 2026-09-17
+
+### Fixed
+- Searching **811** (專線小巴, not 九巴) could return empty on a cold start: the KMB directory is “ready” first, GMB stubs have no route id, hydrate only covers the first 120 jobs (港島 / 九龍, not 新界 811), and `/api/search-live` dropped the etagmb lookup when its 6.5s budget was already spent. A GMB-only search now waits for that lookup (up to 12s) before saying there is no route.
+- GitHub Actions warms `/api/gmb/lookup?route=811` after the KMB directory, and Playwright waits for that lookup before tapping 查詢. The button match includes 專線小巴 / Minibus / GMB.
 
 ---
 

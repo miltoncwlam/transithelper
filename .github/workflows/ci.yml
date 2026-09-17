@@ -40,6 +40,18 @@ jobs:
             echo "try $i routes $n"
             if [ "${n:-0}" -gt 100 ]; then
               echo directory ready
+              echo warming GMB 811
+              for j in $(seq 1 20); do
+                curl -sS -o /tmp/tb-gmb.json -w 'gmb http %{http_code}\n' --max-time 20 "http://127.0.0.1:3001/api/gmb/lookup?route=811" || true
+                g=$(python3 -c "import json; d=json.load(open('/tmp/tb-gmb.json')); print(len(d.get('data') or []))" 2>/dev/null || echo 0)
+                echo "gmb try $j services $g"
+                if [ "${g:-0}" -gt 0 ]; then
+                  echo GMB 811 ready
+                  exit 0
+                fi
+                sleep 3
+              done
+              echo 'GMB 811 lookup still empty; Playwright will retry'
               exit 0
             fi
             sleep 3
