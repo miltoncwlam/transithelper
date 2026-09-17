@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#287d75">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="轉乘助手">
+  <meta name="apple-mobile-web-app-title" content="路線規劃">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="format-detection" content="telephone=no">
-  <title>巴士／小巴實時到站與轉乘助手</title>
+  <title>巴士／小巴實時到站與路線規劃</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
 </head>
@@ -17,7 +17,7 @@
   <main class="shell">
     <header class="app-header mb-4">
       <div>
-        <h1 id="appTitle" class="text-xl font-bold">巴士／小巴實時到站與轉乘助手</h1>
+        <h1 id="appTitle" class="text-xl font-bold">巴士／小巴實時到站與路線規劃</h1>
         <p id="appSubtitle" class="muted app-tagline">九巴／龍運／城巴／嶼巴／專線小巴，港鐵及輕鐵</p>
       </div>
       <div class="app-controls">
@@ -33,7 +33,7 @@
     <p id="a2hs" class="muted"></p>
     <nav class="tabs my-5">
       <button class="tab active" data-tab="arrivals">巴士／小巴</button>
-      <button class="tab" data-tab="transfer">轉乘助手</button>
+      <button class="tab" data-tab="transfer">路線規劃</button>
       <button class="tab" data-tab="mtr">港鐵／輕鐵</button>
       <button class="tab" data-tab="home">我的回家路線</button>
     </nav>
@@ -54,7 +54,7 @@
 
     <section id="transfer" class="panel">
       <div class="card">
-        <h2 id="transferHeading" class="text-lg font-bold">轉乘助手</h2>
+        <h2 id="transferHeading" class="text-lg font-bold">路線規劃</h2>
         <label class="block mt-3"><input id="nearby" type="checkbox" checked> <span id="nearbyLabel">同時顯示附近車站的其他選擇</span></label>
         <label class="block mt-2"><span id="radiusLabel">附近範圍</span>
           <select id="radius" class="field mt-1">
@@ -445,8 +445,8 @@ h1 { overflow-wrap: anywhere; }
   <script>
 globalThis.I18N = {
   zh: {
-    title: '巴士／小巴實時到站與轉乘助手',
-    subtitle: '九巴／龍運／城巴／嶼巴／專線小巴實時到站與轉車時間，港鐵及輕鐵到站',
+    title: '巴士／小巴實時到站與路線規劃',
+    subtitle: '九巴／龍運／城巴／嶼巴／專線小巴／港鐵巴士實時到站與轉車時間，港鐵與輕鐵',
     langBtn: 'English',
     refresh15: '15 秒',
     refresh30: '30 秒',
@@ -454,32 +454,86 @@ globalThis.I18N = {
     ready: (n) => `資料已就緒 · 共 ${n} 條路線服務`,
     loadFail: '無法載入路線資料。請重新整理後再試。',
     connectionRefused: '無法載入路線資料。請重新整理後再試。',
-    directMode: '此頁正直接讀取九巴／城巴／嶼巴／專線小巴／港鐵／輕鐵公開資料，無需 TransitBuddy 伺服器。轉乘仍按沿途到站時刻跟車。',
+    directMode: '此頁正直接讀取九巴／城巴／嶼巴／專線小巴／港鐵公開資料，無需 TransitBuddy 伺服器。轉乘仍按沿途到站時刻跟車。',
     tabArrivals: '巴士／小巴',
-    tabTransfer: '轉乘助手',
-    tabMtr: '港鐵／輕鐵',
+    tabTransfer: '路線規劃',
+    tabMtr: '港鐵',
     tabHome: '我的回家路線',
-    arrivalsHeading: '九巴／龍運／城巴／嶼巴／專線小巴實時到站',
-    routePlaceholder: '路線，例如 286C、962、11 或 811',
+    arrivalsHeading: '九巴／龍運／城巴／嶼巴／專線小巴／港鐵巴士實時到站',
+    routePlaceholder: '路線，例如 286C、962、K12、11 或 811',
     find: '查詢',
-    transferHeading: '轉乘助手',
+    transferHeading: '路線規劃',
+    transferHint: '選起點和終點，列出可乘的實時路線。',
     nearbyLabel: '同時顯示附近車站的其他選擇',
     radiusLabel: '附近範圍',
     m150: '150 米',
     m250: '250 米',
     m400: '400 米',
-    firstRouteLabel: '第一程路線',
-    destLabel: '終點站',
+    firstRouteLabel: '指定第一程（可留空）',
+    destLabel: '終點',
     destPlaceholder: '輸入站名',
+    originLabel: '起點',
+    originPlaceholder: '輸入站名',
+    originArea: '起點',
+    optionalRouteHelp: '可留空。系統會比較現有實時直達與一次轉乘。',
+    optionalInterchange: '指定轉車站（可留空）',
+    journeyFind: '搜尋',
+    searchingJourneys: '正在找可乘的實時路線…',
+    bestObserved: '最快',
+    observedOnly: '只顯示現正有實時的路線。',
+    preferredSlower: (n) => `你指定的路線約慢 ${n} 分鐘`,
+    preferredMissing: '指定路線現時沒有實時開出，仍列出其他選擇。',
+    pickJourney: '選擇這一程',
+    takeThisJourney: '就乘這一程',
+    journeyAlso: '其他選擇',
+    journeyLater: (clk) => `其後 ${clk}`,
+    journeyAlsoDirect: (route, slower, clk, arrive) => slower
+      ? `${route} 直達 · 遲 ${slower} 分鐘 · ${clk} 開${arrive ? ` · ${arrive} 到` : ''}`
+      : `${route} 直達 · ${clk} 開${arrive ? ` · ${arrive} 到` : ''}`,
+    journeyAlsoTransfer: (first, second, slower, clk, arrive) => slower
+      ? `${first} 轉 ${second} · 遲 ${slower} 分鐘 · ${clk} 開${arrive ? ` · ${arrive} 到` : ''}`
+      : `${first} 轉 ${second} · ${clk} 開${arrive ? ` · ${arrive} 到` : ''}`,
+    journeyFastestDirect: (route, board, arrive, dest) => `最快：${route}，約 ${board} 開，${arrive} 到${dest}。`,
+    journeyFastestWalk: (walk, stop, route, board, arrive) => `最快：步行約 ${walk} 分鐘到${stop}，乘 ${route}，約 ${board} 開，${arrive} 到。`,
+    journeyFastestTransfer: (first, second, board, arrive, inter, dest) => `最快：${first} 轉 ${second}，約 ${board} 開，於${inter || ''}轉車，${arrive} 到${dest || ''}。`,
+    journeyChangeAt: (stop) => `於${stop}轉車`,
+    journeySlower: (n) => `遲 ${n} 分鐘`,
+    boardWalkMins: (n, stop) => `步行約 ${n} 分鐘到${stop}`,
+    destWalkMins: (n) => `到終點再步行約 ${n} 分鐘`,
+    sameArea: '起點和終點太接近，請改選其他車站。',
+    needOriginDest: '請選擇起點和終點。',
+    walkMins: (n) => `轉車步行約 ${n} 分鐘`,
+    noJourney: '目前找不到由起點到終點的實時巴士／小巴。',
+    journeyTimeout: '比較未完成，請再試。',
+    graphStillLoading: '城巴／小巴路線圖尚未載入，選擇可能尚未齊全。',
+    cheaperBadge: '較抵',
+    cheaperVsTime: (slower, save) => `遲 ${slower} 分鐘 · 平 $${Number(save).toFixed(1)}`,
+    wageTimeNote: '較抵是把車費按香港法定最低工資（每小時 $43.1）換成時間後再比',
+    octopusFare: (n) => `八達通約 $${Number(n).toFixed(1)}`,
+    pretripHeading: '出門規劃',
+    pretripHelp: '按編定班距與交通估計，不是實時到站。日期預設明天。',
+    pretripDate: '日期',
+    pretripArriveBy: '要幾點前到（可留空）',
+    pretripFind: '估計出門時間',
+    pretripSearching: '正在用編定班距與交通估計比較選擇…',
+    pretripLeave: (clk) => `大約 ${clk} 出門（估計）`,
+    pretripRideTdas: (n) => `車程約 ${n} 分鐘（估計・交通）`,
+    pretripRideSched: (n) => `車程約 ${n} 分鐘（編定）`,
+    pretripWait: (n, head) => `候車約 ${n} 分鐘（估計・編定班距 ${head} 分鐘）`,
+    pretripJam: '擠塞（估計）',
+    pretripNoService: '這天沒有公布班次',
+    pretripNoDuration: '沒有編定車程，也沒有交通估計',
+    pretripEmpty: '找不到這天由起點到終點的編定班次。',
+    pretripNotLive: '這不是實時班次。',
     transferFind: '顯示即將開出班次',
-    mtrHeading: '港鐵／輕鐵下班車',
+    mtrHeading: '港鐵下班車',
     mtrLineLabel: '路綫',
     mtrStationLabel: '車站',
     mtrDestLabel: '此程終點（可留空）',
     mtrFind: '顯示下班車',
     mtrWait: '正在載入下班車…',
     homeHeading: '我的回家路線',
-    homeHelp: '無需登入。儲存在這部裝置上，可從巴士／小巴、轉乘或港鐵頁面按儲存。換瀏覽器或清除網站資料後就不會再見到。',
+    homeHelp: '無需登入。回家附近／返工附近是該位置的實時到站牌，每種只保留一處，可從到站頁一按重開。巴士、路線規劃或港鐵也可儲存。換瀏覽器或清除網站資料後就不會再見到。',
     noRoute: '找不到此路線。',
     checking: '正在核對現正行駛的班次及停站…',
     routeUnavailable: '暫時找不到此路線的巴士資料。',
@@ -511,9 +565,10 @@ globalThis.I18N = {
     notSelected: '未選擇',
     interchangeStop: '轉車站',
     chooseInterchange: '選擇轉車站',
-    destArea: '終點範圍',
+    destArea: '終點',
     noStops: '找不到車站。',
-    needFields: '請選擇第一程巴士、轉車站和終點。',
+    needFields: '請選擇起點和終點。',
+    incomplete: '請選擇起點和終點。',
     needBoard: '請選擇上車站，才能計算第一程到達轉車站的時間。',
     searching: '正在計算第一程到達轉車站時間及可轉乘班次…',
     searchingDepartures: '正在查詢上車站即將開出的班次…',
@@ -528,6 +583,8 @@ globalThis.I18N = {
     watchingLive: '會自動更新這一班接駁的實時到站，不會改成下一班。',
     watchingFirst: '正在留意這一班第一程',
     watchingFirstLive: '會自動更新這一班的實時開出和到達轉車站時間，不會改成下一班。',
+    watchingTrip: '正在留意這一班',
+    watchingTripLive: '會自動更新這一班的實時到站，不會改成下一班。',
     firstBusLeft: '這一班已開出，正在前往轉車站。',
     firstBusWaiting: '正在等候這一班開出。',
     liveLocked: '實時追蹤',
@@ -538,6 +595,7 @@ globalThis.I18N = {
     switchToEarlier: '改為這一班',
     changeConnection: '改選轉乘',
     changeDeparture: '改選班次',
+    backToRoutes: '返回路線',
     recommended: '建議轉乘',
     backup: '其他選擇',
     chosenDirect: '這班直達巴士可到達終點。',
@@ -548,7 +606,6 @@ globalThis.I18N = {
     timeout: '查詢逾時，目前找不到巴士。',
     transferTimeout: '轉乘查詢未完成。',
     none: '目前找不到巴士。',
-    incomplete: '請選擇轉車站和終點。',
     stay: '繼續乘搭同一路線',
     directHeading: '直達',
     direct: '直達，無需轉車',
@@ -566,13 +623,14 @@ globalThis.I18N = {
     lrtThisStop: '輕鐵只公布本站到站時間，沒有沿途各站。',
     lrtDestNotTerminus: '所選車站不是這些班次的總站，以下為本站全部輕鐵，沒有編造到達時間。',
     platform: (n) => `月台 ${n}`,
-    homeEmpty: '尚未儲存路線。查詢巴士／小巴、轉乘或港鐵後可按儲存。無需登入，只保存在這部裝置。',
+    homeEmpty: '尚未儲存。可把附近到站存成回家附近或返工附近，或查詢巴士／小巴、路線規劃、港鐵後按儲存。無需登入，只保存在這部裝置。',
     open: '開啟',
+    openNearbyLive: '開啟實時到站',
     remove: '移除',
     pin: '置頂',
     unpin: '取消置頂',
     typeArrival: '巴士／小巴到站',
-    typeTransfer: '轉乘',
+    typeTransfer: '路線規劃',
     typeMtr: '港鐵',
     nextTrains: '下班車',
     standard: (n) => `正常停站，共 ${n} 個站。`,
@@ -602,6 +660,26 @@ globalThis.I18N = {
     addHomeScreen: '可加入主畫面，方便在車站一按開啟。',
     reverseBound: '調轉方向',
     nearestStop: '找最近站',
+    nearbyBoardBtn: '附近到站',
+    nearbyBoardHeading: '附近實時到站',
+    nearbyBoardHelp: '顯示你附近站柱現正公布的巴士／小巴。沒有公布就會留空。沒有上次巴士時會自動載入。',
+    nearbyMetres: (n) => `約 ${n} 米`,
+    nearbyEmpty: '附近車站目前沒有公布實時班次。',
+    nearbyFail: '未能載入附近到站。沒有公布就會留空，不會編造時間。',
+    nearbyGmb: '專線小巴',
+    nearbyBuses: '巴士',
+    useMyLocation: '用我的位置',
+    etaClock: '鐘面',
+    etaCountdown: '倒數',
+    saveNearbyHome: '儲存為回家附近',
+    saveNearbyWork: '儲存為返工附近',
+    nearbySavedHome: '已儲存回家附近。到站頁可按「回家附近」重開，不必再搜。同一種只保留一處。',
+    nearbySavedWork: '已儲存返工附近。到站頁可按「返工附近」重開，不必再搜。同一種只保留一處。',
+    nearbyCollectionsHeading: '回家／返工附近',
+    nearbyCollectionsHelp: '重開該位置現正公布的實時到站。沒有公布就會留空。每種只保留一處。',
+    savedRoutesHeading: '已儲存路線',
+    typeNearby: '附近到站',
+    coMtrb: '港鐵巴士',
     homeSaveLocal: '伺服器未能儲存，已保存在這部裝置。',
     homeSaveFail: '未能儲存路線。',
     guideBtn: '使用說明',
@@ -615,11 +693,26 @@ globalThis.I18N = {
     playgroundSourceRoad: '沿道路行車路徑',
     playgroundSourceStraight: '未找到官方走線，暫用站與站直線',
     playgroundLoading: '正在載入路線幾何…',
-    totalMins: (n) => `全程約 ${n} 分鐘`
+    moreIdle: (n) => `沒有實時班次（${n}）`,
+    moreDepartures: '其他班次',
+    stopSearch: '搜尋車站',
+    noStopMatch: '沒有符合的車站',
+    totalMins: (n) => `全程約 ${n} 分鐘`,
+    catchUpTitle: '錯過了',
+    catchThis: '錯過了',
+    catchUpSearching: '正在查本站下一班實時…',
+    catchUpLive: '實時',
+    missCost: '錯過代價',
+    missSameNext: (n) => `下一班同一路線約 ${n} 分鐘後`,
+    missSameNone: '目前沒有下一班實時',
+    missAltLive: (route, n) => `較快選擇：改乘 ${route} 直達約 ${n} 分鐘後`,
+    missAltTransfer: (first, second, n) => `較快選擇：改乘 ${first} 轉 ${second} 約 ${n} 分鐘後`,
+    catchUpEmpty: '目前沒有下一班實時，也沒有較快的其他選擇。',
+    catchUpHelp: '錯過這一班時，顯示本站下一班同一路線。若已選終點，也會列出目前較快到達的實時選擇。不會叫你跑去下一站趕這一班。'
   },
   en: {
-    title: 'Bus / minibus live arrivals and transfer helper',
-    subtitle: 'KMB / Long Win / Citybus / NLB / GMB live arrivals, plus MTR and Light Rail',
+    title: 'Bus / minibus live arrivals and route planner',
+    subtitle: 'KMB / Long Win / Citybus / NLB / GMB / MTR Bus live arrivals, plus MTR and Light Rail',
     langBtn: '中文',
     refresh15: '15 seconds',
     refresh30: '30 seconds',
@@ -627,32 +720,86 @@ globalThis.I18N = {
     ready: (n) => `Directory ready · ${n} route services`,
     loadFail: 'Could not load the route directory. Refresh and try again.',
     connectionRefused: 'Could not load the route directory. Refresh and try again.',
-    directMode: 'This page calls KMB, Citybus, NLB, GMB, MTR and Light Rail public APIs directly, so it works without the TransitBuddy server. Transfer timing still follows the stop by stop.',
+    directMode: 'This page calls KMB, Citybus, NLB, GMB and MTR public APIs directly, so it works without the TransitBuddy server. Transfer timing still follows the stop by stop.',
     tabArrivals: 'Bus / minibus',
-    tabTransfer: 'Transfer helper',
-    tabMtr: 'MTR / Light Rail',
+    tabTransfer: 'Route planner',
+    tabMtr: 'MTR',
     tabHome: 'My travel home',
-    arrivalsHeading: 'KMB / Long Win / Citybus / NLB / GMB live arrivals',
-    routePlaceholder: 'Route, for example 286C, 962, 11 or 811',
+    arrivalsHeading: 'KMB / Long Win / Citybus / NLB / GMB / MTR Bus live arrivals',
+    routePlaceholder: 'Route, for example 286C, 962, K12, 11 or 811',
     find: 'Find',
-    transferHeading: 'Transfer helper',
+    transferHeading: 'Route planner',
+    transferHint: 'Pick from and to. Live bus and minibus options are listed.',
     nearbyLabel: 'Also show nearby stop choices',
     radiusLabel: 'Nearby range',
     m150: '150 metres',
     m250: '250 metres',
     m400: '400 metres',
-    firstRouteLabel: 'First route',
-    destLabel: 'Final stop',
+    firstRouteLabel: 'Preferred first route (optional)',
+    destLabel: 'To',
     destPlaceholder: 'Type a stop name',
+    originLabel: 'From',
+    originPlaceholder: 'Type a stop name',
+    originArea: 'From',
+    optionalRouteHelp: 'Optional. The app compares live directs and one-transfer trips.',
+    optionalInterchange: 'Preferred transfer stop (optional)',
+    journeyFind: 'Search',
+    searchingJourneys: 'Finding live routes…',
+    bestObserved: 'Fastest',
+    observedOnly: 'Only live trips are listed.',
+    preferredSlower: (n) => `Your preferred route is about ${n} min slower`,
+    preferredMissing: 'Your preferred route has no live departure now. Other options are still listed.',
+    pickJourney: 'Choose this trip',
+    takeThisJourney: 'Take this trip',
+    journeyAlso: 'Other options',
+    journeyLater: (clk) => `then ${clk}`,
+    journeyAlsoDirect: (route, slower, clk, arrive) => slower
+      ? `${route} direct · ${slower} min slower · ${clk}${arrive ? ` · arrive ${arrive}` : ''}`
+      : `${route} direct · ${clk}${arrive ? ` · arrive ${arrive}` : ''}`,
+    journeyAlsoTransfer: (first, second, slower, clk, arrive) => slower
+      ? `${first} then ${second} · ${slower} min slower · ${clk}${arrive ? ` · arrive ${arrive}` : ''}`
+      : `${first} then ${second} · ${clk}${arrive ? ` · arrive ${arrive}` : ''}`,
+    journeyFastestDirect: (route, board, arrive, dest) => `Fastest: ${route}, about ${board}, arrive ${arrive} at ${dest}.`,
+    journeyFastestWalk: (walk, stop, route, board, arrive) => `Fastest: about ${walk} min walk to ${stop}, then ${route} at ${board}, arrive ${arrive}.`,
+    journeyFastestTransfer: (first, second, board, arrive, inter, dest) => `Fastest: ${first} then ${second}, about ${board}, change at ${inter || ''}, arrive ${arrive}${dest ? ` at ${dest}` : ''}.`,
+    journeyChangeAt: (stop) => `Change at ${stop}`,
+    journeySlower: (n) => `${n} min slower`,
+    boardWalkMins: (n, stop) => `About ${n} min walk to ${stop}`,
+    destWalkMins: (n) => `About ${n} min walk at the destination`,
+    sameArea: 'Start and end are too close. Pick a different stop.',
+    needOriginDest: 'Choose a starting stop and a destination.',
+    walkMins: (n) => `About ${n} min walk to transfer`,
+    noJourney: 'No live bus or minibus was found from start to destination.',
+    journeyTimeout: 'The comparison did not finish. Try again.',
+    graphStillLoading: 'Citybus / minibus route map is not loaded yet, so the list may be incomplete.',
+    cheaperBadge: 'Better value',
+    cheaperVsTime: (slower, save) => `${slower} min slower · $${Number(save).toFixed(1)} cheaper`,
+    wageTimeNote: 'Better value converts the fare into time at Hong Kong’s statutory minimum wage ($43.1 / hour)',
+    octopusFare: (n) => `Octopus about $${Number(n).toFixed(1)}`,
+    pretripHeading: 'Leave-home plan',
+    pretripHelp: 'Uses published headways and a traffic estimate — not live arrivals. Date defaults to tomorrow.',
+    pretripDate: 'Date',
+    pretripArriveBy: 'Arrive by (optional)',
+    pretripFind: 'Estimate leave-home time',
+    pretripSearching: 'Comparing published headways and traffic estimates…',
+    pretripLeave: (clk) => `Leave home around ${clk} (est.)`,
+    pretripRideTdas: (n) => `About ${n} min ride (est. traffic)`,
+    pretripRideSched: (n) => `About ${n} min ride (timetable)`,
+    pretripWait: (n, head) => `About ${n} min wait (est.; published headway ${head} min)`,
+    pretripJam: 'Congestion (est.)',
+    pretripNoService: 'No published trips that day',
+    pretripNoDuration: 'No timetable duration and no traffic estimate',
+    pretripEmpty: 'No published trip was found from start to destination that day.',
+    pretripNotLive: 'This is not a live arrival.',
     transferFind: 'Show upcoming buses',
-    mtrHeading: 'Next MTR and Light Rail trains',
+    mtrHeading: 'Next MTR trains',
     mtrLineLabel: 'Line',
     mtrStationLabel: 'Station',
     mtrDestLabel: 'Destination on this ride (optional)',
     mtrFind: 'Show next trains',
     mtrWait: 'Loading next trains…',
     homeHeading: 'My travel home',
-    homeHelp: 'No sign-in. Saved on this device from a bus / minibus, transfer, or MTR view. Another browser or clearing site data will not show them.',
+    homeHelp: 'No sign-in. Home nearby and work nearby are live boards for a saved place — one of each — reopened from Arrivals in one tap. You can also save a bus, route planner, or MTR view. Another browser or clearing site data will not show them.',
     noRoute: 'No matching route was found.',
     checking: 'Checking buses running now and their stops…',
     routeUnavailable: 'No bus data was found for this route.',
@@ -684,9 +831,10 @@ globalThis.I18N = {
     notSelected: 'Not selected',
     interchangeStop: 'Transfer stop',
     chooseInterchange: 'Choose transfer stop',
-    destArea: 'Destination area',
+    destArea: 'To',
     noStops: 'No stops were found.',
-    needFields: 'Choose the first bus, transfer stop, and destination.',
+    needFields: 'Choose a starting stop and a destination.',
+    incomplete: 'Choose a starting stop and a destination.',
     needBoard: 'Choose a boarding stop so the first bus can be timed at the transfer stop.',
     searching: 'Timing the first bus at the transfer stop and listing connections…',
     searchingDepartures: 'Looking up upcoming buses at the boarding stop…',
@@ -701,6 +849,8 @@ globalThis.I18N = {
     watchingLive: 'This view refreshes this connecting bus live. It does not switch to the next bus.',
     watchingFirst: 'Watching this first bus',
     watchingFirstLive: 'Live times for this bus at boarding and the transfer stop. It does not switch to the next bus.',
+    watchingTrip: 'Watching this trip',
+    watchingTripLive: 'This view refreshes this bus live. It does not switch to the next bus.',
     firstBusLeft: 'This bus has left. It is on the way to the transfer stop.',
     firstBusWaiting: 'Waiting for this bus to leave.',
     liveLocked: 'Live',
@@ -711,6 +861,7 @@ globalThis.I18N = {
     switchToEarlier: 'Switch to this bus',
     changeConnection: 'Choose a different connection',
     changeDeparture: 'Choose a different bus',
+    backToRoutes: 'Back to routes',
     recommended: 'Best connection',
     backup: 'Later option',
     chosenDirect: 'This direct bus goes to the destination.',
@@ -721,7 +872,6 @@ globalThis.I18N = {
     timeout: 'The search timed out. No bus was found.',
     transferTimeout: 'The transfer search did not finish.',
     none: 'No bus was found.',
-    incomplete: 'Choose a transfer stop and destination.',
     stay: 'Stay on this route',
     directHeading: 'Direct',
     direct: 'Direct, no transfer needed',
@@ -739,13 +889,14 @@ globalThis.I18N = {
     lrtThisStop: 'Light Rail publishes this stop only — no times along the route.',
     lrtDestNotTerminus: 'That stop is not a published terminus of these trips, so every live Light Rail at this stop is listed. Destination arrival is not invented.',
     platform: (n) => `Platform ${n}`,
-    homeEmpty: 'Nothing saved yet. Look up a bus / minibus, transfer, or MTR view and save it. No sign-in; stored on this device only.',
+    homeEmpty: 'Nothing saved yet. Save nearby arrivals as home or work, or look up a bus / minibus, route planner, or MTR view. No sign-in; stored on this device only.',
     open: 'Open',
+    openNearbyLive: 'Open live board',
     remove: 'Remove',
     pin: 'Pin',
     unpin: 'Unpin',
     typeArrival: 'Bus / minibus arrival',
-    typeTransfer: 'Transfer',
+    typeTransfer: 'Route planner',
     typeMtr: 'MTR',
     nextTrains: 'Next trains',
     standard: (n) => `Usual stopping pattern, ${n} stops.`,
@@ -775,6 +926,26 @@ globalThis.I18N = {
     addHomeScreen: 'Add this page to your Home Screen for one-tap use at the stop.',
     reverseBound: 'Reverse direction',
     nearestStop: 'Nearest stop',
+    nearbyBoardBtn: 'Nearby arrivals',
+    nearbyBoardHeading: 'Live nearby',
+    nearbyBoardHelp: 'Live buses and minibuses at poles around you. Empty feed stays empty. Loads on its own when there is no last bus.',
+    nearbyMetres: (n) => `About ${n} m`,
+    nearbyEmpty: 'No live arrivals at nearby stops.',
+    nearbyFail: 'Could not load nearby arrivals. An empty feed stays empty.',
+    nearbyGmb: 'Minibus',
+    nearbyBuses: 'Buses',
+    useMyLocation: 'Use my location',
+    etaClock: 'Clock',
+    etaCountdown: 'Countdown',
+    saveNearbyHome: 'Save as home nearby',
+    saveNearbyWork: 'Save as work nearby',
+    nearbySavedHome: 'Saved as home nearby. Reopen it from Arrivals without searching. Only one home nearby is kept.',
+    nearbySavedWork: 'Saved as work nearby. Reopen it from Arrivals without searching. Only one work nearby is kept.',
+    nearbyCollectionsHeading: 'Home / work nearby',
+    nearbyCollectionsHelp: 'Reopens the live board at that place. An empty operator feed stays empty. One home and one work.',
+    savedRoutesHeading: 'Saved routes',
+    typeNearby: 'Nearby arrivals',
+    coMtrb: 'MTR Bus',
     homeSaveLocal: 'Saved on this device. The server could not store it.',
     homeSaveFail: 'Could not save this route.',
     guideBtn: 'Guide',
@@ -788,7 +959,22 @@ globalThis.I18N = {
     playgroundSourceRoad: 'Road-following drive path',
     playgroundSourceStraight: 'No official line found; showing stop-to-stop straight line',
     playgroundLoading: 'Loading route geometry…',
-    totalMins: (n) => `About ${n} min total`
+    moreIdle: (n) => `No live trips (${n})`,
+    moreDepartures: 'Other departures',
+    stopSearch: 'Search stops',
+    noStopMatch: 'No matching stop',
+    totalMins: (n) => `About ${n} min total`,
+    catchUpTitle: 'If you miss it',
+    catchThis: 'If I missed it',
+    catchUpSearching: 'Checking the next live trip at this stop…',
+    catchUpLive: 'live',
+    missCost: 'If you miss it',
+    missSameNext: (n) => `Next of the same route in about ${n} min`,
+    missSameNone: 'No next live trip of this route right now',
+    missAltLive: (route, n) => `Faster: ${route} (direct) in about ${n} min`,
+    missAltTransfer: (first, second, n) => `Faster: ${first} then ${second} in about ${n} min`,
+    catchUpEmpty: 'No next live trip of this route, and no faster live option right now.',
+    catchUpHelp: 'If you miss this bus, you see the next live trip of the same route at this pole. With a destination picked, a faster live option is listed when there is one. The app does not send you walking to the next stop to chase this bus.'
   }
 };
 
@@ -799,53 +985,53 @@ const GUIDE = {
   zh: {
     title: '使用說明',
     pdf: '完整使用手冊（PDF）',
-    intro: 'TransitBuddy 顯示香港巴士、專線小巴、嶼巴、港鐵及輕鐵的實時到站。預設繁體中文。沒有的班次就會寫沒有，不會編造時間。',
+    intro: 'TransitBuddy 顯示香港巴士、專線小巴、嶼巴、港鐵巴士與港鐵／輕鐵的實時到站。預設繁體中文。沒有的班次就會寫沒有，不會編造時間。',
     sections: [
       {
         h: '巴士／小巴到站',
         p: [
-          '輸入路線號碼後按查詢。正在行駛的班次會排在前面；你輸入的號碼（例如 81）若現正有車，會排在 81A、181 之上。若 81 現在沒有車、81A 有車，會顯示有車的路線，不會把收車的 81 排在最前。',
-          '選好路線後，用上方「選擇上車站」或點地圖上的站號，即顯示該站實時到站。終點可留空，此時會跟車至路線最後一站。'
+          '輸入路線號碼後按「查詢」，才會載入班次。正在輸入時不會搜尋。同一路線的各方向會收成一張卡片；有實時班次的方向列在前面，沒有實時的收在「沒有實時班次」。九巴與城巴同一起訖會標成九巴／城巴。只有一個實時方向時會自動選取。港鐵巴士（例如 K12）同樣用路線號碼查詢。',
+          '沒有上次巴士時，到站頁會先用定位顯示附近站柱現正公布的巴士與小巴，不必先按「附近到站」。沒有公布就會留空。拒絕定位時仍可輸入路線。可把該位置儲存為回家附近或返工附近：儲存後仍留在到站頁，每種只保留一處。之後可按到站頁的「回家附近」或「返工附近」重開該位置的實時牌。上次巴士會還原，不會改去「我的回家路線」。',
+          '選好路線後，用地圖或可搜尋的車站名單選上車站，即顯示該站實時到站。按「就乘這一程」鎖定這一班，自動更新時不會改成下一班。若趕不上，按「錯過了」：顯示本站下一班同一路線；若已選終點，也會列出目前較快到達的實時選擇。不會叫你跑去下一站趕這一班。終點可留空，此時會跟車至路線最後一站。地圖畫在本頁，是運輸署公布走線。右上角可把時間改為鐘面或倒數。'
         ]
       },
       {
-        h: '路線地圖',
+        h: '路線規劃',
         p: [
-          '選好路線後，地圖會畫出運輸署公布的巴士走線。點地圖上的車站，或用上方選單，即顯示該站實時到站，不用在長名單裡找。找不到官方走線時會說明，不會編造路徑。'
+          '選起點和終點，像地圖一樣列出可乘的實時巴士／小巴。不必先選路線。起點可按「用我的位置」。輸入站名就會出現名單。',
+          '按「搜尋」後（選好兩端也會自動搜）會列出實時選擇：路線、開出、到達、車程、步行、轉車等候和八達通車費。排序同時看車程、轉車（含等候）、步行和車費：只快一兩分鐘的轉乘不會排在直達前面。同一路線合成一格。只顯示現正有實時的路線。點一程即鎖定該班車，自動更新時不會改成下一班。若趕不上，按「錯過了」。',
+          '出門規劃收在結果下方，用編定班距和交通估計（不是實時）。選日期（預設明天）和可選的到達時間，會顯示大約出門時間。沒有該天班次就會寫沒有。'
         ]
       },
       {
-        h: '轉乘助手',
+        h: '錯過了',
         p: [
-          '先選第一程路線、上車站、轉車站和終點。轉車站只會列出上車站之後的站（同站轉車除外），不能選已經過的站。',
-          '直達：同一程可到終點，無需轉車。轉乘：第一程到轉車站後再轉另一程。每程都會顯示到達時間、全程車程，以及可展開的沿途各站。轉乘總車程由第一程開出計到到達終點。',
-          '選好第一程班次後，會鎖定該班車並顯示實時開出和到達轉車站時間，不會改成下一班。選好轉乘後同樣只留意該班接駁。',
-          '趕不上的接駁班次會標明可能趕不上，不會當成可靠行程。'
+          '先按「就乘這一程」鎖定這一班。若趕不上，按「錯過了」。只顯示本站下一班同一路線的實時；若已選終點，也會列出目前較快到達的實時選擇。沒有實時就不編造時間表。不會叫你跑去下一站趕這一班。',
+          '下一班同一路線不會標成趕這一班。輕鐵只看本站。'
         ]
       },
       {
         h: '車費',
         p: [
-          '搜尋結果顯示全程車費。選了上車站後，會顯示由該站到終點（或路線尾站）的八達通分段。沿途各站旁會標示由上車點到該站的車費，做法接近 hkbus.app：一個站對一個價錢，不會列出一長串「$4.3 / $5.8 / …」。',
-          '沒有資料的分段不會猜測。實際金額以車費機為準。'
+          '搜尋結果顯示全程車費。選了上車站後，會顯示由該站到終點（或路線尾站）的八達通分段。沿途各站旁會標示由上車點到該站的車費。沒有資料的分段不會猜測。實際金額以車費機為準。路線規劃會在路線旁顯示八達通車費，並以車程、轉車、步行和車費一併排序。'
         ]
       },
       {
-        h: '港鐵／輕鐵',
+        h: '港鐵',
         p: [
-          '選路綫、車站，可選此程終點。港鐵會顯示下班車、到達、車程及沿途各站。輕鐵只公布本站倒數、鐘面時間和月台，沒有沿途各站；終點若不是該班次總站，仍會列出本站全部輕鐵，不會編造到達時間。若列車以本站為終點，會說明沒有沿途各站。'
+          '選路綫、車站，可選此程終點。會顯示下班車、到達、車程及沿途各站。若列車以本站為終點，會說明沒有沿途各站。路綫名單包括輕鐵；輕鐵沒有班次時會直接說沒有。'
         ]
       },
       {
         h: '我的回家路線',
         p: [
-          '無需登入。儲存在這部裝置（tb-device）。換瀏覽器或清除網站資料後就不會再見到。開啟已儲存的轉乘時，若上車站／轉車站已不合理（例如轉車站在上車之前），不會執行錯誤行程。'
+          '無需登入。回家附近／返工附近是該位置的實時到站牌，每種只保留一處，從到站頁一按重開。巴士、路線規劃或港鐵也可儲存。換瀏覽器或清除網站資料後就不會再見到。開啟已儲存的路線規劃時，若上車站／轉車站已不合理，不會執行錯誤行程。'
         ]
       },
       {
         h: '誠實原則',
         p: [
-          '只顯示營辦商公布的實時到站，或標明「估計」的沿途推算。沒有班次、沒有車費、沒有站名時會直接說沒有，不會填假資料。'
+          '只顯示營辦商公布的實時到站，或標明「估計」的沿途推算。沒有班次、沒有車費、沒有站名時會直接說沒有，不會填假資料。鎖定的班次不會改成下一班。錯過了只顯示本站下一班實時與較快選擇，不會叫你跑去下一站趕車。出門規劃的車程若沒有交通數據，只顯示編定時間，不會乘上自訂的繁忙時間倍數。'
         ]
       }
     ]
@@ -853,53 +1039,53 @@ const GUIDE = {
   en: {
     title: 'How to use',
     pdf: 'Full user manual (PDF)',
-    intro: 'TransitBuddy shows live arrivals for Hong Kong buses, green minibuses, NLB, MTR and Light Rail. Traditional Chinese is the default. If there is no bus, the app says so — it does not invent times.',
+    intro: 'TransitBuddy shows live arrivals for Hong Kong buses, green minibuses, NLB, MTR Bus, MTR and Light Rail. Traditional Chinese is the default. If there is no bus, the app says so — it does not invent times.',
     sections: [
       {
         h: 'Bus / minibus arrivals',
         p: [
-          'Type a route number and search. Services running now come first. An exact match such as 81 is listed above 81A or 181 only when 81 is actually running. If 81 has finished for the day and 81A is live, you will see 81A.',
-          'After a route, pick a boarding stop from the list at the top, or tap the numbered station on the map — that shows live arrivals for that stop. You may pick a destination on the same trip; leave it empty to follow to the last stop.'
+          'Type a route number, then tap Search — typing alone does not search. Bounds of the same route sit on one card; live trips are listed first, idle ones behind “no live trips”. Joint KMB and Citybus of the same origin and destination appear as one KMB / Citybus row. A single live bound is picked automatically. MTR Bus (for example K12) is searched the same way.',
+          'Before picking a route, if there is no last bus to restore, Arrivals loads Nearby arrivals from your location — you do not have to tap the button first. Empty operator feeds stay empty. If location is denied, type a route. You can save that place as home nearby or work nearby: you stay on Arrivals, only one of each is kept, and the Arrivals chips reopen that live board without searching.',
+          'After a route, pick a boarding stop from the searchable list or the map. You may pick a destination on the same trip; leave it empty to follow to the last stop. Take this trip locks that clock so refresh does not snap to the next bus. If you miss it, you see the next live trip of the same route at this pole, and a faster live option when a destination is set. The app does not send you walking to the next stop to chase this bus. The official path is drawn on this tab. Use the header to switch clock times and countdown.'
         ]
       },
       {
-        h: 'Route map',
+        h: 'Route planner',
         p: [
-          'After you pick a service, the map draws the Transport Department official bus path. Tap a numbered stop, or use the stop selector above the map, to see live arrivals — you do not have to hunt a long list. If no official line exists, the app says so and does not invent a path.'
+          'Pick from and to — like a map. You do not choose a route first. Use my location sets the start from nearby poles. Typing a stop name lists matches.',
+          'Search (it also runs after both stops are picked) lists live options: route, depart, arrive, ride time, walking, transfer wait and Octopus fare. Ranking uses travel time, transfer (including wait), walking and fare — a transfer that is only a minute faster does not beat staying on the bus. The same route is merged into one row. Only live trips are listed. Tap a trip to lock it so refresh does not snap to the next bus. If you miss it, use If I missed it.',
+          'Leave-home plan sits under the results. It uses published headways and a traffic estimate — not live arrivals. Pick a date (tomorrow by default) and an optional arrive-by time. No trips that day stays empty.'
         ]
       },
       {
-        h: 'Transfer Buddy',
+        h: 'If you miss it',
         p: [
-          'Choose the first route, boarding stop, interchange, and destination. Interchange choices are only stops after boarding (except same-stop transfer). You cannot pick a stop the bus has already passed.',
-          'Direct: one bus reaches the destination. Transfer: alight at the interchange and board another bus. Each ride shows arrival, total travel time, and expandable stop times. A transfer total is first-bus departure through destination arrival.',
-          'After you pick a first bus, the app locks onto that trip and shows its live boarding and transfer-stop times — it does not switch to the next bus. A chosen connection is tracked the same way.',
-          'Connections you may miss are labelled as such and are not treated as a reliable itinerary.'
+          'Lock the trip with Take this trip. If you miss it, you see the next live clock of the same route at this pole. With a destination picked, a faster live option is listed when there is one. An empty feed stays empty. The app does not send you to a later stop to chase this bus.',
+          'The next bus of this route is never labelled as catching this trip. Light Rail is this stop only.'
         ]
       },
       {
         h: 'Fares',
         p: [
-          'Search cards show the full fare. After you pick a boarding stop, the Octopus section fare from that stop is shown. Later stops list the fare from boarding, similar to hkbus.app — one price beside the stop, not a slash list of every section.',
-          'Missing fare cells are omitted. Confirm the amount on the bus reader.'
+          'Search cards show the full fare. After you pick a boarding stop, the Octopus section fare from that stop is shown. Later stops list the fare from boarding. Missing fare cells are omitted. Confirm the amount on the bus reader. Route planner lists Octopus fares and ranks by time, transfer, walking and fare.'
         ]
       },
       {
-        h: 'MTR / Light Rail',
+        h: 'MTR',
         p: [
-          'Pick a line and station, optionally a destination. MTR shows next trains, arrival, travel time and stop times. Light Rail publishes this stop only (minutes, clock, platform); if the destination is not a published terminus, every live Light Rail here is still listed — destination arrival is not invented. A train that ends here is described as terminating.'
+          'Pick a line and station, optionally a destination. The app shows next trains, arrival, travel time and stop times. A train that ends here is described as terminating. Light Rail is in the line list; an empty Light Rail feed stays empty.'
         ]
       },
       {
         h: 'My travel home',
         p: [
-          'No sign-in. Saved on this device only (tb-device). Another browser or clearing site data will not show them. A saved transfer with an impossible boarding/interchange pair will not be run.'
+          'No sign-in. Home nearby and work nearby are live boards for a saved place — one of each — reopened from Arrivals. You can also save a bus, route planner, or MTR view. Another browser or clearing site data will not show them. A saved route with an impossible boarding/interchange pair will not be run.'
         ]
       },
       {
         h: 'Honesty',
         p: [
-          'Only published live arrivals, or hop times marked as estimates. Empty results, missing fares and missing stop names are shown as empty — never filled in.'
+          'Only published live arrivals, or hop times marked as estimates. Empty results, missing fares and missing stop names are shown as empty — never filled in. A locked trip does not snap to the next bus. If you miss it, the app stays at this pole. Leave-home ride times without a traffic speed stay on the published duration — no invented peak multiplier.'
         ]
       }
     ]
@@ -910,64 +1096,74 @@ const GUIDE = {
 const MANUAL = {
   zh: {
     title: 'TransitBuddy 使用手冊',
-    lead: '香港巴士、專線小巴、嶼巴、港鐵及輕鐵的實時到站與轉乘。預設繁體中文，可用畫面右上角切換 English。無需登入。',
+    lead: '香港巴士、專線小巴、嶼巴與港鐵的實時到站與轉乘。預設繁體中文，可用畫面右上角切換 English。無需登入。',
     honesty: '誠實原則：只顯示營辦商公布的實時班次；沒有就會寫沒有。沿途各站若為推算，會標明「估計」。不會編造到站時間或車費。',
     sections: [
       {
         h: '這是什麼',
         p: [
-          'TransitBuddy 協助你在街上快速查：這班車何時到、跟這班車何時到終點、要不要轉車、車費大約多少。涵蓋九巴 KMB、龍運 LWB、城巴 Citybus、新大嶼山巴士 NLB、專線小巴 GMB（港島／九龍／新界），以及港鐵與輕鐵。',
-          '畫面分四頁：巴士／小巴到站、轉乘助手、港鐵／輕鐵、我的回家路線。右上角還有使用說明（本手冊的精簡版）和重新整理間隔（15 或 30 秒）。'
+          'TransitBuddy 協助你在街上快速查：這班車何時到、跟這班車何時到終點、要不要轉車、車費大約多少。涵蓋九巴 KMB、龍運 LWB、城巴 Citybus、新大嶼山巴士 NLB、專線小巴 GMB（港島／九龍／新界）、港鐵巴士，以及港鐵與輕鐵。',
+          '畫面分四頁：巴士／小巴到站、路線規劃、港鐵、我的回家路線。右上角還有使用說明（本手冊的精簡版）、鐘面／倒數，和重新整理間隔（15 或 30 秒）。'
         ]
       },
       {
-        h: '如何搜尋路線（正在行駛優先）',
+        h: '如何搜尋路線（按查詢才搜）',
         p: [
-          '在巴士／小巴頁輸入路線號碼，按查詢。只顯示現正有車的服務。',
-          '你輸入的號碼若現正有車，會排在相近號碼之上。例如查 81：若 81 有車，會排在 81A、181 之前。若 81 已收車而 81A 仍有車，畫面會顯示 81A，不會把沒有車的 81 排在最前佔位置。',
-          '搜尋結果只列出有實時到站的方向與營辦商。沒有班次時會寫現在沒有車，不會用時間表假裝有車。'
+          '在巴士／小巴頁輸入路線號碼，必須按「查詢」才載入。打字過程不會搜尋，避免名單在你還在輸入時跳動。港鐵巴士（例如 K12）同樣用路線號碼。',
+          '同一路線收成一張卡片。有實時班次的方向列在前面；沒有實時的收在「沒有實時班次」。九巴與城巴同一起訖會合成一列「九巴／城巴」。只有一個實時方向時會自動選取。',
+          '你輸入的號碼若現正有車，會排在相近號碼之上。沒有班次時會寫現在沒有車，不會用時間表假裝有車。'
         ]
       },
       {
-        h: '到站、終點、各站時間',
+        h: '到站、終點、地圖與各站時間',
         p: [
-          '選路線後，用上方選單或點地圖站號選上車站。可再選此程終點；終點只會列出上車之後的站。終點可留空，此時會跟車至路線最後一站。',
+          '選路線後，用可搜尋的車站名單或點地圖站號選上車站。可再選此程終點；終點只會列出上車之後的站。終點可留空，此時會跟車至路線最後一站。按「就乘這一程」鎖定這一班，自動更新時不會改成下一班。若趕不上，按「錯過了」：顯示本站下一班同一路線；若已選終點，也會列出目前較快到達的實時選擇。不會叫你跑去下一站趕這一班。沒有上次巴士時，到站頁會先用定位列出附近站柱現正公布的班次；也可再按「附近到站」。儲存為回家附近或返工附近後仍留在到站頁；每種只保留一處。之後可按到站頁的「回家附近」／「返工附近」重開該位置的實時牌，不必再搜。開啟時沒有公布就會留空。不會在啟動時改去「我的回家路線」。',
+          '地圖畫在巴士／小巴頁，是運輸署公布走線。找不到官方走線時會說明，不會編造路徑。',
           '會顯示開出時間、到達時間、車程（分鐘）。可展開「查看各站時間」。標了估計的時間是沿途推算，不是營辦商逐站公布。'
         ]
       },
       {
-        h: '轉乘助手：上車與轉車',
+        h: '路線規劃：由起點到終點',
         p: [
-          '先查第一程路線，再選上車站、轉車站和終點地區。轉車站只會列出上車站當站或之後的站（同站轉車可以），不能選巴士已經過的站。終點必須在轉車站之後才合理。',
-          '直達：同一程可到終點，無需轉車。轉乘／接駁：第一程到轉車站後再轉另一程。選了第一程開出時間後，才計算接駁；趕不上的班次會標明可能趕不上，不要當成可靠行程。',
-          '每程顯示到達時間、全程車程，以及可展開的沿途各站。轉乘總車程由第一程開出計到到達終點，不是只計第二程。'
+          '選起點和終點，像地圖一樣列出可乘的實時巴士／小巴。不必先選路線。也可按「用我的位置」。輸入站名就會出現名單。',
+          '附近站柱會一併考慮，不必再調距離。不必指定第一程或轉車站。',
+          '按「搜尋」後（選好兩端也會自動搜）會列出實時選擇：路線、開出、到達、車程、步行、轉車等候和八達通車費。排序同時看車程、轉車（含等候）、步行和車費。同一路線合成一格。只顯示現正有實時的路線。沿途到達若為推算會標「估計」。',
+          '出門規劃收在結果下方（日期預設明天），用編定班距和交通估計，不是實時。可選到達時間後顯示大約出門時間；沒有該天班次就會寫沒有。沒有交通車速時只顯示編定車程，不會乘上自訂的繁忙時間倍數。',
+          '點一程即鎖定該班車和接駁，並繼續更新這一班的實時狀態。自動重新整理時不會改成下一班。趕不上按「錯過了」。'
+        ]
+      },
+      {
+        h: '錯過了',
+        p: [
+          '先按「就乘這一程」鎖定這一班。若趕不上，按「錯過了」。只顯示本站下一班同一路線的實時；若已選終點，也會列出目前較快到達的實時選擇。沒有實時就不編造時間表。不會叫你跑去下一站趕這一班。',
+          '下一班同一路線不會標成趕這一班。輕鐵只公布本站，錯過了可以是本站下班車，不會叫你跑去下一站。'
         ]
       },
       {
         h: '車費（接近 hkbus.app）',
         p: [
-          '搜尋結果顯示全程車費。選了上車站後，顯示由該站到終點（或路線尾站）的一個八達通分段價。沿途各站旁標示由上車點到該站的價錢：一個站對一個價錢，不會列出「$4.3 / $5.8 / …」一長串。',
-          '資料來自運輸署分段表。沒有該格就留空，不會猜測。實際以車費機為準。有公布的轉乘優惠會另外標示，仍請在車上看清楚。'
+          '搜尋結果顯示全程車費。選了上車站後，顯示由該站到終點（或路線尾站）的一個八達通分段價。沿途各站旁標示由上車點到該站的價錢。',
+          '資料來自運輸署分段表。沒有該格就留空，不會猜測。實際以車費機為準。路線規劃以車程、轉車、步行和車費一併排序，並顯示八達通車費。'
         ]
       },
       {
-        h: '港鐵與輕鐵',
+        h: '港鐵',
         p: [
-          '選路綫與車站，可選此程終點。港鐵只列出會經過該終點的列車，並顯示到達、車程及沿途各站。',
-          '輕鐵只公布本站倒數、鐘面時間和月台，沒有沿途各站。終點若不是該班次總站，仍會列出本站全部輕鐵，不會編造到達時間。若列車以本站為終點，會說明沒有沿途各站。馬場等不是每日服務的站，沒有車時會誠實顯示沒有。'
+          '選路綫與車站，可選此程終點。港鐵只列出會經過該終點的列車，並顯示到達、車程及沿途各站。路綫名單包括輕鐵。',
+          '若列車以本站為終點，會說明沒有沿途各站。馬場等不是每日服務的站，沒有車時會誠實顯示沒有。'
         ]
       },
       {
         h: '我的回家路線（只在這部裝置）',
         p: [
-          '無需登入、沒有帳戶。儲存在這部手機或電腦的瀏覽器（tb-device）。可從到站、轉乘或港鐵頁面按儲存，之後一按即可重開。',
-          '換瀏覽器、換手機或清除網站資料後就不會再見到。開啟已儲存的轉乘時，若上車站／轉車站已不合理（例如轉車站在上車之前），不會執行錯誤行程。'
+          '無需登入、沒有帳戶。儲存在這部手機或電腦的瀏覽器。回家附近／返工附近是該位置的實時到站牌，不是一條巴士；開啟會載入現正公布的班次，沒有公布就會留空。每種只保留一處。已儲存的巴士、路線規劃或港鐵列在下面，一按即可重開。',
+          '換瀏覽器、換手機或清除網站資料後就不會再見到。開啟已儲存的路線規劃時，若上車站／轉車站已不合理，不會執行錯誤行程。'
         ]
       },
       {
         h: '沒有結果時',
         p: [
-          '沒有班次、沒有站名、沒有車費、城巴站名對不上時，會顯示「沒有」或通用「車站」字樣，不會用站號假裝成地名，也不會填假的分鐘數。',
+          '沒有班次、沒有站名、沒有車費時，會顯示「沒有」，不會填假的分鐘數。',
           '標了「估計」的沿途時間是推算。重新整理間隔可在右上角改為 15 或 30 秒。語言與回家路線都只存在這部裝置。'
         ]
       }
@@ -975,64 +1171,74 @@ const MANUAL = {
   },
   en: {
     title: 'TransitBuddy user manual',
-    lead: 'Live arrivals and transfers for Hong Kong buses, green minibuses, NLB, MTR and Light Rail. Traditional Chinese is the default; use the header button for English. No sign-in.',
+    lead: 'Live arrivals and transfers for Hong Kong buses, green minibuses, NLB and MTR. Traditional Chinese is the default; use the header button for English. No sign-in.',
     honesty: 'Honesty: only operator-published live trips are shown. Empty means empty. Hop times marked 估計 / est. are estimates. The app does not invent ETAs or fares.',
     sections: [
       {
         h: 'What this app is',
         p: [
-          'TransitBuddy is for the street: when the bus comes, when you arrive if you board it, whether you need a transfer, and roughly what it costs. It covers KMB, LWB, Citybus, NLB, green minibuses (Hong Kong Island / Kowloon / New Territories), MTR and Light Rail.',
-          'Four tabs: bus/minibus arrivals, Transfer Buddy, MTR/Light Rail, and My travel home. The header also has this guide (short version) and a 15- or 30-second refresh interval.'
+          'TransitBuddy is for the street: when the bus comes, when you arrive if you board it, whether you need a transfer, and roughly what it costs. It covers KMB, LWB, Citybus, NLB, green minibuses (Hong Kong Island / Kowloon / New Territories), MTR Bus, MTR and Light Rail.',
+          'Four tabs: bus/minibus arrivals, Route planner, MTR, and My travel home. The header also has this guide (short version), clock versus countdown, and a 15- or 30-second refresh interval.'
         ]
       },
       {
-        h: 'How to search (live services first)',
+        h: 'How to search (Search button only)',
         p: [
-          'On the bus/minibus tab, type a route number and search. Only services with a live arrival are listed.',
-          'An exact match such as 81 is listed above 81A or 181 only when 81 is actually running. If 81 has finished and 81A is live, you see 81A — a dead 81 does not sit on top or fill the list.',
-          'Directions and operators with no live buses are omitted. The app says there is no bus now; it does not pretend with a timetable.'
+          'On the bus/minibus tab, type a route number and tap Search. Typing does not search by itself.',
+          'Each route number is one card. Live bounds are listed first; idle ones sit behind “no live trips”. Joint KMB and Citybus of the same origin and destination appear as one KMB / Citybus row. A single live bound is picked automatically.',
+          'An exact match such as 81 is listed above 81A only when 81 is actually running. The app says there is no bus now; it does not pretend with a timetable.'
         ]
       },
       {
-        h: 'Arrivals, destination, stop times',
+        h: 'Arrivals, destination, map, stop times',
         p: [
-          'After a route, pick a boarding stop from the selector or the map. You may pick a destination on the same trip; only later stops are offered. Leave destination empty to follow to the last stop.',
-          'You get departure, arrival, travel time, and expandable times at each stop. Times marked as estimates are inferred along the route, not stop-by-stop operator feeds.'
+          'After a route, pick a boarding stop from the searchable selector or the map. You may pick a destination on the same trip; only later stops are offered. Leave destination empty to follow to the last stop. Take this trip locks that clock so refresh does not snap to the next bus. If you miss it, you see the next live trip of the same route at this pole, and a faster live option when a destination is set. The app does not send you walking to the next stop to chase this bus. With no last bus to restore, Arrivals loads Nearby arrivals from your location first. Saving home nearby or work nearby stays on Arrivals, keeps one of each, and the chips reopen that live board without searching. An empty feed stays empty. Saved homes do not steal the arrivals tab on boot. A last bus restores instead of auto nearby.',
+          'The map on this tab draws the Transport Department official bus path. If no official line exists, the app says so and does not invent a path.',
+          'You get departure, arrival, travel time, and expandable times at each stop. Times marked as estimates are inferred along the route.'
         ]
       },
       {
-        h: 'Transfer Buddy: board vs interchange',
+        h: 'Route planner: stop to stop',
         p: [
-          'Search the first route, then boarding stop, interchange, and destination area. Interchange choices are the boarding stop or later stops (same-stop transfer is allowed). You cannot pick a stop the bus has already passed. The destination must be after the interchange.',
-          'Direct: one bus reaches the destination. Transfer/connection: alight at the interchange and board another bus. Connecting trips are timed only after you pick a first-bus departure. Connections you may miss are labelled as such and are not a reliable itinerary.',
-          'Each ride shows arrival, total travel time, and expandable stop times. A transfer total is first-bus departure through destination arrival, not only the second bus.'
+          'Pick from and to, like a map. You do not pick a bus route first. Use my location is available. Typing a stop name lists matches.',
+          'Nearby poles are included automatically. You do not set a first route or transfer stop.',
+          'Search (it also runs after both stops are picked) lists live options: route, depart, arrive, ride time, walking, transfer wait and Octopus fare. Ranking uses travel time, transfer (including wait), walking and fare. The same route is merged into one row. Only live trips are listed. Hop arrivals marked 估計 / est. are estimates.',
+          'Leave-home plan sits under the results (date defaults to tomorrow). It uses published headways and a traffic estimate, not live clocks. An optional arrive-by time yields an estimated leave-home clock. No trips that day stays empty. Without a traffic speed, ride time stays on the published duration — no invented peak multiplier.',
+          'Tap a trip to lock those exact buses. Refresh does not snap to the next bus. If you miss it, use If I missed it.'
+        ]
+      },
+      {
+        h: 'If you miss it',
+        p: [
+          'Lock the trip with Take this trip. If you miss it, you see the next live clock of the same route at this pole. With a destination picked, a faster live option is listed when there is one. The app does not send you walking to the next stop to chase this bus. An empty feed stays empty.',
+          'The next bus of this route is never labelled as catching this trip. No second live clock means the app says there is no next live trip. Light Rail is this stop only; miss-cost can still be the next live train here.'
         ]
       },
       {
         h: 'Fares (hkbus.app style)',
         p: [
-          'Search cards show the full fare. After boarding, one Octopus section fare is shown from that stop to the destination or terminus. Later stops show the fare from boarding — one price beside the stop, not a slash list of every section.',
-          'Figures come from Transport Department section tables. A missing cell is omitted, never guessed. Confirm on the bus reader. Published interchange discounts may appear; still check on the vehicle.'
+          'Search cards show the full fare. After boarding, one Octopus section fare is shown from that stop to the destination or terminus. Later stops show the fare from boarding.',
+          'Figures come from Transport Department section tables. A missing cell is omitted, never guessed. Confirm on the bus reader. Route planner ranks by time, transfer, walking and fare, and shows the Octopus fare.'
         ]
       },
       {
-        h: 'MTR and Light Rail',
+        h: 'MTR',
         p: [
           'Pick a line and station, optionally a destination. MTR lists only trains that serve that destination, with arrival, travel time and stop times.',
-          'Light Rail publishes this stop only (minutes, clock, platform). If the destination is not a published terminus, every live Light Rail at this stop is still listed — destination arrival is not invented. A train that ends here is described as terminating. Stations that do not run every day (for example Racecourse) show empty when there is no service.'
+          'A train that ends here is described as terminating. Stations that do not run every day (for example Racecourse) show empty when there is no service.'
         ]
       },
       {
         h: 'My travel home (this device only)',
         p: [
-          'No sign-in and no account. Saved in this browser on this device (tb-device). Save from arrivals, transfer or MTR, then reopen in one tap.',
-          'Another browser, another phone, or clearing site data will not show them. A saved transfer with an impossible boarding/interchange pair will not be run.'
+          'No sign-in and no account. Saved in this browser on this device. Home nearby and work nearby are live boards for a place, not a single bus: Open reloads what is published now, and an empty feed stays empty. Only one home and one work. Saved buses, route planner and MTR sit below.',
+          'Another browser, another phone, or clearing site data will not show them. A saved route with an impossible boarding/interchange pair will not be run.'
         ]
       },
       {
         h: 'When results are empty',
         p: [
-          'No live trip, missing fare, or missing stop name is shown as empty. A Citybus pole without a real name is labelled Stop / 車站, never as a raw stop id pretending to be a place. Minutes are never invented.',
+          'No live trip, missing fare, or missing stop name is shown as empty. Minutes are never invented.',
           'Times marked estimate are inferred. Refresh is 15 or 30 seconds from the header. Language and homes stay on this device only.'
         ]
       }

@@ -1,6 +1,6 @@
 {
-  "name": "巴士／小巴實時到站與轉乘助手",
-  "short_name": "轉乘助手",
+  "name": "巴士／小巴實時到站與路線規劃",
+  "short_name": "路線規劃",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

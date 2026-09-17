@@ -154,8 +154,8 @@ test('MTR tab includes Light Rail and defaults to Tsuen Wan line', async ({ page
 test('product tabs stay available', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('tab', { name: /巴士／小巴|Bus \/ minibus/ })).toBeVisible();
-  await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
-  await expect(page.getByRole('heading', { name: /轉乘助手|Transfer helper/ }).first()).toBeVisible();
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
+  await expect(page.getByRole('heading', { name: /路線規劃|Route planner/ }).first()).toBeVisible();
   await page.locator('button.tab-mtr').click();
   await expect(page.getByRole('heading', { name: /港鐵下班車|Next MTR trains/ }).first()).toBeVisible();
   await page.getByRole('tab', { name: /我的回家路線|My travel home/ }).click();
@@ -544,7 +544,7 @@ test('transfer helper requires origin and destination only', async ({ page }) =>
   test.setTimeout(90000);
   await page.goto('/');
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
   const transfer = page.locator('.panel.active');
   await expect(transfer.getByLabel(/指定第一程|Preferred first route/)).toHaveCount(0);
   await expect(transfer.getByRole('combobox', { name: /上車站／下一站|Boarding \/ next stop/ })).toHaveCount(0);
@@ -627,7 +627,7 @@ test('transfer helper finds options without a route and locks the chosen trip', 
   });
   await page.goto('/');
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
   const transfer = page.locator('.panel.active');
   await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
   await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
@@ -667,7 +667,7 @@ test('transfer helper empty feed stays empty', async ({ page }) => {
   });
   await page.goto('/');
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
   const transfer = page.locator('.panel.active');
   await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
   await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
@@ -679,7 +679,7 @@ test('transfer helper and MTR tabs still search', async ({ page }) => {
   test.setTimeout(120000);
   await page.goto('/');
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
   const transfer = page.locator('.panel.active');
   await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
   await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
@@ -729,7 +729,7 @@ test('catch-up helper shows next of this route, not a walk to a later stop', asy
   });
   await page.goto('/');
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
   const transfer = page.locator('.panel.active');
   await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
   await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);

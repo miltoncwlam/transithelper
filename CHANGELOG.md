@@ -6,9 +6,16 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.5.0**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.5.1**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.5.1 — 2026-09-17
+
+### Changed
+- The from/to tab is **路線規劃** / **Route planner**, not 轉乘助手 / Transfer helper / Transfer Buddy. Tab, heading, document title, PWA short name, Apple web-app title, in-app 使用說明, user manual, and the saved-route type badge all use the new name. Historical changelog, `00-required/`, and v1.0 HTML keep the old wording.
 
 ---
 
