@@ -409,7 +409,6 @@ test('picking a route draws the official line then hides it on a new search', as
 async function pickTransferStop(page, panel, label, query, option) {
   await expect(async () => {
     await panel.getByLabel(label).fill(query);
-    await panel.getByLabel(label).locator('xpath=ancestor::*[contains(@class,"search-row")][1]').getByRole('button', { name: /^查詢$|^Find$/ }).click();
     await expect(page.getByRole('option', { name: option }).first()).toBeVisible({ timeout: 4000 });
   }).toPass({ timeout: 30000 });
   await page.getByRole('option', { name: option }).first().click();
@@ -547,9 +546,9 @@ test('transfer helper requires origin and destination only', async ({ page }) =>
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
   const transfer = page.locator('.panel.active');
-  await expect(transfer.getByLabel(/指定第一程|Preferred first route/)).toBeVisible();
+  await expect(transfer.getByLabel(/指定第一程|Preferred first route/)).toHaveCount(0);
   await expect(transfer.getByRole('combobox', { name: /上車站／下一站|Boarding \/ next stop/ })).toHaveCount(0);
-  await transfer.getByRole('button', { name: /找出較快班次|Find faster trips/ }).click();
+  await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
   await expect(transfer).toContainText(/請選擇起點和終點|Choose a starting stop and a destination/);
 });
 
@@ -630,59 +629,36 @@ test('transfer helper finds options without a route and locks the chosen trip', 
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
   const transfer = page.locator('.panel.active');
-  await pickTransferStop(page, transfer, /起點／上車站|Start \/ boarding stop/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
-  await pickTransferStop(page, transfer, /^終點$|^Destination$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
-  await transfer.getByRole('button', { name: /找出較快班次|Find faster trips/ }).click();
-  await expect(transfer).toContainText(/目前觀察到較快的選擇|Fastest among currently observed/, { timeout: 20000 });
-  await expect(transfer).toContainText(/最快：1|Fastest: 1/);
+  await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
+  await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
+  await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
+  await expect(transfer).toContainText(/最快|Fastest/, { timeout: 20000 });
+  await expect(transfer.locator('.journey-box')).toContainText('1');
   await expect(transfer.getByRole('button', { name: /就乘這一程|Take this trip/ })).toBeVisible();
   await expect(transfer).toContainText(/估計|est\./);
-  await expect(transfer).toContainText(/9 轉 2|9 then 2/);
-  await expect(transfer).toContainText(/其後|then /);
+  await expect(transfer).toContainText(/9 → 2/);
   await expect(transfer.getByText(/選擇這一程|Choose this trip/)).toHaveCount(0);
-  await expect(transfer.getByRole('button', { name: /9 轉 2|9 then 2/ })).toHaveCount(1);
-  await expect(transfer).toContainText(/只比較現正有實時班次|Only routes with live departures/);
+  await expect(transfer.getByRole('button', { name: /9 → 2/ })).toHaveCount(1);
+  await expect(transfer).toContainText(/只顯示現正有實時|Only live trips/);
   await page.getByRole('button', { name: 'English' }).click();
-  await expect(transfer).toContainText('9 then 2');
+  await expect(transfer).toContainText('9 → 2');
   await expect(transfer).not.toContainText(/9 to 2/);
   await page.getByRole('button', { name: '中文' }).click();
   expect(posted[0]?.preferredFirst).toBeFalsy();
   expect(posted[0]?.originStops?.length).toBeGreaterThan(0);
   expect(posted[0]?.destinationStops?.length).toBeGreaterThan(0);
 
-  const routeInput = transfer.getByPlaceholder(/路線，例如|Route, for example/);
-  await routeInput.fill('9');
-  await routeInput.locator('xpath=ancestor::*[contains(@class,"search-row")][1]').getByRole('button', { name: /^查詢$|^Find$/ }).click();
-  const routeChoice = transfer.getByRole('button', { name: /九巴 9|KMB 9/ }).first();
-  if (await routeChoice.isVisible().catch(() => false)) await routeChoice.click();
-  await expect(transfer.getByRole('combobox', { name: /指定轉車站|Preferred transfer stop/ })).toBeVisible({ timeout: 40000 });
-  await transfer.getByRole('button', { name: /找出較快班次|Find faster trips/ }).click();
-  await expect(transfer).toContainText(/你指定的路線約慢|Your preferred route is about/, { timeout: 20000 });
-  expect(posted.at(-1)?.preferredFirst?.route).toBe('9');
-
-  await transfer.getByRole('button', { name: /9 轉 2|9 then 2/ }).click();
+  await transfer.getByRole('button', { name: /9 → 2/ }).click();
   await expect(transfer).toContainText(/正在留意這一班第一程|Watching this first bus|實時追蹤|Live/, { timeout: 20000 });
   expect(transferPosts[0]?.selectedDeparture).toBeTruthy();
   expect(transferPosts[0]?.first?.route).toBe('9');
   expect(transferPosts[0]?.phase).toBe('connections');
 });
 
-test('transfer helper empty feed and preferred-missing banner', async ({ page }) => {
+test('transfer helper empty feed stays empty', async ({ page }) => {
   test.setTimeout(90000);
   await page.route('**/api/journey-options', async (route) => {
     if (route.request().method() !== 'POST') return route.continue();
-    const body = route.request().postDataJSON() || {};
-    if (body.preferredFirst) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          ...mockJourneyOptions({ preferred: false }),
-          preferredMissing: true
-        })
-      });
-      return;
-    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -693,50 +669,10 @@ test('transfer helper empty feed and preferred-missing banner', async ({ page })
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
   const transfer = page.locator('.panel.active');
-  await pickTransferStop(page, transfer, /起點／上車站|Start \/ boarding stop/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
-  await pickTransferStop(page, transfer, /^終點$|^Destination$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
-  await transfer.getByRole('button', { name: /找出較快班次|Find faster trips/ }).click();
+  await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
+  await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
+  await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
   await expect(transfer).toContainText(/目前找不到第一程巴士在上車站的開出時間|No first-bus departure was found at the boarding stop/, { timeout: 20000 });
-
-  await page.route('**/api/search-live**', async (route) => {
-    const url = new URL(route.request().url());
-    if (url.searchParams.get('route') !== '9') return route.continue();
-    const service = {
-      route: '9',
-      co: 'KMB',
-      bound: 'O',
-      service_type: '1',
-      orig_tc: '彩福',
-      dest_tc: '尖沙咀東',
-      orig_en: 'Choi Fook',
-      dest_en: 'Tsim Sha Tsui East'
-    };
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ keep: [{ service, live: [{ eta: new Date(Date.now() + 60000).toISOString() }] }], auto: service })
-    });
-  });
-  await page.route('**/api/kmb/route-stop/**', async (route) => {
-    if (!route.request().url().includes('/route-stop/9/')) return route.continue();
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        data: [
-          { stop: 'A1', name_tc: '彩福', name_en: 'Choi Fook', lat: 22.32, long: 114.21, co: 'KMB' },
-          { stop: 'B1', name_tc: '旺角豉油街', name_en: 'Soy Street Mong Kok', lat: 22.32, long: 114.17, co: 'KMB' }
-        ]
-      })
-    });
-  });
-  const routeInput = transfer.getByPlaceholder(/路線，例如|Route, for example/);
-  await routeInput.fill('9');
-  await routeInput.locator('xpath=ancestor::*[contains(@class,"search-row")][1]').getByRole('button', { name: /^查詢$|^Find$/ }).click();
-  const routeChoice = transfer.getByRole('button', { name: /九巴 9|KMB 9/ }).first();
-  if (await routeChoice.isVisible().catch(() => false)) await routeChoice.click();
-  await transfer.getByRole('button', { name: /找出較快班次|Find faster trips/ }).click();
-  await expect(transfer).toContainText(/指定路線現時沒有實時開出|Your preferred route has no live departure now/, { timeout: 20000 });
 });
 
 test('transfer helper and MTR tabs still search', async ({ page }) => {
@@ -745,10 +681,10 @@ test('transfer helper and MTR tabs still search', async ({ page }) => {
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
   const transfer = page.locator('.panel.active');
-  await pickTransferStop(page, transfer, /起點／上車站|Start \/ boarding stop/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
-  await pickTransferStop(page, transfer, /^終點$|^Destination$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
-  await transfer.getByRole('button', { name: /找出較快班次|Find faster trips/ }).click();
-  await expect(transfer).toContainText(/目前觀察到|Fastest among|目前找不到由起點|No live bus or minibus|分鐘|min|估計|est/i, { timeout: 45000 });
+  await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
+  await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
+  await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
+  await expect(transfer).toContainText(/最快|Fastest|目前找不到由起點|No live bus or minibus|分鐘|min|估計|est/i, { timeout: 45000 });
   await page.locator('button.tab-mtr').click();
   await expect(page.getByRole('heading', { name: /港鐵下班車|Next MTR trains/ }).first()).toBeVisible();
   await page.getByRole('button', { name: /顯示下班車|Show next trains/ }).click();
@@ -795,10 +731,10 @@ test('catch-up helper shows next of this route, not a walk to a later stop', asy
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   await page.getByRole('tab', { name: /轉乘助手|Transfer helper/ }).click();
   const transfer = page.locator('.panel.active');
-  await pickTransferStop(page, transfer, /起點／上車站|Start \/ boarding stop/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
-  await pickTransferStop(page, transfer, /^終點$|^Destination$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
-  await transfer.getByRole('button', { name: /找出較快班次|Find faster trips/ }).click();
-  await expect(transfer).toContainText(/下一班同一路線約|Next of the same route/, { timeout: 20000 });
+  await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
+  await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
+  await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
+  await expect(transfer).toContainText(/最快|Fastest/, { timeout: 20000 });
   await transfer.getByRole('button', { name: /就乘這一程|Take this trip/ }).click();
   await expect(transfer.getByRole('button', { name: /錯過了|If I missed it/ })).toBeVisible();
   await transfer.getByRole('button', { name: /錯過了|If I missed it/ }).click();

@@ -1,5 +1,5 @@
 import { attachJourneyFares } from './fares.js';
-import { fareDeltaAgainst, sortByWageTime } from './fareRank.js';
+import { fareDeltaAgainst, sortByStreetCost } from './fareRank.js';
 import { scheduledHeadwaySec, scheduledTripMs, parseHktWhen, gtfsHasDayService, startGtfsLoad } from './gtfs.js';
 import {
   findBoardIdx,
@@ -305,9 +305,8 @@ export async function planPretrip(cache, stopMap, allStops, routes, body, opts =
   let ranked = wantFares && built.length
     ? await attachJourneyFares(built, { fareIndex: opts.fareIndex, discountIndex: opts.discountIndex })
     : built;
-  ranked = sortByWageTime(ranked, (row) => row.doorMinutes);
-  const timeBest = [...ranked].sort((a, b) => (a.doorMinutes || 0) - (b.doorMinutes || 0)
-    || Number(a.kind === 'transfer') - Number(b.kind === 'transfer'))[0];
+  ranked = sortByStreetCost(ranked, (row) => row.doorMinutes, { travelIncludesDoorWalk: true });
+  const streetBest = ranked[0];
 
   const options = [];
   const seen = new Set();
@@ -315,10 +314,10 @@ export async function planPretrip(cache, stopMap, allStops, routes, body, opts =
     const key = [row.kind, serviceUid(row.first), row.second ? serviceUid(row.second) : '', row.fromStop, row.toStop].join('|');
     if (seen.has(key)) continue;
     seen.add(key);
-    const slower = timeBest ? Math.max(0, Math.round((row.doorMinutes || 0) - (timeBest.doorMinutes || 0))) : 0;
+    const slower = streetBest ? Math.max(0, Math.round((row.doorMinutes || 0) - (streetBest.doorMinutes || 0))) : 0;
     const delta = fareDeltaAgainst(
       { ...row, arrive: new Date(departAtMs + (row.doorMinutes || 0) * 60000).toISOString() },
-      timeBest ? { ...timeBest, arrive: new Date(departAtMs + (timeBest.doorMinutes || 0) * 60000).toISOString() } : null
+      streetBest ? { ...streetBest, arrive: new Date(departAtMs + (streetBest.doorMinutes || 0) * 60000).toISOString() } : null
     );
     options.push({
       ...row,

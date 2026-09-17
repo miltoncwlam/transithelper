@@ -9,7 +9,7 @@ import { LRT_TERMINI } from '../00-required/lightrail.js';
 import { mtrLineColor } from '../lib/mtrColors.js';
 import { lineColorForCo } from '../lib/routeColors.js';
 import { displayStopName } from '../00-required/stopName.js';
-import { keepSilentJourneyList, mergeJourneyGroups, itineraryKey, samePlaceLabel, stopPlaceLabel } from '../lib/journeyGroups.js';
+import { keepSilentJourneyList, mergeJourneyGroups, itineraryKey, stopPlaceLabel } from '../lib/journeyGroups.js';
 import { etaPrimaryText } from '../lib/etaDisplay.js';
 import { collapseNearbyKinds, nearbyCollectionTitle, nearbyKindOf, replaceNearbyKind, splitHomes } from '../lib/nearbyCollections.js';
 import { hasRestorableArrival } from '../lib/arrivalPref.js';
@@ -975,14 +975,10 @@ export default function TransitApp() {
 
   function applyNearbyOrigin(cluster) {
     if (!cluster?.stops?.length) return;
-    const group = {
+    applyOrigin({
       label: lang === 'zh' ? (cluster.label_tc || cluster.name_tc) : (cluster.label_en || cluster.name_en),
       stops: cluster.stops
-    };
-    setOrigin(group);
-    originRef.current = group;
-    setOriginBoxHidden(true);
-    setOriginResults(null);
+    });
   }
 
   async function fetchNearbyBoardAt(lat, lng, radiusM = 200) {
@@ -1369,6 +1365,41 @@ export default function TransitApp() {
     }
   }, [api, origin, destination, firstService, firstGroups, interchangeIndex, nearby, radius, t, journeyOptions]);
 
+  function clearPreferredRoute() {
+    setFirstService(null);
+    setFirstRoute('');
+    setFirstChoices(null);
+    setFirstGroups([]);
+    setBoardIndex('');
+    setInterchangeIndex('');
+  }
+
+  function applyOrigin(x) {
+    setOrigin(x);
+    originRef.current = x;
+    setOriginBoxHidden(true);
+    setOriginResults(null);
+    clearPreferredRoute();
+    setJourneyOptions(null);
+    journeyLockedRef.current = false;
+    resetTransferLock();
+    const dest = destinationRef.current;
+    if (dest?.stops?.length) searchJourneys({ origin: x, destination: dest, firstService: null });
+  }
+
+  function applyDestination(x) {
+    setDestination(x);
+    destinationRef.current = x;
+    setDestBoxHidden(true);
+    setDestinationResults(null);
+    clearPreferredRoute();
+    setJourneyOptions(null);
+    journeyLockedRef.current = false;
+    resetTransferLock();
+    const o = originRef.current;
+    if (o?.stops?.length) searchJourneys({ origin: o, destination: x, firstService: null });
+  }
+
   const searchPretrip = useCallback(async () => {
     const o = originRef.current ?? origin;
     const d = destinationRef.current ?? destination;
@@ -1623,9 +1654,9 @@ export default function TransitApp() {
     const destLabel = destination?.label || '';
     return (
       <>
-        {renderJourneyLead(groups[0], originLabel, destLabel, groups)}
+        {renderJourneyLead(groups[0], originLabel, destLabel)}
         {groups.length > 1 ? <p className="muted journey-also-label">{t('journeyAlso')}</p> : null}
-        {groups.slice(1).map((group, i) => renderJourneyAlso(group, i))}
+        {groups.slice(1).map((group, i) => renderJourneyAlso(group, i, originLabel))}
       </>
     );
   }
@@ -1636,7 +1667,32 @@ export default function TransitApp() {
     return t('journeyLater', clocks.join(lang === 'zh' ? '、' : ', '));
   }
 
-  function renderJourneyLead(group, originLabel, destLabel, groups = []) {
+  function journeyTitle(option) {
+    return option.kind === 'transfer'
+      ? `${option.first?.route} → ${option.second?.route}`
+      : option.first?.route;
+  }
+
+  function journeyWalkBits(option, originLabel) {
+    const originName = originLabel || stopPlaceLabel(option.from);
+    const boardWalkMins = option.boardWalkMinutes || 0;
+    const destWalkMins = option.destWalkMinutes || (option.kind === 'direct' && option.walkMinutes && !option.boardWalkMinutes ? option.walkMinutes : 0);
+    const xferWalk = option.kind === 'transfer' ? (option.walkMinutes || 0) : 0;
+    const waitMins = option.kind === 'transfer' && option.waitAfterFirstMinutes != null
+      ? Math.max(0, option.waitAfterFirstMinutes)
+      : null;
+    return (
+      <>
+        {option.kind === 'transfer' ? <div className="muted">{t('journeyChangeAt', stopPlaceLabel(option.from))}</div> : null}
+        {waitMins != null ? <div className="muted">{t('waitAfter', waitMins)}</div> : null}
+        {xferWalk ? <div className="muted">{t('walkMins', xferWalk)}</div> : null}
+        {boardWalkMins ? <div className="muted">{t('boardWalkMins', boardWalkMins, originName)}</div> : null}
+        {destWalkMins ? <div className="muted">{t('destWalkMins', destWalkMins)}</div> : null}
+      </>
+    );
+  }
+
+  function renderJourneyLead(group, originLabel, destLabel) {
     const option = group.best;
     const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
     const boardClk = clk(option.eta);
@@ -1644,46 +1700,21 @@ export default function TransitApp() {
       ? `${clk(option.arrive)} ${t('stopTimeEst')}`
       : clk(option.arrive);
     const destName = stopPlaceLabel(option.to) || stopPlaceLabel(option.dest) || destLabel;
-    const boardName = stopPlaceLabel(option.from);
-    const boardWalkMins = option.boardWalkMinutes || (option.kind === 'direct' && option.walkMinutes && originLabel && !samePlaceLabel({ zh: originLabel, en: originLabel }, option.from) ? option.walkMinutes : 0);
-    const destWalkMins = option.destWalkMinutes || (option.kind === 'direct' && option.walkMinutes && !boardWalkMins ? option.walkMinutes : 0);
-    const walkUp = option.kind === 'direct' && boardWalkMins;
-    const destWalk = option.kind === 'direct' && destWalkMins;
-    const interName = stopPlaceLabel(option.from);
-    const lead = option.kind === 'transfer'
-      ? t('journeyFastestTransfer', option.first?.route, option.second?.route, boardClk, arriveClk, interName, destName)
-      : walkUp
-        ? t('journeyFastestWalk', boardWalkMins, boardName, option.first?.route, boardClk, arriveClk)
-        : t('journeyFastestDirect', option.first?.route, boardClk, arriveClk, destName);
+    const duration = option.totalMinutes || option.rideMinutes;
     const later = laterClocks(group);
-    const nextSame = group.laterEtas?.[0];
-    const nextWait = nextSame ? mins(nextSame) : null;
-    const alt = groups[1]?.best;
-    const altWait = alt?.eta ? mins(alt.eta) : null;
-    const showAlt = altWait != null && nextWait != null && altWait < nextWait;
     return (
       <div className={`item journey-box ${coTone(row)}`} key={group.key}>
         <button className={`choice pg-choice ${coTone(row)}`} type="button" onClick={() => pickJourney(option)}>
-          <span className="badge">{option.cheaperBetter || group.cheaperBetter ? t('cheaperBadge') : t('bestObserved')}</span>
+          <span className="badge">{t('bestObserved')}</span>
           {serviceCo(row) !== 'KMB' ? <span className="badge">{coLabel(row)}</span> : null}
           {option.kind === 'transfer' && option.second && serviceCo(option.second) !== 'KMB' ? <span className="badge">{coLabel(option.second)}</span> : null}
-          <div className="journey-lead">{lead}</div>
-          {(option.cheaperBetter || group.cheaperBetter) && option.slowerByMinutes && option.cheaperByHkd > 0
-            ? <div>{t('cheaperVsTime', option.slowerByMinutes, option.cheaperByHkd)}</div>
-            : null}
-          {(option.cheaperBetter || group.cheaperBetter) ? <div className="muted">{t('wageTimeNote')}</div> : null}
+          <div className="eta">
+            <b>{journeyTitle(option)}</b>
+            {duration != null ? <span className="mins">{t('rideMins', duration)}</span> : null}
+          </div>
+          <div>{boardClk} {t('rideDeparts')} → {arriveClk} {t('rideArrives')}{destName ? ` ${destName}` : ''}</div>
+          {journeyWalkBits(option, originLabel)}
           {later ? <div className="muted">{later}</div> : null}
-          {nextWait != null ? <div className="muted">{t('missSameNext', nextWait)}</div> : null}
-          {showAlt ? (
-            <div className="muted">
-              {alt.kind === 'transfer'
-                ? t('missAltTransfer', alt.first?.route, alt.second?.route, altWait)
-                : t('missAltLive', alt.first?.route || alt.route, altWait)}
-            </div>
-          ) : null}
-          {option.kind === 'transfer' && option.walkMinutes ? <div className="muted">{t('walkMins', option.walkMinutes)}</div> : null}
-          {walkUp ? <div className="muted">{t('boardWalkMins', boardWalkMins, boardName)}</div> : null}
-          {destWalk ? <div className="muted">{t('destWalkMins', destWalkMins)}</div> : null}
           {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
           {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
           {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : fareNote(option.first || row)}
@@ -1693,7 +1724,7 @@ export default function TransitApp() {
     );
   }
 
-  function renderJourneyAlso(group, i) {
+  function renderJourneyAlso(group, i, originLabel) {
     const option = group.best;
     const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
     const boardClk = clk(option.eta);
@@ -1701,17 +1732,19 @@ export default function TransitApp() {
       ? `${clk(option.arrive)} ${t('stopTimeEst')}`
       : clk(option.arrive);
     const slower = group.slowerByMinutes;
-    const line = option.kind === 'transfer'
-      ? t('journeyAlsoTransfer', option.first?.route, option.second?.route, slower, boardClk, arriveClk)
-      : t('journeyAlsoDirect', option.first?.route, slower, boardClk, arriveClk);
-    const later = laterClocks(group);
+    const duration = option.totalMinutes || option.rideMinutes;
     return (
       <div className={`item journey-also ${coTone(row)}`} key={group.key || i}>
         <button className={`choice pg-choice ${coTone(row)}`} type="button" onClick={() => pickJourney(option)}>
           {serviceCo(row) !== 'KMB' ? <span className="badge">{coLabel(row)}</span> : null}
           {option.kind === 'transfer' && option.second && serviceCo(option.second) !== 'KMB' ? <span className="badge">{coLabel(option.second)}</span> : null}
-          <div>{line}{later ? ` · ${later}` : ''}</div>
-          {group.preferred && slower ? <div className="muted">{t('preferredSlower', slower)}</div> : null}
+          <div className="eta">
+            <b>{journeyTitle(option)}</b>
+            {duration != null ? <span className="mins">{t('rideMins', duration)}</span> : null}
+          </div>
+          <div>{boardClk} {t('rideDeparts')} → {arriveClk} {t('rideArrives')}</div>
+          {slower ? <div className="muted">{t('journeySlower', slower)}</div> : null}
+          {journeyWalkBits(option, originLabel)}
           {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
           {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
           {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : null}
@@ -1735,19 +1768,15 @@ export default function TransitApp() {
         : option.first?.route;
       return (
         <div className={`item ${i === 0 ? 'journey-box' : 'journey-also'} ${coTone(row)}`} key={`${title}-${i}`}>
-          {i === 0 ? <span className="badge">{option.cheaperBetter ? t('cheaperBadge') : t('bestObserved')}</span> : null}
+          {i === 0 ? <span className="badge">{t('bestObserved')}</span> : null}
           {option.jam ? <span className="badge">{t('pretripJam')}</span> : null}
           <div className="journey-lead">{title}</div>
           <div className="muted">{t('pretripNotLive')}</div>
           {option.leaveHome ? <div>{t('pretripLeave', option.leaveHome)}</div> : null}
           <div className="muted">{rideLine}</div>
           {option.waitMinutes && option.headwayMinutes ? <div className="muted">{t('pretripWait', option.waitMinutes, option.headwayMinutes)}</div> : null}
-          {option.walkMinutes ? <div className="muted">{t('walkMins', option.walkMinutes)}</div> : null}
+          {journeyWalkBits(option, origin?.label || '')}
           {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : null}
-          {option.cheaperBetter && option.slowerByMinutes && option.cheaperByHkd > 0
-            ? <div>{t('cheaperVsTime', option.slowerByMinutes, option.cheaperByHkd)}</div>
-            : null}
-          {option.cheaperBetter ? <div className="muted">{t('wageTimeNote')}</div> : null}
         </div>
       );
     });
@@ -2729,27 +2758,21 @@ export default function TransitApp() {
       <section className={`panel${tab === 'transfer' ? ' active' : ''}`}>
         <div className="card">
           <h2 className="text-lg font-bold">{t('transferHeading')}</h2>
-          <label className="block mt-3">
-            <input type="checkbox" checked={nearby} onChange={(e) => setNearby(e.target.checked)} /> <span>{t('nearbyLabel')}</span>
-          </label>
-          <div className="mt-2">
-            <span>{t('radiusLabel')}</span>
-            <Select value={radius} onValueChange={setRadius}>
-              <SelectTrigger className="mt-1" aria-label={t('radiusLabel')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="150">{t('m150')}</SelectItem>
-                <SelectItem value="250">{t('m250')}</SelectItem>
-                <SelectItem value="400">{t('m400')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <p className="muted mt-1">{t('transferHint')}</p>
           <div className={`mt-4${originBoxHidden ? ' hidden' : ''}`}>
             <b>{t('originLabel')}</b>
             <div className="search-row mt-1">
-              <Input className="field" placeholder={t('originPlaceholder')} value={originInput} onChange={(e) => setOriginInput(e.target.value)} aria-label={t('originLabel')} />
-              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchPlaces(originInput, setOriginResults)}>{t('find')}</Button>
+              <Input
+                className="field"
+                placeholder={t('originPlaceholder')}
+                value={originInput}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setOriginInput(v);
+                  searchPlaces(v, setOriginResults);
+                }}
+                aria-label={t('originLabel')}
+              />
               <Button variant="outline" className="tab" type="button" onClick={useOriginLocation}>{t('useMyLocation')}</Button>
             </div>
             <div className="mt-2">
@@ -2758,22 +2781,11 @@ export default function TransitApp() {
                   ? (
                     <ScrollArea className="h-72 rounded-md border">
                     <Command className="rounded-none border-0">
-                      <CommandInput placeholder={t('stopSearch')} />
                       <CommandList>
                         <CommandEmpty>{t('noStops')}</CommandEmpty>
                         <CommandGroup>
                           {originResults.map((x, i) => (
-                            <CommandItem key={`o-${x.label}-${i}`} value={x.label} onSelect={() => {
-                              setOrigin(x);
-                              originRef.current = x;
-                              setOriginBoxHidden(true);
-                              const ids = new Set(stopIds(x));
-                              const idx = firstGroups.findIndex((g) => (g.stops || []).some((row) => ids.has(row.stop)));
-                              if (idx >= 0) setBoardIndex(String(idx));
-                              setJourneyOptions(null);
-                              journeyLockedRef.current = false;
-                              resetTransferLock();
-                            }}>{x.label}</CommandItem>
+                            <CommandItem key={`o-${x.label}-${i}`} value={x.label} onSelect={() => applyOrigin(x)}>{x.label}</CommandItem>
                           ))}
                         </CommandGroup>
                       </CommandList>
@@ -2786,7 +2798,7 @@ export default function TransitApp() {
           </div>
           {origin ? (
             <div className="note">
-              <b>{t('originArea')}</b>
+              <span className="muted">{t('originLabel')}</span>
               <div>{origin.label}</div>
               <Button variant="outline" className="tab mt-2" type="button" onClick={() => setOriginBoxHidden(false)}>{t('change')}</Button>
             </div>
@@ -2794,8 +2806,17 @@ export default function TransitApp() {
           <div className={`mt-4${destBoxHidden ? ' hidden' : ''}`}>
             <b>{t('destLabel')}</b>
             <div className="search-row mt-1">
-              <Input className="field" placeholder={t('destPlaceholder')} value={destinationInput} onChange={(e) => setDestinationInput(e.target.value)} aria-label={t('destLabel')} />
-              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchDest(destinationInput)}>{t('find')}</Button>
+              <Input
+                className="field"
+                placeholder={t('destPlaceholder')}
+                value={destinationInput}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setDestinationInput(v);
+                  searchDest(v);
+                }}
+                aria-label={t('destLabel')}
+              />
             </div>
             <div className="mt-2">
               {destinationResults
@@ -2803,19 +2824,11 @@ export default function TransitApp() {
                   ? (
                     <ScrollArea className="h-72 rounded-md border">
                     <Command className="rounded-none border-0">
-                      <CommandInput placeholder={t('stopSearch')} />
                       <CommandList>
                         <CommandEmpty>{t('noStops')}</CommandEmpty>
                         <CommandGroup>
                           {destinationResults.map((x, i) => (
-                            <CommandItem key={`d-${x.label}-${i}`} value={x.label} onSelect={() => {
-                              setDestination(x);
-                              destinationRef.current = x;
-                              setDestBoxHidden(true);
-                              setJourneyOptions(null);
-                              journeyLockedRef.current = false;
-                              resetTransferLock();
-                            }}>{x.label}</CommandItem>
+                            <CommandItem key={`d-${x.label}-${i}`} value={x.label} onSelect={() => applyDestination(x)}>{x.label}</CommandItem>
                           ))}
                         </CommandGroup>
                       </CommandList>
@@ -2828,66 +2841,9 @@ export default function TransitApp() {
           </div>
           {destination ? (
             <div className="note">
-              <b>{t('destArea')}</b>
+              <span className="muted">{t('destLabel')}</span>
               <div>{destination.label}</div>
               <Button variant="outline" className="tab mt-2" type="button" onClick={() => setDestBoxHidden(false)}>{t('change')}</Button>
-            </div>
-          ) : null}
-          {origin && destination ? (
-            <div className="note mt-4">
-              <b>{t('pretripHeading')}</b>
-              <p className="muted mt-1">{t('pretripHelp')}</p>
-              <label className="block mt-2">
-                <span className="muted">{t('pretripDate')}</span>
-                <Input className="field mt-1" type="date" value={pretripDate} onChange={(e) => setPretripDate(e.target.value)} aria-label={t('pretripDate')} />
-              </label>
-              <label className="block mt-2">
-                <span className="muted">{t('pretripArriveBy')}</span>
-                <Input className="field mt-1" type="time" value={pretripArriveBy} onChange={(e) => setPretripArriveBy(e.target.value)} aria-label={t('pretripArriveBy')} />
-              </label>
-              <Button className="btn btn-block mt-3 w-full" type="button" onClick={() => searchPretrip()}>{t('pretripFind')}</Button>
-              {pretripMessage ? <div className="note mt-2">{pretripMessage}</div> : null}
-              {pretripResult ? <div className="mt-2">{renderPretripOptions()}</div> : null}
-            </div>
-          ) : null}
-          <div className={`mt-4${firstBoxHidden ? ' hidden' : ''}`}>
-            <b>{t('firstRouteLabel')}</b>
-            <p className="muted mt-1">{t('optionalRouteHelp')}</p>
-            <div className="search-row mt-1">
-              <Input className="field" placeholder={t('routePlaceholder')} value={firstRoute} onChange={(e) => setFirstRoute(e.target.value)} aria-label={t('firstRouteLabel')} />
-              <Button className="btn" type="button" aria-label={t('find')} onClick={() => searchFirstByRoute()}>{t('find')}</Button>
-            </div>
-            <div>{renderChoiceList(firstChoices, (s) => pickFirst(s))}</div>
-          </div>
-          {firstService ? (
-            <div className="note">
-              <b>{firstService.route}</b>
-              <div>{rn(firstService)}</div>
-              {fareNote(firstService)}
-              <Button variant="outline" className="tab mt-2" type="button" onClick={() => setFirstBoxHidden(false)}>{t('change')}</Button>
-            </div>
-          ) : null}
-          {firstService ? (
-            <div className="mt-4">
-              <SearchableSelect
-                label={t('optionalInterchange')}
-                value={interchangeIndex}
-                placeholder={t('notSelected')}
-                searchPlaceholder={t('stopSearch')}
-                emptyText={t('noStopMatch')}
-                options={[
-                  { value: '', label: t('notSelected') },
-                  ...firstGroups.map((g, i) => (
-                    boardIndex === '' || i >= +boardIndex
-                      ? {
-                          value: String(i),
-                          label: fareLabel(g, (boardIndex !== '' ? odFare(firstGroups[+boardIndex], g, firstFares) : null) || terminusFareForGroup(firstFares, g))
-                        }
-                      : null
-                  )).filter(Boolean)
-                ]}
-                onChange={setInterchangeIndex}
-              />
             </div>
           ) : null}
           <Button
@@ -2915,7 +2871,6 @@ export default function TransitApp() {
             {transferMessage ? <div className="note">{transferMessage}</div> : null}
             {chosenDirect ? (
               <>
-                <div className="note">{t('chosenDirect')}</div>
                 {renderTransferItem(chosenDirect, 0)}
                 {catchUpDue(chosenDirect.eta) ? (
                   <button className="tab mt-2" type="button" onClick={() => {
@@ -2935,7 +2890,7 @@ export default function TransitApp() {
                   resetTransferLock();
                   setTransferResult(null);
                   searchJourneys();
-                }}>{t('changeDeparture')}</button>
+                }}>{t('backToRoutes')}</button>
                 <div className="row-actions">
                   <button className="tab" type="button" onClick={() => saveHome(transferHomeItem())}>{t('saveHome')}</button>
                 </div>
@@ -3073,7 +3028,7 @@ export default function TransitApp() {
                         resetTransferLock();
                         setTransferResult(null);
                         searchJourneys();
-                      }}>{t('changeDeparture')}</button>
+                      }}>{t('backToRoutes')}</button>
                     {transferResult.json.watch?.selected || selectedConnection ? (
                       <div className="note mt-4">
                         <h3 className="font-bold">{t('watchingConnection')}</h3>
@@ -3129,6 +3084,29 @@ export default function TransitApp() {
               </>
             ) : null}
           </div>
+          {origin && destination ? (
+            <Collapsible className="mt-4">
+              <CollapsibleTrigger asChild>
+                <Button variant="outline" className="tab" type="button">{t('pretripHeading')}</Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="note mt-2">
+                  <p className="muted">{t('pretripHelp')}</p>
+                  <label className="block mt-2">
+                    <span className="muted">{t('pretripDate')}</span>
+                    <Input className="field mt-1" type="date" value={pretripDate} onChange={(e) => setPretripDate(e.target.value)} aria-label={t('pretripDate')} />
+                  </label>
+                  <label className="block mt-2">
+                    <span className="muted">{t('pretripArriveBy')}</span>
+                    <Input className="field mt-1" type="time" value={pretripArriveBy} onChange={(e) => setPretripArriveBy(e.target.value)} aria-label={t('pretripArriveBy')} />
+                  </label>
+                  <Button className="btn btn-block mt-3 w-full" type="button" onClick={() => searchPretrip()}>{t('pretripFind')}</Button>
+                  {pretripMessage ? <div className="note mt-2">{pretripMessage}</div> : null}
+                  {pretripResult ? <div className="mt-2">{renderPretripOptions()}</div> : null}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          ) : null}
         </div>
       </section>
 

@@ -6,9 +6,22 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.4.0**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.5.0**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.5.0 — 2026-09-17
+
+### Changed
+- **轉乘助手** is from / to / search, like a map. Nearby radius, preferred first route, and transfer-stop pickers are off the main sheet (nearby poles are still included). Typing a stop name lists matches; picking both ends also searches.
+- Results rank by four things together: travel time, transfer (hassle plus interchange wait already in the clock), walking (shown on the card, and heavier than sitting on the bus), and Octopus fare at the statutory minimum wage. A transfer that is only a minute faster — especially a dearer one like 1→7 at $12.3 vs staying on 1 at $6.7 — is not 最快. Clocks stay honest; 較抵 labels stay off. Miss-cost is not shown on the list; lock a trip, then **錯過了**.
+- **出門規劃** is a closed control under the results, not in the middle of the form.
+
+### Tests
+- Unit: same-fare 1-minute transfer loses; 1→7 at $12.3 loses to 1 at $6.7; dest walk is heavier than sitting; cheaper 2-minute-slower direct still wins at SMW.
+- Playwright: from/to only; 搜尋; 最快; 9 → 2 lock; empty feed stays empty.
 
 ---
 

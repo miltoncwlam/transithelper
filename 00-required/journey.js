@@ -14,7 +14,7 @@ import {
   walkMs
 } from './transfer.js';
 import { attachJourneyFares } from './fares.js';
-import { fareDeltaAgainst, sortByWageTime, timeMinutesOfArrive } from './fareRank.js';
+import { fareDeltaAgainst, sortByStreetCost, timeMinutesOfArrive } from './fareRank.js';
 import { addGraphService, currentTopology, ensureTopology, getTopology, graphStopList, parseStopRef, serviceUid, servicesAtStop, stopUid } from './topology.js';
 
 const PLAN_MS = 12000;
@@ -488,7 +488,7 @@ async function refineDirect(ctx, candidate, originStops, destStops, departAfter,
   };
 }
 
-async function refineTransfer(ctx, candidate, originStops, destStops, departAfter, seedOriginStops) {
+async function refineTransfer(ctx, candidate, originStops, destStops, departAfter, seedOriginStops, seedDestStops) {
   const firstSeq = candidate.firstSeq || await ctx.loadRouteStops(candidate.first);
   const secondSeq = candidate.secondSeq || await ctx.loadRouteStops(candidate.second);
   const boardIdx = findBoardIdx(firstSeq, originStops, seedOriginStops);
@@ -516,7 +516,10 @@ async function refineTransfer(ctx, candidate, originStops, destStops, departAfte
   const catchable = new Date(connection.eta).getTime() >= readyAt;
   const secondTimed = await ctx.attachRide(candidate.second, secondSeq, { eta: connection.eta, dest: namedDest(candidate.second) }, onIdx, destIdx);
   const arrive = secondTimed.arrive || null;
-  const total = arrive ? Math.round((new Date(arrive) - new Date(eta.eta)) / 60000) : null;
+  const xferWalkMinutes = metres < 40 ? 0 : Math.max(1, Math.round(walk / 60000));
+  const boardWalkMinutes = walkMinutesTo(firstSeq[boardIdx], seedOriginStops);
+  const destWalkMinutes = walkMinutesTo(secondSeq[destIdx], seedDestStops || destStops);
+  const total = arrive ? Math.round((new Date(arrive) - new Date(eta.eta)) / 60000) + destWalkMinutes + boardWalkMinutes : null;
   return {
     kind: 'transfer',
     preferred: !!candidate.preferred,
@@ -530,7 +533,9 @@ async function refineTransfer(ctx, candidate, originStops, destStops, departAfte
     arrivalEstimated: !!(firstTimed.arrivalEstimated || secondTimed.arrivalEstimated),
     rideMinutes: (firstTimed.rideMinutes || 0) + (secondTimed.rideMinutes || 0),
     waitAfterFirstMinutes: Math.round((new Date(connection.eta) - new Date(firstTimed.arrive)) / 60000),
-    walkMinutes: metres < 40 ? 0 : Math.max(1, Math.round(walk / 60000)),
+    walkMinutes: xferWalkMinutes,
+    boardWalkMinutes,
+    destWalkMinutes,
     totalMinutes: total,
     dest: namedDest(candidate.second),
     from: namedStop(firstSeq[alightIdx]),
@@ -848,7 +853,7 @@ export async function planJourneyOptions(cache, stopMap, allStops, routes, body,
   let transferHits = [];
   const refineRace = await raceMs((async () => {
     directHits = await mapPool(directQueue, 3, (row) => refineDirect(ctx, row, originStops, destStops, departAt, seedDestStops, seedOriginStops));
-    transferHits = await mapPool(transferQueue, 3, (row) => refineTransfer(ctx, row, originStops, destStops, departAt, seedOriginStops));
+    transferHits = await mapPool(transferQueue, 3, (row) => refineTransfer(ctx, row, originStops, destStops, departAt, seedOriginStops, seedDestStops));
     return true;
   })(), Math.max(400, remain()), null);
   for (const row of [...directHits, ...transferHits]) {
@@ -870,12 +875,9 @@ export async function planJourneyOptions(cache, stopMap, allStops, routes, body,
       discountIndex: opts.discountIndex
     });
   }
-  ranked = sortByWageTime(ranked, (row) => timeMinutesOfArrive(row));
+  ranked = sortByStreetCost(ranked, (row) => timeMinutesOfArrive(row));
 
-  const timeBest = [...ranked]
-    .filter((row) => row.catchable !== false && row.arrive)
-    .sort((a, b) => new Date(a.arrive) - new Date(b.arrive) || Number(a.kind === 'transfer') - Number(b.kind === 'transfer'))[0]
-    || ranked.find((row) => row.arrive);
+  const streetBest = ranked.find((row) => row.catchable !== false && row.arrive) || ranked.find((row) => row.arrive);
 
   const options = [];
   const seen = new Set();
@@ -883,9 +885,9 @@ export async function planJourneyOptions(cache, stopMap, allStops, routes, body,
     const key = optionKey(row);
     if (seen.has(key)) continue;
     seen.add(key);
-    const delta = fareDeltaAgainst(row, timeBest);
-    const slower = timeBest && row.arrive
-      ? Math.max(0, Math.round((new Date(row.arrive) - new Date(timeBest.arrive)) / 60000))
+    const delta = fareDeltaAgainst(row, streetBest);
+    const slower = streetBest && row.arrive
+      ? Math.max(0, Math.round((new Date(row.arrive) - new Date(streetBest.arrive)) / 60000))
       : null;
     options.push(publicOption(row, {
       recommended: options.length === 0,

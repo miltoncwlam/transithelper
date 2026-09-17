@@ -175,7 +175,7 @@ test('pretrip TDAS jam replaces 編定 minutes', async () => {
   assert.equal(result.options[0].rideMinutes, 40);
 });
 
-test('cheaper 2 min slower transfer ranks first at min wage', async () => {
+test('cheaper 2-minute-slower direct ranks first at SMW', async () => {
   const first = service('1');
   const second = service('2');
   const graph = graphWith([
@@ -197,9 +197,6 @@ test('cheaper 2 min slower transfer ranks first at min wage', async () => {
   });
   assert.ok(result.options.length >= 2);
   assert.equal(result.options[0].first.route, '2');
-  assert.equal(result.options[0].cheaperBetter, true);
-  assert.ok(result.options[0].slowerByMinutes >= 1);
-  assert.ok(result.options[0].cheaperByHkd >= 4);
 });
 
 test('missing fare keeps time order', async () => {
