@@ -18,7 +18,8 @@ Scheme: **x.y.z** — major / minor / patch. Git tags are `vX.Y.Z`.
 | 3.4.0 | `v3.4.0` | Lock is 趕車; 錯過了 shows next / faster, no walk chase |
 | 3.5.0 | `v3.5.0` | Transfer Buddy is from/to like a map |
 | 3.5.1 | `v3.5.1` | 轉乘助手 renamed 路線規劃 / Route planner |
-| 3.5.2 | `v3.5.2` | GMB 811 search no longer empty on a cold CI directory (current) |
+| 3.5.2 | `v3.5.2` | GMB 811 search waits for etagmb on a cold directory |
+| 3.5.3 | `v3.5.3` | Persist GMB lookups so CI smoke still sees 811 (current) |
 
 ```bash
 git fetch origin --tags

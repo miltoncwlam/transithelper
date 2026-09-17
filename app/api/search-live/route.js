@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-import { cache, getDirectory, getDirectoryFast } from '@/lib/directory.js';
+import { cache, getDirectory, getDirectoryFast, rememberGmbServices } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
 import { gmbLookup } from '@/00-required/gmb.js';
 import { keepFromDirectory, keepFromServices, probeKmbRoute, searchLive } from '@/lib/searchLive.js';
@@ -77,6 +77,7 @@ export async function GET(request) {
       ? await Promise.race([gmbEarly, later(gmbWait, [])])
       : [];
     const gmbKeep = keepFromServices(route, Array.isArray(gmbRows) ? gmbRows : []);
+    if ((gmbRows || []).length) rememberGmbServices(gmbRows);
     const merged = mergeKeep(result || fallback, gmbKeep);
     if ((merged.keep || []).length) return json(merged);
     const probed = await probeKmbRoute(cache, route);
@@ -90,6 +91,7 @@ export async function GET(request) {
         later(8000, [])
       ]);
       const gmbKeep = keepFromServices(route, Array.isArray(gmbRows) ? gmbRows : []);
+      if ((gmbRows || []).length) rememberGmbServices(gmbRows);
       if ((gmbKeep.keep || []).length) return json(gmbKeep);
       const probed = await probeKmbRoute(cache, route);
       if ((probed.keep || []).length) return json(probed);

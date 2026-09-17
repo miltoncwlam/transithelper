@@ -28,17 +28,26 @@ async function gmbGet(path, cache, ttlMs) {
   const key = `gmb:${path}`;
   const cached = cache.get(key);
   if (cached) return cached;
-  const res = await fetch(BASE + path, {
-    cache: 'no-store',
-    headers: { Accept: 'application/json', 'User-Agent': 'TransitBuddy/1.0' },
-    signal: AbortSignal.timeout(8000)
-  });
-  if (res.status === 404) return [];
-  if (!res.ok) throw new Error(`GMB HTTP ${res.status}`);
-  const json = await res.json();
-  const data = json.data ?? json;
-  if (data == null || (Array.isArray(data) && !data.length)) return data;
-  return cache.set(key, data, ttlMs);
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const res = await fetch(BASE + path, {
+        cache: 'no-store',
+        headers: { Accept: 'application/json', 'User-Agent': 'TransitBuddy/1.0' },
+        signal: AbortSignal.timeout(12000)
+      });
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error(`GMB HTTP ${res.status}`);
+      const json = await res.json();
+      const data = json.data ?? json;
+      if (data == null || (Array.isArray(data) && !data.length)) return data;
+      return cache.set(key, data, ttlMs);
+    } catch (error) {
+      lastErr = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 function stopIdOf(stop) {

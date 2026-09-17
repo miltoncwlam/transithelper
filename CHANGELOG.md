@@ -6,9 +6,17 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.5.2**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.5.3**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.5.3 — 2026-09-17
+
+### Fixed
+- GitHub Actions still failed after 3.5.2: Playwright listed **811**, then `npm run smoke` saw empty GMB because etagmb answers live only in memory. A Next compile/reload (or hydrate hammering `/route`) dropped that cache, so `/api/gmb/lookup?route=811` and search-live came back empty, and `/api/kmb/routes` had no GMB at all.
+- GMB HTTP responses (route list and route details) are now kept in a temp file as well as memory. A successful 811 lookup is merged into the directory (hydrate no longer wipes GMB rows that already have a route id). etagmb fetches retry twice. Smoke waits longer on 811 / 11.
 
 ---
 

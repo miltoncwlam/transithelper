@@ -150,7 +150,7 @@ try {
     } else console.log('ok Light Rail Tuen Mun Ferry Pier', trains.length, 'trains', lrt.json.emptyReason || 'live');
   }
 
-  const gmbLookup = await getRetry('/api/gmb/lookup?route=811');
+  const gmbLookup = await getRetry('/api/gmb/lookup?route=811', { tries: 8, delay: 1500 });
   if (!gmbLookup.ok) fail(`gmb 811 HTTP ${gmbLookup.status}`);
   else if (!(gmbLookup.json.data || []).length) fail('gmb 811 lookup empty');
   else if ((gmbLookup.json.data || []).some((row) => row.co !== 'GMB')) fail('gmb 811 mislabelled');
@@ -293,7 +293,7 @@ try {
     else console.log('ok citybus 1 inbound', ctb1.json.data.length, 'stops', named[0].name_tc || named[0].name_en);
   } else console.log('ok citybus 1 inbound empty from upstream');
 
-  const gmb11 = await getRetry('/api/gmb/lookup?route=11');
+  const gmb11 = await getRetry('/api/gmb/lookup?route=11', { tries: 8, delay: 1500 });
   if (!gmb11.ok) fail(`gmb 11 HTTP ${gmb11.status}`);
   else if (!(gmb11.json.data || []).length) fail('gmb 11 lookup empty');
   else {
