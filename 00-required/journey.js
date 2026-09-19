@@ -373,7 +373,6 @@ function graphTransfers(graph, originStops, destStops, radius, seedOriginStops, 
 function graphDirects(graph, originStops, destStops) {
   const originUids = new Set(originStops.map((row) => stopUid(row)));
   const destUids = new Set(destStops.map((row) => stopUid(row)));
-  const destAreas = new Set(destStops.map((row) => stopPlaceKey(row)).filter(Boolean));
   const seen = new Set();
   const out = [];
   for (const origin of originStops) {
@@ -386,7 +385,7 @@ function graphDirects(graph, originStops, destStops) {
         if (i <= board) return false;
         if (destUids.has(uid)) return true;
         const stop = graph.stops[uid];
-        return stop && destAreas.has(stop.area) && destStopNearby(stop, destStops);
+        return !!(stop && destStopNearby(stop, destStops));
       });
       if (dest <= board) continue;
       seen.add(service.uid);
@@ -435,6 +434,22 @@ function flattenRefine(hits) {
 function etaClock(row) {
   const eta = row?.eta;
   return eta?.eta || eta;
+}
+
+async function liveClocks(ctx, candidateEtas, service, boardStop, departAfter) {
+  const fromBoard = liveEtaAtStop(candidateEtas, service, boardStop, departAfter);
+  if (fromBoard.length) return fromBoard;
+  if (!ctx?.loadEtas || !boardStop) return [];
+  try {
+    const rows = await ctx.loadEtas([boardStop]);
+    return liveEtaAtStop(rows, service, boardStop, departAfter);
+  } catch {
+    return [];
+  }
+}
+
+function poleKey(stop) {
+  return `${String(stop?.co || 'KMB').toUpperCase()}:${stop?.stop}`;
 }
 
 function packItineraries(ranked) {
@@ -501,7 +516,7 @@ async function refineDirect(ctx, candidate, originStops, destStops, departAfter,
   const boardIdx = findBoardIdx(seq, originStops, seedOriginStops);
   const destIdx = findDestIdx(seq, destStops, boardIdx);
   if (boardIdx < 0 || destIdx <= boardIdx) return null;
-  const live = liveEtaAtStop(candidate.boardEtas, candidate.first, seq[boardIdx], departAfter);
+  const live = await liveClocks(ctx, candidate.boardEtas, candidate.first, seq[boardIdx], departAfter);
   if (!live.length) return { missingLive: true, first: candidate.first, preferred: candidate.preferred };
   const boardWalkMinutes = walkMinutesTo(seq[boardIdx], seedOriginStops);
   const destWalkMinutes = walkMinutesTo(seq[destIdx], seedDestStops || destStops);
@@ -551,11 +566,21 @@ async function refineTransfer(ctx, candidate, originStops, destStops, departAfte
   const onIdx = secondSeq.findIndex((row) => row.stop === candidate.board2Stop.stop);
   const destIdx = findDestIdx(secondSeq, destStops, onIdx);
   if (alightIdx <= boardIdx || onIdx < 0 || destIdx <= onIdx) return null;
-  const live = liveEtaAtStop(candidate.boardEtas, candidate.first, firstSeq[boardIdx], departAfter);
+  const live = await liveClocks(ctx, candidate.boardEtas, candidate.first, firstSeq[boardIdx], departAfter);
   if (!live.length) return { missingLive: true, first: candidate.first, preferred: candidate.preferred };
-  const matching = liveEtaAtStop(candidate.transferEtas, candidate.second, candidate.board2Stop, 0)
+  let matching = liveEtaAtStop(candidate.transferEtas, candidate.second, candidate.board2Stop, 0)
     .map((row) => row.eta)
     .sort((a, b) => new Date(a.eta) - new Date(b.eta));
+  if (!matching.length && ctx.loadEtas && candidate.board2Stop) {
+    try {
+      const rows = await ctx.loadEtas([candidate.board2Stop]);
+      matching = liveEtaAtStop(rows, candidate.second, candidate.board2Stop, 0)
+        .map((row) => row.eta)
+        .sort((a, b) => new Date(a.eta) - new Date(b.eta));
+    } catch {
+      matching = [];
+    }
+  }
   if (!matching.length) return { missingLive: true, first: candidate.first, second: candidate.second, preferred: candidate.preferred };
   const metres = metresBetween(firstSeq[alightIdx], secondSeq[onIdx]);
   const walk = metres < 40 ? 0 : walkMs(firstSeq[alightIdx], secondSeq[onIdx]);
@@ -676,9 +701,19 @@ export async function planJourneyOptions(cache, stopMap, allStops, routes, body,
   const attachRide = opts.attachRide || ((service, seq, item, fromIdx, toIdx) => attachRideTimes(cache, service, seq, item, fromIdx, toIdx));
   const ctx = { loadRouteStops, loadEtas, attachRide };
 
-  const originRace = await raceMs(loadEtas(originStops), Math.min(3500, remain()), []);
-  const originLive = Array.isArray(originRace.value) ? originRace.value : [];
-  const originTimedOut = !!originRace.timedOut;
+  const seedKeys = new Set(seedOriginStops.map((row) => poleKey(row)));
+  const extraOriginStops = originStops.filter((row) => !seedKeys.has(poleKey(row)));
+  const seedEtaRace = await raceMs(loadEtas(seedOriginStops), Math.min(2500, remain()), []);
+  let originLive = Array.isArray(seedEtaRace.value) ? seedEtaRace.value : [];
+  let originTimedOut = !!seedEtaRace.timedOut;
+  if (extraOriginStops.length && remain() > 400) {
+    const extraEtaRace = await raceMs(loadEtas(extraOriginStops), Math.min(2000, remain()), []);
+    if (!extraEtaRace.timedOut && Array.isArray(extraEtaRace.value)) {
+      originLive = originLive.concat(extraEtaRace.value);
+    }
+    if (extraEtaRace.timedOut && !originLive.length) originTimedOut = true;
+    else if (originLive.length) originTimedOut = false;
+  }
   const byService = new Map();
   for (const { eta, stop } of originLive) {
     const service = serviceFromEta(eta, stop);

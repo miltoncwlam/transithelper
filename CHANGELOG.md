@@ -6,9 +6,20 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.6.0**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.6.1**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.6.1 — 2026-09-19
+
+### Fixed
+- **置富第一城 → 太子站** (Fortune City One → Prince Edward Station) could come back empty on a timeout even when **281A** was live at 第一城總站, 150m away. Nearby pole ETAs were one all-or-nothing fetch: if that batch missed the budget, the seed clocks were thrown away and the KMB route graph was often still cold on Vercel, so 281A was never refined. The planner now waits for the KMB graph before searching, keeps the seed-stop clocks if nearby poles are slow, and fetches the boarding-stop ETA when a graph direct (or transfer) has no clock yet. Empty operator feed still stays empty.
+- A Prince Edward dest pole such as 旺角警署 now matches 281A’s 旺角花墟 stop within 280m even when the names differ.
+
+### Tests
+- Unit: Fortune City One → Prince Edward still returns live **281A** when nearby ETA fetches hang, three times in a row; seed origin clocks are kept if extra poles hang.
 
 ---
 

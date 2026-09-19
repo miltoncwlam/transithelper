@@ -4,13 +4,13 @@ export const maxDuration = 60;
 import { cache, getDirectory } from '@/lib/directory.js';
 import { json } from '@/lib/http.js';
 import { planJourneyOptions } from '@/00-required/journey.js';
-import { ensureTopology, getTopology, graphStats } from '@/00-required/topology.js';
+import { awaitKmbTopology, ensureTopology, graphStats } from '@/00-required/topology.js';
 
 export async function POST(request) {
   try {
     const body = await request.json().catch(() => ({}));
     const directory = await getDirectory();
-    const graph = await getTopology();
+    const graph = await awaitKmbTopology(cache, directory, 8000);
     ensureTopology(cache, directory).catch(() => {});
     const result = await planJourneyOptions(
       cache,

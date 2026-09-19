@@ -1532,3 +1532,111 @@ test('later first-bus clocks keep a real transfer connection', async () => {
   assert.ok(new Date(xfers[1].connectionEta) >= new Date(xfers[0].connectionEta));
 });
 
+test('Fortune City One to Prince Edward keeps 281A when nearby ETAs hang', async () => {
+  const fortune = stop('ST300', {
+    name_tc: '置富第一城 (ST300)',
+    name_en: 'FORTUNE CITY ONE (ST300)',
+    lat: 22.386857,
+    long: 114.203657
+  });
+  const terminus = stop('ST707', {
+    name_tc: '第一城總站 (ST707)',
+    name_en: 'CITY ONE SHA TIN BUS TERMINUS (ST707)',
+    lat: 22.386051,
+    long: 114.202508
+  });
+  const pePolice = stop('MK356', {
+    name_tc: '太子站, 旺角警署 (MK356)',
+    name_en: 'PRINCE EDWARD STATION, MONG KOK POLICE STATION',
+    lat: 22.324645,
+    long: 114.169348
+  });
+  const peFlower = stop('MK751', {
+    name_tc: '太子站, 旺角花墟 (MK751)',
+    name_en: 'PRINCE EDWARD STATION, FLOWER MARKET (MK751)',
+    lat: 22.324126,
+    long: 114.169855
+  });
+  const dummy = stop('NEAR1', { name_tc: '小瀝源', name_en: 'Siu Lek Yuen', lat: 22.3872, long: 114.2048 });
+  const ride89x = service('89X', 'O', { dest_tc: '觀塘', dest_en: 'Kwun Tong' });
+  const ride281 = service('281A', 'O', { dest_tc: '九龍站', dest_en: 'Kowloon Station' });
+  const elsewhere = stop('KT1', { name_tc: '觀塘', name_en: 'Kwun Tong', lat: 22.312, long: 114.226 });
+  const eta281 = minutesFromNow(6);
+  const loadEtas = async (stops) => {
+    if ((stops || []).some((row) => row.stop === 'NEAR1')) return new Promise(() => {});
+    return etasFor({
+      ST300: [{ eta: minutesFromNow(4), route: '89X', dir: 'O', co: 'KMB', dest_tc: '觀塘' }],
+      ST707: [{ eta: eta281, route: '281A', dir: 'O', co: 'KMB', dest_tc: '九龍站' }]
+    })(stops);
+  };
+  for (let i = 0; i < 3; i += 1) {
+    const result = await planJourneyOptions(
+      null,
+      new Map([
+        ['ST300', fortune], ['KMB:ST300', fortune],
+        ['ST707', terminus], ['KMB:ST707', terminus],
+        ['MK356', pePolice], ['KMB:MK356', pePolice],
+        ['MK751', peFlower], ['KMB:MK751', peFlower],
+        ['NEAR1', dummy], ['KT1', elsewhere]
+      ]),
+      [fortune, terminus, pePolice, peFlower, dummy, elsewhere],
+      [ride89x, ride281],
+      {
+        originStops: [{ co: 'KMB', stop: 'ST300' }],
+        destinationStops: [{ co: 'KMB', stop: 'MK356' }],
+        nearby: true,
+        radius: 250
+      },
+      {
+        graph: graphWith([
+          { service: ride89x, seq: [fortune, elsewhere] },
+          { service: ride281, seq: [terminus, peFlower] }
+        ]),
+        ensureGraph: false,
+        budgetMs: 4000,
+        loadEtas,
+        loadRouteStops: async (svc) => (svc.route === '281A' ? [terminus, peFlower] : [fortune, elsewhere]),
+        attachRide: attachRideFake({ '281A:0:1': { rideMinutes: 35 }, '89X:0:1': { rideMinutes: 40 } })
+      }
+    );
+    assert.equal(result.options[0]?.first.route, '281A', `attempt ${i + 1}`);
+    assert.equal(result.options[0]?.kind, 'direct');
+    assert.equal(result.options[0]?.eta, eta281);
+    assert.equal(result.emptyReason, null);
+  }
+});
+
+test('seed origin clocks are kept when extra nearby ETA fetch hangs', async () => {
+  const origin = stop('SEED', { name_tc: '起點站', name_en: 'Start', lat: 22.30, long: 114.17 });
+  const extra = stop('HANG', { name_tc: '附近站', name_en: 'Nearby', ...at(origin, 80, 40) });
+  const dest = stop('END', { name_tc: '終點站', name_en: 'End', ...at(origin, 4000, 0) });
+  const ride = service('1', 'O');
+  const clock = minutesFromNow(5);
+  const result = await planJourneyOptions(
+    null,
+    new Map([['SEED', origin], ['HANG', extra], ['END', dest]]),
+    [origin, extra, dest],
+    [ride],
+    {
+      originStops: [{ co: 'KMB', stop: 'SEED' }],
+      destinationStops: [{ co: 'KMB', stop: 'END' }],
+      nearby: true,
+      radius: 250
+    },
+    {
+      graph: graphWith([{ service: ride, seq: [origin, dest] }]),
+      ensureGraph: false,
+      budgetMs: 3000,
+      loadEtas: async (stops) => {
+        if ((stops || []).some((row) => row.stop === 'HANG')) return new Promise(() => {});
+        return etasFor({ SEED: [{ eta: clock, route: '1', dir: 'O', co: 'KMB' }] })(stops);
+      },
+      loadRouteStops: async () => [origin, dest],
+      attachRide: attachRideFake({ '1:0:1': { rideMinutes: 18 } })
+    }
+  );
+  assert.equal(result.options[0]?.first.route, '1');
+  assert.equal(result.options[0]?.eta, clock);
+  assert.equal(result.emptyReason, null);
+});
+

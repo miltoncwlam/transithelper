@@ -20,7 +20,8 @@ Scheme: **x.y.z** — major / minor / patch. Git tags are `vX.Y.Z`.
 | 3.5.1 | `v3.5.1` | 轉乘助手 renamed 路線規劃 / Route planner |
 | 3.5.2 | `v3.5.2` | GMB 811 search waits for etagmb on a cold directory |
 | 3.5.3 | `v3.5.3` | Persist GMB lookups so CI smoke still sees 811 |
-| 3.6.0 | `v3.6.0` | Planner later departures (稍後班次) of the same itinerary (current) |
+| 3.6.0 | `v3.6.0` | Planner later departures (稍後班次) of the same itinerary |
+| 3.6.1 | `v3.6.1` | Fortune City One → Prince Edward no longer empty on planner timeout (current) |
 
 ```bash
 git fetch origin --tags

@@ -338,3 +338,16 @@ export async function ensureTopology(cache, directory) {
   })().finally(() => { loading = null; });
   return loading;
 }
+
+/** Wait until the KMB route-stop graph is on this instance, or the budget runs out. */
+export async function awaitKmbTopology(cache, directory, budgetMs = 8000) {
+  await getTopology();
+  if (graph.complete?.kmb && (graph.services || []).length) return graph;
+  const ms = Math.max(500, Number(budgetMs) || 8000);
+  const work = warmTopology(cache, directory, { budgetMs: Math.max(ms, 8000) });
+  await Promise.race([
+    work,
+    new Promise((resolve) => setTimeout(() => resolve(graph), ms))
+  ]);
+  return graph;
+}
