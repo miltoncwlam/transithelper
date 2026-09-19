@@ -640,7 +640,7 @@ test('transfer helper finds options without a route and locks the chosen trip', 
   await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
   await expect(transfer).toContainText(/最快|Fastest/, { timeout: 20000 });
   await expect(transfer.locator('.journey-box')).toContainText('1');
-  await expect(transfer.getByRole('button', { name: /就乘這一程|Take this trip/ })).toBeVisible();
+  await expect(transfer.getByRole('button', { name: /就乘這一程|Take this trip/ }).first()).toBeVisible();
   await expect(transfer).toContainText(/估計|est\./);
   await expect(transfer).toContainText(/9 → 2/);
   await expect(transfer.getByText(/選擇這一程|Choose this trip/)).toHaveCount(0);
@@ -659,6 +659,116 @@ test('transfer helper finds options without a route and locks the chosen trip', 
   expect(transferPosts[0]?.selectedDeparture).toBeTruthy();
   expect(transferPosts[0]?.first?.route).toBe('9');
   expect(transferPosts[0]?.phase).toBe('connections');
+});
+
+test('planner later departures lock that clock', async ({ page }) => {
+  test.setTimeout(120000);
+  const eta = new Date(Date.now() + 4 * 60000).toISOString();
+  const etaLater = new Date(Date.now() + 16 * 60000).toISOString();
+  const arrive = new Date(Date.now() + 22 * 60000).toISOString();
+  const arriveLater = new Date(Date.now() + 34 * 60000).toISOString();
+  await page.route('**/api/journey-options', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        observedOnly: true,
+        preferredMissing: false,
+        emptyReason: null,
+        options: [
+          {
+            kind: 'direct',
+            recommended: true,
+            preferred: false,
+            slowerByMinutes: null,
+            first: { route: '1', co: 'KMB', bound: 'O', service_type: '1', dest_tc: '尖沙咀碼頭', dest_en: 'Star Ferry' },
+            second: null,
+            boardStops: ['A1'],
+            interchangeStops: ['C1'],
+            destinationStops: ['C1'],
+            eta,
+            arrive,
+            arrivalEstimated: true,
+            rideMinutes: 18,
+            walkMinutes: 0,
+            totalMinutes: 18,
+            dest: { zh: '尖沙咀碼頭', en: 'Star Ferry' },
+            from: { zh: '竹園邨總站', en: 'Chuk Yuen Estate Bus Terminus' },
+            to: { zh: '尖沙咀碼頭', en: 'Star Ferry' },
+            catchable: true
+          },
+          {
+            kind: 'direct',
+            recommended: false,
+            preferred: false,
+            slowerByMinutes: 12,
+            first: { route: '1', co: 'KMB', bound: 'O', service_type: '1', dest_tc: '尖沙咀碼頭', dest_en: 'Star Ferry' },
+            second: null,
+            boardStops: ['A1'],
+            interchangeStops: ['C1'],
+            destinationStops: ['C1'],
+            eta: etaLater,
+            arrive: arriveLater,
+            arrivalEstimated: true,
+            rideMinutes: 18,
+            walkMinutes: 0,
+            totalMinutes: 18,
+            dest: { zh: '尖沙咀碼頭', en: 'Star Ferry' },
+            from: { zh: '竹園邨總站', en: 'Chuk Yuen Estate Bus Terminus' },
+            to: { zh: '尖沙咀碼頭', en: 'Star Ferry' },
+            catchable: true
+          }
+        ]
+      })
+    });
+  });
+  await page.route('**/api/ride', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        trips: [{ board: etaLater, eta: etaLater, arrive: arriveLater, arrivalEstimated: true, rideMinutes: 18 }]
+      })
+    });
+  });
+  await page.route('**/api/kmb/route-stop/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: [
+          { stop: 'A1', name_tc: '竹園邨總站', name_en: 'Chuk Yuen Estate Bus Terminus', lat: 22.34, long: 114.19, co: 'KMB' },
+          { stop: 'C1', name_tc: '尖沙咀碼頭', name_en: 'Star Ferry', lat: 22.3, long: 114.17, co: 'KMB' }
+        ]
+      })
+    });
+  });
+  await page.route('**/api/fares**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ fare: null }) });
+  });
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
+  const transfer = page.locator('.panel.active');
+  await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
+  await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
+  await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
+  const lead = transfer.locator('.journey-box');
+  await expect(lead.getByRole('button', { name: /稍後班次（1）|Later departures \(1\)/ })).toBeVisible({ timeout: 20000 });
+  await lead.getByRole('button', { name: /稍後班次|Later departures/ }).click();
+  await lead.getByRole('button', { name: /就乘這一程|Take this trip/ }).nth(1).click();
+  await expect(transfer.getByRole('button', { name: /返回路線|Back to routes/ })).toBeVisible({ timeout: 20000 });
+  const lockedClock = await transfer.locator('.eta b').first().textContent();
+  const expectedLater = await page.evaluate((iso) => (
+    new Date(iso).toLocaleTimeString('zh-HK', { hour: 'numeric', minute: '2-digit' })
+  ), etaLater);
+  const expectedEarly = await page.evaluate((iso) => (
+    new Date(iso).toLocaleTimeString('zh-HK', { hour: 'numeric', minute: '2-digit' })
+  ), eta);
+  expect(lockedClock).toBe(expectedLater);
+  expect(lockedClock).not.toBe(expectedEarly);
 });
 
 test('transfer helper empty feed stays empty', async ({ page }) => {
@@ -741,7 +851,7 @@ test('catch-up helper shows next of this route, not a walk to a later stop', asy
   await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
   await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
   await expect(transfer).toContainText(/最快|Fastest/, { timeout: 20000 });
-  await transfer.getByRole('button', { name: /就乘這一程|Take this trip/ }).click();
+  await transfer.getByRole('button', { name: /就乘這一程|Take this trip/ }).first().click();
   await expect(transfer.getByRole('button', { name: /錯過了|If I missed it/ })).toBeVisible();
   await transfer.getByRole('button', { name: /錯過了|If I missed it/ }).click();
   await expect(transfer.locator('.catch-up-card')).toContainText(/錯過了|If you miss it/);

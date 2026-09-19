@@ -1430,3 +1430,105 @@ test('colocated citybus pole without a live 798 clock is not invented', async ()
   assert.ok(!result.options.some((row) => row.first?.route === '798'));
 });
 
+test('two live clocks on the same direct become later members', async () => {
+  const early = minutesFromNow(3);
+  const late = minutesFromNow(15);
+  const result = await planCase({
+    origin: a,
+    dest: c,
+    stops: [a, c],
+    services: [{ service: first, seq: [a, c] }],
+    etas: {
+      A: [
+        { eta: early, route: '1', dir: 'O', co: 'KMB', dest_tc: '終點站' },
+        { eta: late, route: '1', dir: 'O', co: 'KMB', dest_tc: '終點站' }
+      ]
+    },
+    rides: { '1:0:1': { rideMinutes: 12 } }
+  });
+  assert.equal(result.options.length, 2);
+  assert.deepEqual(result.options.map((row) => row.first.route), ['1', '1']);
+  assert.equal(result.options[0].eta, early);
+  assert.equal(result.options[1].eta, late);
+  const groups = mergeJourneyGroups(result.options);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].members.length, 2);
+  assert.equal(groups[0].laterEtas.length, 1);
+  assert.equal(groups[0].laterEtas[0], late);
+});
+
+test('later clocks of one route do not drop another route', async () => {
+  const extras = Array.from({ length: 7 }, (_, i) => service(String(20 + i), 'O'));
+  const services = [
+    { service: first, seq: [a, c] },
+    ...extras.map((svc) => ({ service: svc, seq: [a, c] }))
+  ];
+  const ones = Array.from({ length: 8 }, (_, i) => ({
+    eta: minutesFromNow(2 + i * 8),
+    route: '1',
+    dir: 'O',
+    co: 'KMB',
+    dest_tc: '終點站'
+  }));
+  const otherEtas = extras.map((svc, i) => ({
+    eta: minutesFromNow(6 + i),
+    route: svc.route,
+    dir: 'O',
+    co: 'KMB',
+    dest_tc: '終點站'
+  }));
+  const result = await planCase({
+    origin: a,
+    dest: c,
+    stops: [a, c],
+    services,
+    etas: { A: [...ones, ...otherEtas] },
+    rides: Object.fromEntries([
+      ['1:0:1', { rideMinutes: 12 }],
+      ...extras.map((svc) => [`${svc.route}:0:1`, { rideMinutes: 12 }])
+    ])
+  });
+  assert.equal(result.options.filter((row) => row.first.route === '1').length, 4);
+  for (const extra of extras) {
+    assert.ok(result.options.some((row) => row.first.route === extra.route), extra.route);
+  }
+});
+
+test('later first-bus clocks keep a real transfer connection', async () => {
+  const t0 = minutesFromNow(3);
+  const t1 = minutesFromNow(12);
+  const t2 = minutesFromNow(25);
+  const t2b = minutesFromNow(40);
+  const result = await planCase({
+    origin: a,
+    dest: c,
+    stops: [a, b, c],
+    nearby: false,
+    services: [
+      { service: first, seq: [a, b] },
+      { service: second, seq: [b, c] }
+    ],
+    etas: {
+      A: [
+        { eta: t0, route: '1', dir: 'O', co: 'KMB', dest_tc: '終點站' },
+        { eta: t1, route: '1', dir: 'O', co: 'KMB', dest_tc: '終點站' }
+      ],
+      B: [
+        { eta: t2, route: '2', dir: 'O', co: 'KMB', dest_tc: '終點站' },
+        { eta: t2b, route: '2', dir: 'O', co: 'KMB', dest_tc: '終點站' }
+      ]
+    },
+    rides: {
+      '1:0:1': { rideMinutes: 8 },
+      '2:0:1': { rideMinutes: 10 }
+    }
+  });
+  const xfers = result.options.filter((row) => row.kind === 'transfer' && row.first.route === '1' && row.second.route === '2');
+  assert.ok(xfers.length >= 2, `got ${xfers.length} transfer clocks`);
+  assert.equal(xfers[0].eta, t0);
+  assert.equal(xfers[1].eta, t1);
+  assert.ok(xfers[0].connectionEta);
+  assert.ok(xfers[1].connectionEta);
+  assert.ok(new Date(xfers[1].connectionEta) >= new Date(xfers[0].connectionEta));
+});
+

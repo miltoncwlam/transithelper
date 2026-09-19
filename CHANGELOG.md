@@ -6,9 +6,21 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.5.3**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.6.0**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.6.0 — 2026-09-19
+
+### Changed
+- **路線規劃** no longer shows only the next live clock of a route. Operator ETAs at that pole (up to four: the next bus plus three later) become trips you can pick. Same itinerary stays one card; **稍後班次** expands the later clocks. **就乘這一程** on a later row locks that clock, not the first bus. Other routes keep their slots — later 1s do not push 20–26 off the list. Empty operator feed stays empty; no timetable fill.
+- **其他選擇** cards have the same expander, not only 最快.
+
+### Tests
+- Unit: two live clocks on route **1** become two members; packing keeps later 1s without dropping another route; a later first-bus on **1→2** still gets a real connection clock.
+- Playwright: mocked planner feed with two clocks on **1** → 稍後班次 → expand → later 就乘這一程 locks that eta.
 
 ---
 

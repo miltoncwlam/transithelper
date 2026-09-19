@@ -1661,10 +1661,95 @@ export default function TransitApp() {
     );
   }
 
-  function laterClocks(group) {
-    const clocks = (group.laterEtas || []).map((eta) => clk(eta)).filter(Boolean);
-    if (!clocks.length) return '';
-    return t('journeyLater', clocks.join(lang === 'zh' ? '、' : ', '));
+  function journeyArriveClk(option) {
+    return option.arrivalEstimated
+      ? `${clk(option.arrive)} ${t('stopTimeEst')}`
+      : clk(option.arrive);
+  }
+
+  function renderJourneyLater(group) {
+    const later = (group.members || []).slice(1);
+    if (!later.length) return null;
+    return (
+      <Collapsible>
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="sm" className="mt-2 px-0" type="button">{t('journeyLaterToggle', later.length)}</Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          {later.map((option) => (
+            <button
+              key={`${group.key}-${option.eta}`}
+              className={`choice pg-choice mt-2 ${coTone({ ...option, route: option.first?.route, co: option.first?.co })}`}
+              type="button"
+              onClick={() => pickJourney(option)}
+            >
+              <div>{clk(option.eta)} {t('rideDeparts')} → {journeyArriveClk(option)} {t('rideArrives')}</div>
+              {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
+              {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+              <div className="muted">{t('takeThisJourney')}</div>
+            </button>
+          ))}
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
+  function renderJourneyLead(group, originLabel, destLabel) {
+    const option = group.best;
+    const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
+    const boardClk = clk(option.eta);
+    const arriveClk = journeyArriveClk(option);
+    const destName = stopPlaceLabel(option.to) || stopPlaceLabel(option.dest) || destLabel;
+    const duration = option.totalMinutes || option.rideMinutes;
+    return (
+      <div className={`item journey-box ${coTone(row)}`} key={group.key}>
+        <button className={`choice pg-choice ${coTone(row)}`} type="button" onClick={() => pickJourney(option)}>
+          <span className="badge">{t('bestObserved')}</span>
+          {serviceCo(row) !== 'KMB' ? <span className="badge">{coLabel(row)}</span> : null}
+          {option.kind === 'transfer' && option.second && serviceCo(option.second) !== 'KMB' ? <span className="badge">{coLabel(option.second)}</span> : null}
+          <div className="eta">
+            <b>{journeyTitle(option)}</b>
+            {duration != null ? <span className="mins">{t('rideMins', duration)}</span> : null}
+          </div>
+          <div>{boardClk} {t('rideDeparts')} → {arriveClk} {t('rideArrives')}{destName ? ` ${destName}` : ''}</div>
+          {journeyWalkBits(option, originLabel)}
+          {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
+          {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+          {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : fareNote(option.first || row)}
+          <div className="muted">{t('takeThisJourney')}</div>
+        </button>
+        {renderJourneyLater(group)}
+      </div>
+    );
+  }
+
+  function renderJourneyAlso(group, i, originLabel) {
+    const option = group.best;
+    const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
+    const boardClk = clk(option.eta);
+    const arriveClk = journeyArriveClk(option);
+    const slower = group.slowerByMinutes;
+    const duration = option.totalMinutes || option.rideMinutes;
+    return (
+      <div className={`item journey-also ${coTone(row)}`} key={group.key || i}>
+        <button className={`choice pg-choice ${coTone(row)}`} type="button" onClick={() => pickJourney(option)}>
+          {serviceCo(row) !== 'KMB' ? <span className="badge">{coLabel(row)}</span> : null}
+          {option.kind === 'transfer' && option.second && serviceCo(option.second) !== 'KMB' ? <span className="badge">{coLabel(option.second)}</span> : null}
+          <div className="eta">
+            <b>{journeyTitle(option)}</b>
+            {duration != null ? <span className="mins">{t('rideMins', duration)}</span> : null}
+          </div>
+          <div>{boardClk} {t('rideDeparts')} → {arriveClk} {t('rideArrives')}</div>
+          {slower ? <div className="muted">{t('journeySlower', slower)}</div> : null}
+          {journeyWalkBits(option, originLabel)}
+          {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
+          {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
+          {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : null}
+          <div className="muted">{t('takeThisJourney')}</div>
+        </button>
+        {renderJourneyLater(group)}
+      </div>
+    );
   }
 
   function journeyTitle(option) {
@@ -1689,67 +1774,6 @@ export default function TransitApp() {
         {boardWalkMins ? <div className="muted">{t('boardWalkMins', boardWalkMins, originName)}</div> : null}
         {destWalkMins ? <div className="muted">{t('destWalkMins', destWalkMins)}</div> : null}
       </>
-    );
-  }
-
-  function renderJourneyLead(group, originLabel, destLabel) {
-    const option = group.best;
-    const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
-    const boardClk = clk(option.eta);
-    const arriveClk = option.arrivalEstimated
-      ? `${clk(option.arrive)} ${t('stopTimeEst')}`
-      : clk(option.arrive);
-    const destName = stopPlaceLabel(option.to) || stopPlaceLabel(option.dest) || destLabel;
-    const duration = option.totalMinutes || option.rideMinutes;
-    const later = laterClocks(group);
-    return (
-      <div className={`item journey-box ${coTone(row)}`} key={group.key}>
-        <button className={`choice pg-choice ${coTone(row)}`} type="button" onClick={() => pickJourney(option)}>
-          <span className="badge">{t('bestObserved')}</span>
-          {serviceCo(row) !== 'KMB' ? <span className="badge">{coLabel(row)}</span> : null}
-          {option.kind === 'transfer' && option.second && serviceCo(option.second) !== 'KMB' ? <span className="badge">{coLabel(option.second)}</span> : null}
-          <div className="eta">
-            <b>{journeyTitle(option)}</b>
-            {duration != null ? <span className="mins">{t('rideMins', duration)}</span> : null}
-          </div>
-          <div>{boardClk} {t('rideDeparts')} → {arriveClk} {t('rideArrives')}{destName ? ` ${destName}` : ''}</div>
-          {journeyWalkBits(option, originLabel)}
-          {later ? <div className="muted">{later}</div> : null}
-          {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
-          {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
-          {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : fareNote(option.first || row)}
-          <div className="muted">{t('takeThisJourney')}</div>
-        </button>
-      </div>
-    );
-  }
-
-  function renderJourneyAlso(group, i, originLabel) {
-    const option = group.best;
-    const row = { ...option, route: option.first?.route, co: option.first?.co || option.second?.co };
-    const boardClk = clk(option.eta);
-    const arriveClk = option.arrivalEstimated
-      ? `${clk(option.arrive)} ${t('stopTimeEst')}`
-      : clk(option.arrive);
-    const slower = group.slowerByMinutes;
-    const duration = option.totalMinutes || option.rideMinutes;
-    return (
-      <div className={`item journey-also ${coTone(row)}`} key={group.key || i}>
-        <button className={`choice pg-choice ${coTone(row)}`} type="button" onClick={() => pickJourney(option)}>
-          {serviceCo(row) !== 'KMB' ? <span className="badge">{coLabel(row)}</span> : null}
-          {option.kind === 'transfer' && option.second && serviceCo(option.second) !== 'KMB' ? <span className="badge">{coLabel(option.second)}</span> : null}
-          <div className="eta">
-            <b>{journeyTitle(option)}</b>
-            {duration != null ? <span className="mins">{t('rideMins', duration)}</span> : null}
-          </div>
-          <div>{boardClk} {t('rideDeparts')} → {arriveClk} {t('rideArrives')}</div>
-          {slower ? <div className="muted">{t('journeySlower', slower)}</div> : null}
-          {journeyWalkBits(option, originLabel)}
-          {option.catchable === false ? <div className="muted">{t('missedConnection')}</div> : null}
-          {option.arrivalEstimated ? <div className="muted">{t('rideArriveGuessed')}</div> : null}
-          {option.octopus_fare_hkd != null ? <div className="muted">{t('octopusFare', option.octopus_fare_hkd)}</div> : null}
-        </button>
-      </div>
     );
   }
 

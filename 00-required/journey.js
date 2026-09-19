@@ -24,6 +24,7 @@ const DIRECT_REFINE = 8;
 const TRANSFER_REFINE = 8;
 const INTERCHANGE_POLE_CAP = 12;
 const MAX_OPTIONS = 8;
+const MAX_PER_ITINERARY = 4;
 const ORIGIN_POLE_CAP = 16;
 const DEST_POLE_CAP = 16;
 const PER_AREA_POLES = 3;
@@ -408,6 +409,52 @@ function optionKey(option) {
   ].join('|');
 }
 
+function itineraryPackKey(option) {
+  return [
+    option?.kind || '',
+    serviceCompany(option?.first || {}),
+    String(option?.first?.route || '').toUpperCase(),
+    option?.first?.gmb_route_id || '',
+    option?.second ? serviceCompany(option.second) : '',
+    option?.second ? String(option.second.route || '').toUpperCase() : '',
+    option?.second?.gmb_route_id || '',
+    option?.boardStops?.[0] || option?.fromStop || ''
+  ].join('|');
+}
+
+function flattenRefine(hits) {
+  const out = [];
+  for (const hit of hits || []) {
+    if (!hit) continue;
+    if (Array.isArray(hit)) out.push(...hit);
+    else out.push(hit);
+  }
+  return out;
+}
+
+function etaClock(row) {
+  const eta = row?.eta;
+  return eta?.eta || eta;
+}
+
+function packItineraries(ranked) {
+  const order = [];
+  const buckets = new Map();
+  for (const row of ranked || []) {
+    const key = itineraryPackKey(row);
+    if (!buckets.has(key)) {
+      if (buckets.size >= MAX_OPTIONS) continue;
+      buckets.set(key, []);
+      order.push(key);
+    }
+    const bucket = buckets.get(key);
+    if (bucket.length >= MAX_PER_ITINERARY) continue;
+    if (bucket.some((cur) => optionKey(cur) === optionKey(row))) continue;
+    bucket.push(row);
+  }
+  return order.flatMap((key) => buckets.get(key) || []);
+}
+
 function publicOption(option, extras = {}) {
   return {
     kind: option.kind,
@@ -456,36 +503,41 @@ async function refineDirect(ctx, candidate, originStops, destStops, departAfter,
   if (boardIdx < 0 || destIdx <= boardIdx) return null;
   const live = liveEtaAtStop(candidate.boardEtas, candidate.first, seq[boardIdx], departAfter);
   if (!live.length) return { missingLive: true, first: candidate.first, preferred: candidate.preferred };
-  const eta = live[0].eta;
-  const timed = await ctx.attachRide(candidate.first, seq, { eta: eta.eta, dest: namedDest(candidate.first) }, boardIdx, destIdx);
-  if (!timed.arrive) return null;
   const boardWalkMinutes = walkMinutesTo(seq[boardIdx], seedOriginStops);
   const destWalkMinutes = walkMinutesTo(seq[destIdx], seedDestStops || destStops);
   const walkMinutes = boardWalkMinutes + destWalkMinutes;
-  return {
-    kind: 'direct',
-    preferred: !!candidate.preferred,
-    first: candidate.first,
-    boardStops: [seq[boardIdx].stop],
-    interchangeStops: [seq[destIdx].stop],
-    destinationStops: destStops.map((row) => row.stop),
-    eta: timed.eta || eta.eta,
-    arrive: timed.arrive,
-    arrivalEstimated: !!timed.arrivalEstimated,
-    rideMinutes: timed.rideMinutes,
-    totalMinutes: (timed.rideMinutes || 0) + walkMinutes,
-    walkMinutes,
-    boardWalkMinutes,
-    destWalkMinutes,
-    dest: namedDest(candidate.first),
-    from: namedStop(seq[boardIdx]),
-    to: namedStop(seq[destIdx]),
-    fromStop: seq[boardIdx].stop,
-    toStop: seq[destIdx].stop,
-    on_seq: boardIdx + 1,
-    off_seq: destIdx + 1,
-    catchable: true
-  };
+  const out = [];
+  for (const row of live.slice(0, MAX_PER_ITINERARY)) {
+    const clock = etaClock(row);
+    if (!clock) continue;
+    const timed = await ctx.attachRide(candidate.first, seq, { eta: clock, dest: namedDest(candidate.first) }, boardIdx, destIdx);
+    if (!timed.arrive) continue;
+    out.push({
+      kind: 'direct',
+      preferred: !!candidate.preferred,
+      first: candidate.first,
+      boardStops: [seq[boardIdx].stop],
+      interchangeStops: [seq[destIdx].stop],
+      destinationStops: destStops.map((row) => row.stop),
+      eta: timed.eta || clock,
+      arrive: timed.arrive,
+      arrivalEstimated: !!timed.arrivalEstimated,
+      rideMinutes: timed.rideMinutes,
+      totalMinutes: (timed.rideMinutes || 0) + walkMinutes,
+      walkMinutes,
+      boardWalkMinutes,
+      destWalkMinutes,
+      dest: namedDest(candidate.first),
+      from: namedStop(seq[boardIdx]),
+      to: namedStop(seq[destIdx]),
+      fromStop: seq[boardIdx].stop,
+      toStop: seq[destIdx].stop,
+      on_seq: boardIdx + 1,
+      off_seq: destIdx + 1,
+      catchable: true
+    });
+  }
+  return out.length ? out : null;
 }
 
 async function refineTransfer(ctx, candidate, originStops, destStops, departAfter, seedOriginStops, seedDestStops) {
@@ -501,54 +553,59 @@ async function refineTransfer(ctx, candidate, originStops, destStops, departAfte
   if (alightIdx <= boardIdx || onIdx < 0 || destIdx <= onIdx) return null;
   const live = liveEtaAtStop(candidate.boardEtas, candidate.first, firstSeq[boardIdx], departAfter);
   if (!live.length) return { missingLive: true, first: candidate.first, preferred: candidate.preferred };
-  const eta = live[0].eta;
-  const firstTimed = await ctx.attachRide(candidate.first, firstSeq, { eta: eta.eta, dest: namedDest(candidate.first) }, boardIdx, alightIdx);
-  if (!firstTimed.arrive) return null;
-  const metres = metresBetween(firstSeq[alightIdx], secondSeq[onIdx]);
-  const walk = metres < 40 ? 0 : walkMs(firstSeq[alightIdx], secondSeq[onIdx]);
-  const readyAt = new Date(firstTimed.arrive).getTime() + walk;
   const matching = liveEtaAtStop(candidate.transferEtas, candidate.second, candidate.board2Stop, 0)
     .map((row) => row.eta)
     .sort((a, b) => new Date(a.eta) - new Date(b.eta));
   if (!matching.length) return { missingLive: true, first: candidate.first, second: candidate.second, preferred: candidate.preferred };
-  const onTime = matching.filter((row) => new Date(row.eta).getTime() >= readyAt);
-  const connection = onTime[0] || matching[matching.length - 1];
-  const catchable = new Date(connection.eta).getTime() >= readyAt;
-  const secondTimed = await ctx.attachRide(candidate.second, secondSeq, { eta: connection.eta, dest: namedDest(candidate.second) }, onIdx, destIdx);
-  const arrive = secondTimed.arrive || null;
+  const metres = metresBetween(firstSeq[alightIdx], secondSeq[onIdx]);
+  const walk = metres < 40 ? 0 : walkMs(firstSeq[alightIdx], secondSeq[onIdx]);
   const xferWalkMinutes = metres < 40 ? 0 : Math.max(1, Math.round(walk / 60000));
   const boardWalkMinutes = walkMinutesTo(firstSeq[boardIdx], seedOriginStops);
   const destWalkMinutes = walkMinutesTo(secondSeq[destIdx], seedDestStops || destStops);
-  const total = arrive ? Math.round((new Date(arrive) - new Date(eta.eta)) / 60000) + destWalkMinutes + boardWalkMinutes : null;
-  return {
-    kind: 'transfer',
-    preferred: !!candidate.preferred,
-    first: candidate.first,
-    second: candidate.second,
-    boardStops: [firstSeq[boardIdx].stop],
-    interchangeStops: [firstSeq[alightIdx].stop, secondSeq[onIdx].stop],
-    destinationStops: destStops.map((row) => row.stop),
-    eta: eta.eta,
-    arrive,
-    arrivalEstimated: !!(firstTimed.arrivalEstimated || secondTimed.arrivalEstimated),
-    rideMinutes: (firstTimed.rideMinutes || 0) + (secondTimed.rideMinutes || 0),
-    waitAfterFirstMinutes: Math.round((new Date(connection.eta) - new Date(firstTimed.arrive)) / 60000),
-    walkMinutes: xferWalkMinutes,
-    boardWalkMinutes,
-    destWalkMinutes,
-    totalMinutes: total,
-    dest: namedDest(candidate.second),
-    from: namedStop(firstSeq[alightIdx]),
-    to: namedStop(secondSeq[destIdx]),
-    fromStop: firstSeq[alightIdx].stop,
-    toStop: secondSeq[destIdx].stop,
-    firstOnSeq: boardIdx + 1,
-    firstOffSeq: alightIdx + 1,
-    secondOnSeq: onIdx + 1,
-    secondOffSeq: destIdx + 1,
-    catchable,
-    connectionEta: connection.eta
-  };
+  const out = [];
+  for (const row of live.slice(0, MAX_PER_ITINERARY)) {
+    const clock = etaClock(row);
+    if (!clock) continue;
+    const firstTimed = await ctx.attachRide(candidate.first, firstSeq, { eta: clock, dest: namedDest(candidate.first) }, boardIdx, alightIdx);
+    if (!firstTimed.arrive) continue;
+    const readyAt = new Date(firstTimed.arrive).getTime() + walk;
+    const onTime = matching.filter((item) => new Date(item.eta).getTime() >= readyAt);
+    const connection = onTime[0] || matching[matching.length - 1];
+    const catchable = new Date(connection.eta).getTime() >= readyAt;
+    const secondTimed = await ctx.attachRide(candidate.second, secondSeq, { eta: connection.eta, dest: namedDest(candidate.second) }, onIdx, destIdx);
+    const arrive = secondTimed.arrive || null;
+    const total = arrive ? Math.round((new Date(arrive) - new Date(clock)) / 60000) + destWalkMinutes + boardWalkMinutes : null;
+    out.push({
+      kind: 'transfer',
+      preferred: !!candidate.preferred,
+      first: candidate.first,
+      second: candidate.second,
+      boardStops: [firstSeq[boardIdx].stop],
+      interchangeStops: [firstSeq[alightIdx].stop, secondSeq[onIdx].stop],
+      destinationStops: destStops.map((row) => row.stop),
+      eta: clock,
+      arrive,
+      arrivalEstimated: !!(firstTimed.arrivalEstimated || secondTimed.arrivalEstimated),
+      rideMinutes: (firstTimed.rideMinutes || 0) + (secondTimed.rideMinutes || 0),
+      waitAfterFirstMinutes: Math.round((new Date(connection.eta) - new Date(firstTimed.arrive)) / 60000),
+      walkMinutes: xferWalkMinutes,
+      boardWalkMinutes,
+      destWalkMinutes,
+      totalMinutes: total,
+      dest: namedDest(candidate.second),
+      from: namedStop(firstSeq[alightIdx]),
+      to: namedStop(secondSeq[destIdx]),
+      fromStop: firstSeq[alightIdx].stop,
+      toStop: secondSeq[destIdx].stop,
+      firstOnSeq: boardIdx + 1,
+      firstOffSeq: alightIdx + 1,
+      secondOnSeq: onIdx + 1,
+      secondOffSeq: destIdx + 1,
+      catchable,
+      connectionEta: connection.eta
+    });
+  }
+  return out.length ? out : null;
 }
 
 export async function planJourneyOptions(cache, stopMap, allStops, routes, body, opts = {}) {
@@ -856,7 +913,7 @@ export async function planJourneyOptions(cache, stopMap, allStops, routes, body,
     transferHits = await mapPool(transferQueue, 3, (row) => refineTransfer(ctx, row, originStops, destStops, departAt, seedOriginStops, seedDestStops));
     return true;
   })(), Math.max(400, remain()), null);
-  for (const row of [...directHits, ...transferHits]) {
+  for (const row of flattenRefine([...directHits, ...transferHits])) {
     if (!row) continue;
     if (row.missingLive) {
       if (row.preferred) missingPreferred.push(row);
@@ -878,10 +935,11 @@ export async function planJourneyOptions(cache, stopMap, allStops, routes, body,
   ranked = sortByStreetCost(ranked, (row) => timeMinutesOfArrive(row));
 
   const streetBest = ranked.find((row) => row.catchable !== false && row.arrive) || ranked.find((row) => row.arrive);
+  const packed = packItineraries(ranked);
 
   const options = [];
   const seen = new Set();
-  for (const row of ranked) {
+  for (const row of packed) {
     const key = optionKey(row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -896,7 +954,6 @@ export async function planJourneyOptions(cache, stopMap, allStops, routes, body,
       cheaperBetter: options.length === 0 && delta.cheaperBetter,
       coverage: graphStatsSafe(graph)
     }));
-    if (options.length >= MAX_OPTIONS) break;
   }
 
   let emptyReason = null;
