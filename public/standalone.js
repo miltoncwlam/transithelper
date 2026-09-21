@@ -13,11 +13,121 @@
   const API_BASE = '';
 
   const $ = (id) => document.getElementById(id);
-  const S = { routes: [], stops: [], map: new Map(), cache: new Map(), last: null, tab: 'arrivals', lines: globalThis.TB_MTR_LINES || {}, lang: localStorage.getItem('tb-lang') || 'zh', openStops: {}, fetchedStops: {}, direct: false };
+  const S = { routes: [], stops: [], map: new Map(), cache: new Map(), last: null, tab: 'arrivals', lines: globalThis.TB_MTR_LINES || {}, lang: localStorage.getItem('tb-lang') || 'zh', openStops: {}, fetchedStops: {}, openLater: {}, direct: false };
   let timer;
   let deb;
   let transferSeq = 0;
   let backend = null;
+
+  /** Boot restore: reopen what you were last doing instead of a stale bus. */
+  const VIEW_KEY = 'tb-view';
+  const JOURNEY_KEY = 'tb-journey';
+  const RESTORE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+  const RELOCK_GRACE_MS = 2 * 60 * 1000;
+  const RELOCK_WINDOW_MS = 10 * 60 * 1000;
+
+  function readJson(key) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || '{}');
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function readSessionView() {
+    const raw = readJson(VIEW_KEY);
+    return { view: raw.view || null, at: Number(raw.at) || 0 };
+  }
+
+  function writeSessionView(view) {
+    if (view !== 'a' && view !== 't' && view !== 'm') return;
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify({ view, at: Date.now() })); } catch {}
+  }
+
+  function readJourneySession() {
+    const raw = readJson(JOURNEY_KEY);
+    return raw && raw.version === 1 ? raw : {};
+  }
+
+  /** Merge-write. A key set to null clears it; undefined keeps the saved value. */
+  function writeJourneySession(next) {
+    try {
+      const cur = readJourneySession();
+      const merged = {
+        version: 1,
+        first: next.first !== undefined ? next.first : (cur.first || null),
+        boardStops: next.boardStops !== undefined ? next.boardStops : (cur.boardStops || []),
+        interchangeStops: next.interchangeStops !== undefined ? next.interchangeStops : (cur.interchangeStops || []),
+        destination: next.destination !== undefined ? next.destination : (cur.destination || null),
+        nearby: next.nearby !== undefined ? next.nearby : (cur.nearby !== false),
+        radius: next.radius !== undefined ? String(next.radius) : (cur.radius || '250'),
+        selectedDeparture: next.selectedDeparture !== undefined ? next.selectedDeparture : (cur.selectedDeparture || null),
+        selectedConnection: next.selectedConnection !== undefined ? next.selectedConnection : (cur.selectedConnection || null),
+        chosenDirect: next.chosenDirect !== undefined ? next.chosenDirect : (cur.chosenDirect || null),
+        savedAt: Date.now()
+      };
+      localStorage.setItem(JOURNEY_KEY, JSON.stringify(merged));
+    } catch {}
+  }
+
+  function hasRestorableJourney(j) {
+    return !!(j?.first?.route && j?.boardStops?.length && j?.interchangeStops?.length && j?.destination?.stops?.length);
+  }
+
+  function freshAt(at, maxAgeMs = RESTORE_MAX_AGE_MS) {
+    const now = Date.now();
+    return Number.isFinite(at) && at > 0 && now - at >= 0 && now - at < maxAgeMs;
+  }
+
+  function restorableArrival(pref) {
+    const ok = !!(pref?.service) && pref.stopIndex !== '' && pref.stopIndex != null;
+    // Legacy prefs have no savedAt: restore once, the next write timestamps it.
+    return ok && (pref.savedAt == null || freshAt(pref.savedAt));
+  }
+
+  /** Decide what a fresh page load shows. 'none' = stay on an empty arrivals tab. */
+  function pickBootView({ view, viewAt, journey, arrival }) {
+    const viewFresh = freshAt(viewAt);
+    if (view === 't' && viewFresh && hasRestorableJourney(journey) && freshAt(journey.savedAt)) return 'journey';
+    if (view === 'm' && viewFresh) return 'mtr';
+    if (view == null || (view === 'a' && viewFresh)) return restorableArrival(arrival) ? 'arrival' : 'none';
+    // Planner/MTR was last but its payload is gone or stale: a fresh last bus is
+    // still useful; anything older is not your context any more.
+    return restorableArrival(arrival) && arrival.savedAt != null ? 'arrival' : 'none';
+  }
+
+  /** Relock only while the locked clock is still (almost) in the future. */
+  function shouldRelock(eta) {
+    const ms = new Date(eta).getTime();
+    return Number.isFinite(ms) && ms > Date.now() - RELOCK_GRACE_MS;
+  }
+
+  function sameServiceRef(a, b) {
+    if (!a || !b) return false;
+    return String(a.co || 'KMB').toUpperCase() === String(b.co || 'KMB').toUpperCase()
+      && String(a.route || '').toUpperCase() === String(b.route || '').toUpperCase();
+  }
+
+  function closestByEta(list, targetIso, windowMs = RELOCK_WINDOW_MS) {
+    const target = new Date(targetIso).getTime();
+    if (!Number.isFinite(target)) return null;
+    let best = null;
+    let bestDiff = Infinity;
+    for (const row of list || []) {
+      const ms = new Date(row?.eta).getTime();
+      if (!Number.isFinite(ms)) continue;
+      const diff = Math.abs(ms - target);
+      if (diff < windowMs && diff < bestDiff) { best = row; bestDiff = diff; }
+    }
+    return best;
+  }
+
+  function groupIndexByStops(groupsList, ids) {
+    const wanted = new Set((ids || []).map((x) => String(x?.stop ?? x)));
+    if (!wanted.size) return -1;
+    return (groupsList || []).findIndex((g) => (g.stops || []).some((row) => wanted.has(String(row.stop))));
+  }
 
   const t = (key, ...args) => {
     const value = (I18N?.[S.lang] || I18N?.zh || {})[key];
@@ -1133,7 +1243,7 @@
         S.direct = false;
         mtrInit();
         put('status', S.routes.length ? t('ready', S.routes.length) : t('loadFail'));
-        api('/api/kmb/stops').then((stops) => {
+        S.stopsLoad = api('/api/kmb/stops').then((stops) => {
           S.stops = stops.data || [];
           S.map = new Map(S.stops.map((x) => [x.stop, x]));
         }).catch(() => {});
@@ -1147,7 +1257,21 @@
         put('status', t('loadFail'));
       }
     }
-    await restoreArrivalPref();
+    const viewPref = readSessionView();
+    const choice = pickBootView({
+      view: viewPref.view,
+      viewAt: viewPref.at,
+      journey: readJourneySession(),
+      arrival: readJson(ARRIVAL_PREF_KEY)
+    });
+    if (choice === 'journey') {
+      const ok = await restoreJourneySession(readJourneySession()).catch(() => false);
+      if (!ok) await restoreArrivalPref();
+    } else if (choice === 'mtr') {
+      tabs('mtr');
+    } else if (choice === 'arrival') {
+      await restoreArrivalPref();
+    }
     renderHome();
   }
 
@@ -1215,9 +1339,8 @@
   async function restoreArrivalPref() {
     if (S.arrivalRestored) return;
     S.arrivalRestored = true;
-    let pref = {};
-    try { pref = JSON.parse(localStorage.getItem(ARRIVAL_PREF_KEY) || '{}'); } catch {}
-    if (!pref.service || pref.stopIndex === '' || pref.stopIndex == null) return;
+    const pref = readJson(ARRIVAL_PREF_KEY);
+    if (!restorableArrival(pref)) return;
     if ($('arrivalRoute')?.value) return;
     const s = matchArrivalService(pref);
     if (!s) return;
@@ -1233,6 +1356,63 @@
       await showA();
     } finally {
       S.restoringArrival = false;
+    }
+  }
+
+  /** Rehydrate the planner after a reload and re-lock the trip if it is still live. */
+  async function restoreJourneySession(journey) {
+    try {
+      if (S.stopsLoad) await S.stopsLoad;
+      const first = matchArrivalService({ service: journey.first });
+      const destStops = resolveStops(journey.destination?.stops);
+      if (!first?.route || !destStops.length) return false;
+      if ($('nearby')) $('nearby').checked = journey.nearby !== false;
+      if ($('radius')) $('radius').value = journey.radius || '250';
+      await pickF(first, { keepBoxHidden: true });
+      const boardIdx = groupIndexByStops(S.fg, journey.boardStops);
+      const interIdx = groupIndexByStops(S.fg, journey.interchangeStops);
+      if (boardIdx < 0 || interIdx < 0 || interIdx < boardIdx) return false;
+      $('board').value = String(boardIdx);
+      if ($('board').onchange) $('board').onchange();
+      $('interchange').value = String(interIdx);
+      S.d = { label: journey.destination.label || areaName(destStops[0]), stops: destStops };
+      $('destinationBox').classList.add('hidden');
+      put('destinationSummary', `<div class="note"><b>${esc(t('destArea'))}</b><div>${esc(S.d.label)}</div><button id="changeD" class="tab mt-2">${esc(t('change'))}</button></div>`);
+      $('changeD').onclick = () => {
+        $('destinationBox').classList.remove('hidden');
+        put('destinationSummary', '');
+      };
+      tabs('transfer');
+      S.selectedDeparture = null;
+      S.selectedConnection = null;
+      S.transferPhase = null;
+      S.chosenDirect = null;
+      const lockedDirect = journey.chosenDirect;
+      if (lockedDirect?.eta && shouldRelock(lockedDirect.eta)) {
+        const json = await startTransfer({ phase: 'departures', selectedDeparture: null, selectedConnection: null });
+        const match = closestByEta(
+          (json?.directs || []).filter((row) => row.kind === lockedDirect.kind && sameServiceRef(row, lockedDirect)),
+          lockedDirect.eta
+        );
+        if (match) showChosenDirect(match, S.fg[interIdx], String(boardIdx));
+        return true;
+      }
+      const lockedDep = journey.selectedDeparture;
+      if (lockedDep && shouldRelock(lockedDep)) {
+        const json = await startTransfer({ phase: 'connections', selectedDeparture: lockedDep });
+        const lockedConn = journey.selectedConnection;
+        if (lockedConn?.route && json?.list?.length) {
+          const key = connectionWatchKey(lockedConn);
+          const match = closestByEta(json.list.filter((row) => connectionWatchKey(row) === key), lockedConn.eta)
+            || closestByEta(json.list.filter((row) => sameServiceRef(row, lockedConn)), lockedConn.eta);
+          if (match) await startTransfer({ phase: 'connections', selectedConnection: match, silent: true });
+        }
+        return true;
+      }
+      await startTransfer({ phase: 'departures', selectedDeparture: null, selectedConnection: null });
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -1782,12 +1962,14 @@
     S.arrivalPayload = payload;
     paintArrival();
     S.last = 'a';
+    writeSessionView('a');
     try {
       localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
         route: S.a?.route || '',
         service: S.a,
         stopIndex: v,
-        destIndex: destVal
+        destIndex: destVal,
+        savedAt: Date.now()
       }));
     } catch {}
   }
@@ -1896,9 +2078,42 @@
   function showChosenDirect(x, inter, boardVal) {
     S.chosenDirect = x;
     S.transferPhase = 'direct';
+    writeSessionView('t');
+    saveJourneySession();
     put('transferOutput', `<div class="note">${esc(t('chosenDirect'))}</div>${transferItemHtml(x, 0, 'direct')}<button id="changeDeparture" class="tab mt-2">${esc(t('changeDeparture'))}</button><div class="row-actions"><button id="saveTransfer" class="tab">${esc(t('saveHome'))}</button></div>`);
     $('changeDeparture').onclick = () => startTransfer({ phase: 'departures' });
     bindSaveTransfer(inter, boardVal);
+  }
+
+  /** Same itinerary = same route boarding at the same area to the same stop. */
+  function itineraryPackKey(x) {
+    return [
+      x.kind || '',
+      serviceCo(x),
+      n(x.route),
+      x.gmb_route_id || '',
+      stopPlaceKey(x.from),
+      stopPlaceKey(x.to),
+      stopPlaceKey(x.dest)
+    ].join('|');
+  }
+
+  /** One card per itinerary; later live clocks of the same trip pack behind it. */
+  function packLaterRows(rows) {
+    const packed = [];
+    const byKey = new Map();
+    for (const row of rows || []) {
+      const key = itineraryPackKey(row);
+      const cur = byKey.get(key);
+      if (!cur) {
+        const item = { ...row, later: [] };
+        byKey.set(key, item);
+        packed.push(item);
+      } else if (cur.later.length < 3) {
+        cur.later.push(row);
+      }
+    }
+    return packed;
   }
 
   function renderDepartures(json, inter, boardVal) {
@@ -1907,16 +2122,40 @@
       return `<button class="item choice" type="button" data-dep="${i}"><b>${esc(S.f.route)}</b>${dest ? `<div>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(dest)}</div>` : ''}${fareNote(json.firstFare || S.f)}<div class="eta"><b>${esc(clk(row.eta))}</b><span class="mins">${esc(t('minutes', mins(row.eta)))}</span></div><div class="muted">${esc(t('pickDeparture'))}</div></button>`;
     }).join('');
     const depEmpty = deps || `<p class="muted">${esc(t(emptyTransferKey(json.emptyReason || 'no_departure')))}</p>`;
-    const directs = (json.directs || []).map((x, i) => {
+    const packed = packLaterRows(json.directs || []);
+    const directCard = (x, attr) => {
       const dest = loc(x.dest);
-      return `<button class="item choice" type="button" data-direct="${i}"><span class="badge">${esc(kindLabel(x.kind))}</span> <b>${esc(x.route)}</b>${dest ? `<div>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(dest)}</div>` : ''}<div>${esc(loc(x.from))} → ${esc(loc(x.to))}</div>${fareNote(x)}<div class="eta"><b>${esc(clk(x.eta))}</b><span class="mins">${esc(t('minutes', mins(x.eta)))}</span></div></button>`;
+      return `<button class="item choice" type="button" ${attr}><span class="badge">${esc(kindLabel(x.kind))}</span> <b>${esc(x.route)}</b>${dest ? `<div>${esc(t('towards'))}${S.lang === 'zh' ? '' : ' '}${esc(dest)}</div>` : ''}<div>${esc(loc(x.from))} → ${esc(loc(x.to))}</div>${fareNote(x)}<div class="eta"><b>${esc(clk(x.eta))}</b><span class="mins">${esc(t('minutes', mins(x.eta)))}</span></div></button>`;
+    };
+    const directs = packed.map((x, i) => {
+      const key = itineraryPackKey(x);
+      const open = !!S.openLater[key];
+      const toggle = x.later.length
+        ? `<button class="tab mt-2" type="button" data-later-toggle="${i}">${esc(t('journeyLaterToggle', x.later.length))}</button>`
+        : '';
+      const laterRows = open ? x.later.map((row, li) => directCard(row, `data-later="${i}:${li}"`)).join('') : '';
+      return `${directCard(x, `data-direct="${i}"`)}${toggle}${laterRows}`;
     }).join('');
     put('transferOutput', `<h3 class="font-bold mt-4">${esc(t('firstDepartures'))}</h3>${depEmpty}<h3 class="font-bold mt-4">${esc(t('directHeading'))}</h3>${directs || `<p class="muted">${esc(t('noDirect'))}</p>`}<div class="row-actions"><button id="saveTransfer" class="tab">${esc(t('saveHome'))}</button></div>`);
     $('transferOutput').querySelectorAll('[data-dep]').forEach((btn) => {
       btn.onclick = () => startTransfer({ phase: 'connections', selectedDeparture: json.departures[+btn.dataset.dep].eta });
     });
     $('transferOutput').querySelectorAll('[data-direct]').forEach((btn) => {
-      btn.onclick = () => showChosenDirect(json.directs[+btn.dataset.direct], inter, boardVal);
+      btn.onclick = () => showChosenDirect(packed[+btn.dataset.direct], inter, boardVal);
+    });
+    $('transferOutput').querySelectorAll('[data-later-toggle]').forEach((btn) => {
+      btn.onclick = () => {
+        const key = itineraryPackKey(packed[+btn.dataset.laterToggle]);
+        S.openLater[key] = !S.openLater[key];
+        renderDepartures(json, inter, boardVal);
+      };
+    });
+    $('transferOutput').querySelectorAll('[data-later]').forEach((btn) => {
+      btn.onclick = () => {
+        const [pi, li] = String(btn.dataset.later).split(':').map(Number);
+        const row = packed[pi]?.later?.[li];
+        if (row) showChosenDirect(row, inter, boardVal);
+      };
     });
     bindSaveTransfer(inter, boardVal);
   }
@@ -2147,18 +2386,36 @@
     };
   }
 
+  /** Persist the planner session so a reload returns to the same search. */
+  function saveJourneySession() {
+    if (!S.f || !S.d) return;
+    const boardVal = $('board')?.value;
+    const interVal = $('interchange')?.value;
+    writeJourneySession({
+      first: S.f,
+      boardStops: boardVal === '' || boardVal == null ? [] : stopIds(S.fg[+boardVal]),
+      interchangeStops: interVal === '' || interVal == null ? [] : stopIds(S.fg[+interVal]),
+      destination: { label: S.d.label || '', stops: stopIds(S.d) },
+      nearby: $('nearby') ? $('nearby').checked : true,
+      radius: $('radius')?.value || '250',
+      selectedDeparture: S.selectedDeparture || null,
+      selectedConnection: S.selectedConnection || null,
+      chosenDirect: S.chosenDirect || null
+    });
+  }
+
   async function startTransfer(opts = {}) {
     if (!S.f || !S.d || !$('interchange') || $('interchange').value === '') {
       put('transferOutput', `<div class="note">${esc(t('needFields'))}</div>`);
-      return;
+      return null;
     }
     if ($('board') && $('board').value === '') {
       put('transferOutput', `<div class="note">${esc(t('needBoard'))}</div>`);
-      return;
+      return null;
     }
     if ($('board') && $('interchange') && +$('interchange').value < +$('board').value) {
       put('transferOutput', `<div class="note">${esc(t('needFields'))}</div>`);
-      return;
+      return null;
     }
     const phase = opts.phase
       || (S.transferPhase === 'connections' && S.selectedDeparture ? 'connections' : 'departures');
@@ -2201,18 +2458,22 @@
           nearby: $('nearby').checked,
           radius: +$('radius').value
         });
-      if (seq !== transferSeq) return;
+      if (seq !== transferSeq) return null;
       S.transferPhase = json.phase || phase;
       S.selectedDeparture = phase === 'departures' ? null : (json.boardDeparture || picked || null);
       if (phase === 'departures') S.selectedConnection = null;
       else if (json.watch?.selected) S.selectedConnection = json.watch.selected;
       else if (Object.prototype.hasOwnProperty.call(opts, 'selectedConnection')) S.selectedConnection = opts.selectedConnection;
       S.last = 't';
+      writeSessionView('t');
+      saveJourneySession();
       if ((json.phase || phase) === 'departures') renderDepartures(json, inter, boardVal);
       else renderConnections(json, inter, boardVal);
+      return json;
     } catch (e) {
-      if (seq !== transferSeq) return;
+      if (seq !== transferSeq) return null;
       if (!silent) put('transferOutput', `<div class="note">${esc(e.message || t('none'))}</div>`);
+      return null;
     }
   }
 
@@ -2265,6 +2526,7 @@
   }
 
   function saveMtrPref() {
+    writeSessionView('m');
     try {
       localStorage.setItem(MTR_PREF_KEY, JSON.stringify({
         line: $('mtrLine')?.value || '',

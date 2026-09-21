@@ -6,9 +6,24 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.7.0**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.8.0**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.8.0 — 2026-09-21
+
+### Changed
+- **standalone.html catches up with the app.** The paste-anywhere single-file version now has the same reload behaviour as the main app: it remembers the last view you used (路線規劃 / 港鐵 / arrivals) with a timestamp, persists the planner session (first route, 上車站, 轉車站, 終點, nearby/radius, picked departure, watched connection, chosen direct), and restores the freshest view on open. A locked departure or connection that is still live is re-locked after a reload (closest clock within ten minutes); one that already left is not. Sessions older than 48 hours are ignored.
+- **直達 choices pack later clocks.** In the standalone planner, live clocks of the same route boarding at the same area used to render as separate cards. They now pack into one itinerary card with a **稍後班次（N）** toggle; tapping a later row locks that exact clock, matching the main app’s 稍後班次.
+
+### Fixed
+- **Standalone had the same stale-route popup.** Its boot used to always restore the last arrivals route (`tb-arrival`) with no timestamp. It now goes through the same freshness decision as the app: fresh planner session → planner, fresh MTR → 港鐵, fresh arrivals → last bus, otherwise an empty arrivals tab. The planner restore also waits for the stop directory so destination stops resolve instead of racing the fetch.
+
+### Tests
+- Smoke: standalone restores a fresh last bus on open, does not pop up a three-day-old last bus, and a planner session survives a reload (tab, 終點 summary, and departures all come back).
+- Stress (`scripts/stress.mjs`, new): 248 requests against the local production server — 150 static/directory at concurrency 15, 24 planner searches on two real OD pairs (竹園邨總站 → 尖沙咀碼頭, 第一城總站 → 太子站), 30 ride/transfer, and a 20-way identical-ride stampede. Result: **0 errors, 0 5xx**; directory p95 586ms; planner p50 8.3s / p95 13.3s (well under the 30s client budget); stampede p95 297ms.
 
 ---
 

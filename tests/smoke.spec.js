@@ -1019,3 +1019,112 @@ test('arrivals lock and catch-up work beyond three minutes', async ({ page }) =>
   expect(posted[0]?.first?.route).toBe('1');
   expect(posted[0]?.eta).toBe(eta7);
 });
+
+const STAND_ROUTE = { route: '1', co: 'KMB', bound: 'O', service_type: '1', orig_tc: '竹園邨', dest_tc: '尖沙咀碼頭', orig_en: 'Chuk Yuen', dest_en: 'Star Ferry' };
+const STAND_STOPS = [
+  { stop: 'A1', seq: 1, name_tc: '竹園邨總站', name_en: 'Chuk Yuen Estate Bus Terminus', lat: 22.34, long: 114.19, co: 'KMB' },
+  { stop: 'C1', seq: 2, name_tc: '尖沙咀碼頭', name_en: 'Star Ferry', lat: 22.3, long: 114.17, co: 'KMB' }
+];
+
+async function mockStandaloneApis(page, { rideTrips, transferJson } = {}) {
+  await page.route('**/api/status', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true })
+  }));
+  await page.route('**/api/kmb/routes', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ data: [STAND_ROUTE] })
+  }));
+  await page.route('**/api/kmb/stops', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ data: STAND_STOPS })
+  }));
+  await page.route('**/api/kmb/route-stop/**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ data: STAND_STOPS })
+  }));
+  await page.route('**/api/ride', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(rideTrips || {
+      trips: [{ board: new Date(Date.now() + 5 * 60000).toISOString(), arrive: new Date(Date.now() + 23 * 60000).toISOString(), arrivalEstimated: true, rideMinutes: 18 }],
+      emptyReason: null
+    })
+  }));
+  await page.route('**/api/transfer', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(transferJson || {
+      phase: 'departures',
+      departures: [{ eta: new Date(Date.now() + 6 * 60000).toISOString(), dest: { zh: '尖沙咀碼頭', en: 'Star Ferry' }, route: '1' }],
+      directs: [],
+      list: [],
+      emptyReason: null
+    })
+  }));
+}
+
+test('standalone restores a fresh last bus on open', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.addInitScript(() => {
+    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: Date.now() }));
+    localStorage.setItem('tb-arrival', JSON.stringify({
+      route: '1',
+      service: { route: '1', co: 'KMB', bound: 'O', service_type: '1', orig_tc: '竹園邨', dest_tc: '尖沙咀碼頭', orig_en: 'Chuk Yuen', dest_en: 'Star Ferry' },
+      stopIndex: '0',
+      destIndex: '',
+      savedAt: Date.now()
+    }));
+  });
+  await mockStandaloneApis(page);
+  await page.goto('/standalone.html');
+  await expect(page.locator('#status')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 20000 });
+  await expect(page.locator('#arrivalRoute')).toHaveValue('1');
+  await expect(page.locator('#arrivalOutput')).toContainText(/竹園邨總站|Chuk Yuen Estate Bus Terminus/, { timeout: 20000 });
+  await expect(page.locator('#arrivalOutput')).toContainText(/分鐘|min/);
+});
+
+test('standalone does not pop up a stale last bus', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.addInitScript(() => {
+    const old = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: old }));
+    localStorage.setItem('tb-arrival', JSON.stringify({
+      route: '1',
+      service: { route: '1', co: 'KMB', bound: 'O', service_type: '1' },
+      stopIndex: '0',
+      destIndex: '',
+      savedAt: old
+    }));
+  });
+  await mockStandaloneApis(page);
+  await page.goto('/standalone.html');
+  await expect(page.locator('#status')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 20000 });
+  await expect(page.locator('#arrivalRoute')).toHaveValue('');
+  await expect(page.locator('#arrivalStop')).toHaveCount(0);
+  await expect(page.locator('#arrivalOutput')).toHaveText('');
+});
+
+test('standalone planner session survives a reload', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.addInitScript(() => {
+    localStorage.setItem('tb-view', JSON.stringify({ view: 't', at: Date.now() }));
+    localStorage.setItem('tb-journey', JSON.stringify({
+      version: 1,
+      first: { route: '1', co: 'KMB', bound: 'O', service_type: '1', orig_tc: '竹園邨', dest_tc: '尖沙咀碼頭', orig_en: 'Chuk Yuen', dest_en: 'Star Ferry' },
+      boardStops: ['A1'],
+      interchangeStops: ['C1'],
+      destination: { label: '尖沙咀碼頭', stops: ['C1'] },
+      nearby: true,
+      radius: '250',
+      selectedDeparture: null,
+      selectedConnection: null,
+      chosenDirect: null,
+      savedAt: Date.now()
+    }));
+  });
+  await mockStandaloneApis(page);
+  await page.goto('/standalone.html');
+  await expect(page.locator('#status')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 20000 });
+  await expect(page.locator('.tab[data-tab="transfer"]')).toHaveClass(/active/, { timeout: 20000 });
+  const panel = page.locator('.panel.active');
+  await expect(panel).toContainText(/即將開出的第一程巴士|Upcoming first-bus departures/, { timeout: 20000 });
+  await expect(panel).toContainText(/分鐘|min/);
+  await expect(page.locator('#destinationSummary')).toContainText(/尖沙咀碼頭|Star Ferry/);
+});

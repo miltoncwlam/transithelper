@@ -22,7 +22,8 @@ Scheme: **x.y.z** — major / minor / patch. Git tags are `vX.Y.Z`.
 | 3.5.3 | `v3.5.3` | Persist GMB lookups so CI smoke still sees 811 |
 | 3.6.0 | `v3.6.0` | Planner later departures (稍後班次) of the same itinerary |
 | 3.6.1 | `v3.6.1` | Fortune City One → Prince Edward no longer empty on planner timeout |
-| 3.7.0 | `v3.7.0` | Reload restores the view you were on; planner search + locked trip survive; no stale-route popup (current) |
+| 3.7.0 | `v3.7.0` | Reload restores the view you were on; planner search + locked trip survive; no stale-route popup |
+| 3.8.0 | `v3.8.0` | Standalone.html parity: session restore + 稍後班次 packing; stress suite (current) |
 
 ```bash
 git fetch origin --tags
