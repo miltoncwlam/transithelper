@@ -14,6 +14,15 @@ import { etaPrimaryText } from '../lib/etaDisplay.js';
 import { collapseNearbyKinds, nearbyCollectionTitle, nearbyKindOf, replaceNearbyKind, splitHomes } from '../lib/nearbyCollections.js';
 import { hasRestorableArrival } from '../lib/arrivalPref.js';
 import { canCatchUp, pickLockedTrip, sameClock, tripBoard } from '../lib/tripLock.js';
+import {
+  findRelockOption,
+  pickBootView,
+  readJourneySession,
+  readSessionView,
+  shouldRelock,
+  writeJourneySession,
+  writeSessionView
+} from '../lib/sessionView.js';
 import StopMap from './StopMap.js';
 import UserGuide from './UserGuide.js';
 import SearchableSelect from './SearchableSelect.js';
@@ -234,7 +243,8 @@ function writeArrivalPref(next) {
       service: next.service !== undefined ? next.service : (cur.service || null),
       stopIndex: next.stopIndex !== undefined ? next.stopIndex : (cur.stopIndex ?? ''),
       destIndex: next.destIndex !== undefined ? next.destIndex : (cur.destIndex ?? ''),
-      lockedEta: next.lockedEta !== undefined ? (next.lockedEta || '') : (cur.lockedEta || '')
+      lockedEta: next.lockedEta !== undefined ? (next.lockedEta || '') : (cur.lockedEta || ''),
+      savedAt: Date.now()
     }));
   } catch {}
 }
@@ -880,6 +890,7 @@ export default function TransitApp() {
       setArrivalTimes({ trips: [], destLabel: destGroup?.label || null, emptyReason: 'empty' });
     }
     lastView.current = 'a';
+    writeSessionView('a');
     writeArrivalPref({
       route: service.route,
       service,
@@ -1272,6 +1283,7 @@ export default function TransitApp() {
         }
         setTransferMessage('');
         lastView.current = 't';
+        writeSessionView('t');
         return;
       }
       setTransferMessage('');
@@ -1288,6 +1300,10 @@ export default function TransitApp() {
         if (nextBoard) {
           selectedDepartureRef.current = nextBoard;
           setSelectedDeparture(nextBoard);
+          const curSession = readJourneySession();
+          if (curSession.locked?.eta && curSession.locked.eta !== nextBoard) {
+            writeJourneySession({ locked: { ...curSession.locked, eta: nextBoard } });
+          }
         }
         if (json.watch?.selected) {
           selectedConnectionRef.current = json.watch.selected;
@@ -1299,6 +1315,7 @@ export default function TransitApp() {
       }
       setTransferResult({ json, inter });
       lastView.current = 't';
+      writeSessionView('t');
     } catch (e) {
       if (seq !== transferSeq.current) return;
       if (!silent) {
@@ -1348,14 +1365,26 @@ export default function TransitApp() {
         })
       });
       if (seq !== journeySeq.current) return;
+      lastView.current = 't';
+      writeSessionView('t');
       if (silent && (journeyOptions?.options || []).length && !(json.options || []).length && keepSilentJourneyList(json.emptyReason)) {
         setJourneyMessage('');
-        lastView.current = 't';
         return;
       }
       setJourneyMessage('');
       setJourneyOptions(json);
-      lastView.current = 't';
+      if (!silent) {
+        writeJourneySession({
+          origin: { label: o.label || '', stops: stopRefs(o) },
+          destination: { label: d.label || '', stops: stopRefs(d) },
+          nearby: opts.nearby ?? nearby,
+          radius: String(opts.radius ?? radius),
+          firstService: f || null,
+          interchangeStops: interVal !== '' && fg[+interVal] ? stopRefs(fg[+interVal]) : null,
+          locked: null
+        });
+      }
+      return json;
     } catch (e) {
       if (seq !== journeySeq.current) return;
       if (!silent) {
@@ -1461,6 +1490,18 @@ export default function TransitApp() {
       };
       chosenDirectRef.current = next;
       setChosenDirect(next);
+      writeJourneySession({
+        locked: {
+          key: itineraryKey(next),
+          kind: next.kind,
+          eta: next.eta,
+          first: next.first,
+          second: next.second || null,
+          boardStops: next.boardStops || [],
+          interchangeStops: next.interchangeStops || [],
+          destinationStops: next.destinationStops || []
+        }
+      });
     } catch {
       // keep the locked trip
     }
@@ -1578,6 +1619,19 @@ export default function TransitApp() {
     if (!option?.first) return;
     journeyLockedRef.current = true;
     lastView.current = 't';
+    writeSessionView('t');
+    writeJourneySession({
+      locked: {
+        key: itineraryKey(option),
+        kind: option.kind,
+        eta: option.eta,
+        first: option.first,
+        second: option.second || null,
+        boardStops: option.boardStops || [],
+        interchangeStops: option.interchangeStops || [],
+        destinationStops: option.destinationStops || []
+      }
+    });
     const svc = option.first;
     let fg = firstGroups;
     if (!firstService || serviceCo(firstService) !== serviceCo(svc) || String(firstService.route) !== String(svc.route)
@@ -1624,7 +1678,7 @@ export default function TransitApp() {
     await goTransfer({
       firstService: svc,
       firstGroups: fg,
-      destination,
+      destination: destinationRef.current ?? destination,
       boardStops: option.boardStops,
       interchangeStops: option.interchangeStops,
       boardIndex: bIdx >= 0 ? String(bIdx) : undefined,
@@ -1850,6 +1904,7 @@ export default function TransitApp() {
       if (seq !== mtrSeq.current) return;
       setMtrResult({ ...r, line, sta });
       lastView.current = 'm';
+      writeSessionView('m');
       writeMtrPref({ line, station: sta, dest: destCode });
     } catch {
       if (seq !== mtrSeq.current) return;
@@ -2039,6 +2094,69 @@ export default function TransitApp() {
     }
   }
 
+  async function restoreJourneySession(journey) {
+    try {
+      const allStops = await ensureStops();
+      const origStops = resolveStopRefs(journey.origin?.stops, allStops);
+      const destStops = resolveStopRefs(journey.destination?.stops, allStops);
+      if (!origStops.length || !destStops.length) return false;
+      setTab('transfer');
+      setNearby(journey.nearby !== false);
+      setRadius(String(journey.radius || '250'));
+      resetTransferLock();
+      setJourneyOptions(null);
+      setJourneyMessage('');
+      const orig = { label: journey.origin.label || areaName(origStops[0]), stops: origStops };
+      const dest = { label: journey.destination.label || areaName(destStops[0]), stops: destStops };
+      setOrigin(orig);
+      originRef.current = orig;
+      setOriginBoxHidden(true);
+      setDestination(dest);
+      destinationRef.current = dest;
+      setDestBoxHidden(true);
+      const f = journey.firstService;
+      let fg = [];
+      let interIdx = '';
+      if (f?.route) {
+        try {
+          fg = groups(await fetchStops(f));
+          setFirstService(f);
+          setFirstRoute(String(f.route || ''));
+          setFirstChoices(null);
+          setFirstBoxHidden(true);
+          setFirstGroups(fg);
+          if (journey.interchangeStops?.length) {
+            const ids = journey.interchangeStops.map((row) => row?.stop ?? row);
+            const idx = groupIndexByStops(fg, ids);
+            if (idx >= 0) {
+              interIdx = String(idx);
+              setInterchangeIndex(interIdx);
+            }
+          }
+        } catch {
+          fg = [];
+        }
+      }
+      const json = await searchJourneys({
+        origin: orig,
+        destination: dest,
+        firstService: f || null,
+        firstGroups: fg,
+        interchangeIndex: interIdx,
+        nearby: journey.nearby !== false,
+        radius: journey.radius || '250'
+      });
+      const locked = journey.locked;
+      if (shouldRelock(locked) && json?.options?.length) {
+        const match = findRelockOption(json.options, locked);
+        if (match) await pickJourney(match);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   useEffect(() => {
     const stored = localStorage.getItem('tb-lang');
     if (stored === 'en' || stored === 'zh') setLang(stored);
@@ -2106,14 +2224,36 @@ export default function TransitApp() {
   useEffect(() => {
     if (nearbyAutoStarted.current) return;
     nearbyAutoStarted.current = true;
-    if (hasRestorableArrival(readArrivalPref())) return;
+    const viewPref = readSessionView();
+    const choice = pickBootView({
+      view: viewPref.view,
+      viewAt: viewPref.at,
+      journey: readJourneySession(),
+      arrival: readArrivalPref()
+    });
+    if (choice !== 'nearby') return;
     loadNearbyBoard();
   }, []);
 
   useEffect(() => {
     if (arrivalRestored.current || !routes.length) return;
+    const viewPref = readSessionView();
     const pref = readArrivalPref();
-    if (!hasRestorableArrival(pref)) {
+    const journey = readJourneySession();
+    const choice = pickBootView({ view: viewPref.view, viewAt: viewPref.at, journey, arrival: pref });
+    if (choice === 'journey') {
+      arrivalRestored.current = true;
+      restoreJourneySession(journey).then((ok) => {
+        if (ok === false) loadNearbyBoard();
+      });
+      return;
+    }
+    if (choice === 'mtr') {
+      arrivalRestored.current = true;
+      setTab('mtr');
+      return;
+    }
+    if (choice !== 'arrival' || !hasRestorableArrival(pref)) {
       arrivalRestored.current = true;
       return;
     }
@@ -2138,7 +2278,7 @@ export default function TransitApp() {
         setArrivalStopIndex(idx);
         const destIdx = pref.destIndex != null && pref.destIndex !== '' ? String(pref.destIndex) : '';
         setArrivalDestIndex(destIdx);
-        if (pref.lockedEta) {
+        if (pref.lockedEta && shouldRelock({ eta: pref.lockedEta })) {
           const seed = { eta: pref.lockedEta, trip: { board: pref.lockedEta } };
           arrivalLockRef.current = seed;
           setArrivalLock(seed);

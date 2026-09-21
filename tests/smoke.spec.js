@@ -771,6 +771,84 @@ test('planner later departures lock that clock', async ({ page }) => {
   expect(lockedClock).not.toBe(expectedEarly);
 });
 
+test('planner search and locked trip survive a page reload', async ({ page }) => {
+  test.setTimeout(120000);
+  await page.route('**/api/journey-options', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(mockJourneyOptions())
+    });
+  });
+  await page.route('**/api/ride', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const eta = new Date(Date.now() + 4 * 60000).toISOString();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        trips: [{ board: eta, eta, arrive: new Date(Date.now() + 22 * 60000).toISOString(), arrivalEstimated: true, rideMinutes: 18 }]
+      })
+    });
+  });
+  await page.route('**/api/kmb/route-stop/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: [
+          { stop: 'A1', name_tc: '竹園邨總站', name_en: 'Chuk Yuen Estate Bus Terminus', lat: 22.34, long: 114.19, co: 'KMB' },
+          { stop: 'C1', name_tc: '尖沙咀碼頭', name_en: 'Star Ferry', lat: 22.3, long: 114.17, co: 'KMB' }
+        ]
+      })
+    });
+  });
+  await page.route('**/api/fares**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ fare: null }) });
+  });
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
+  const transfer = page.locator('.panel.active');
+  await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
+  await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
+  await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
+  await expect(transfer).toContainText(/最快|Fastest/, { timeout: 20000 });
+  await transfer.locator('.journey-box').first().click();
+  await expect(transfer.getByRole('button', { name: /返回路線|Back to routes/ })).toBeVisible({ timeout: 20000 });
+
+  await page.reload();
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await expect(page.locator('button.tab-transfer')).toHaveAttribute('data-state', 'active', { timeout: 30000 });
+  const restored = page.locator('.panel.active');
+  await expect(restored).toContainText(/竹園邨總站|Chuk Yuen Estate Bus Terminus/, { timeout: 30000 });
+  await expect(restored).toContainText(/尖沙咀碼頭|Star Ferry/);
+  await expect(restored.getByRole('button', { name: /返回路線|Back to routes/ })).toBeVisible({ timeout: 30000 });
+});
+
+test('a stale last bus does not pop up after a reload', async ({ page }) => {
+  test.setTimeout(90000);
+  await page.addInitScript(() => {
+    const old = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: old }));
+    localStorage.setItem('tb-arrival', JSON.stringify({
+      route: '1',
+      service: { route: '1', co: 'KMB', bound: 'O', service_type: '1' },
+      stopIndex: '0',
+      destIndex: '',
+      savedAt: old
+    }));
+  });
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
+  const panel = page.locator('.panel.active');
+  await expect(panel.getByLabel(/路線，例如|Route, for example/)).toHaveValue('');
+  await expect(panel.getByRole('combobox', { name: /選擇上車站|Choose boarding stop/ })).toHaveCount(0);
+  await expect(panel).toContainText(/未能取得位置|Location was not available/, { timeout: 15000 });
+});
+
 test('transfer helper empty feed stays empty', async ({ page }) => {
   test.setTimeout(90000);
   await page.route('**/api/journey-options', async (route) => {

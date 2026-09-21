@@ -6,9 +6,24 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.6.1**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.7.0**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.7.0 — 2026-09-21
+
+### Changed
+- **Reload keeps what you were doing.** The app now remembers the last view you used — 路線規劃 search (起點, 終點, nearby/radius, preferred route, interchange), the locked trip, the last bus on Arrivals, or the MTR station — each with a timestamp. Reopen the app and the freshest view comes back instead of the old behaviour, where the arrivals tab always won and a bus from days ago popped up. The route planner survives a reload: the same search reruns and, if your locked bus is still live, the same trip is re-locked (matched by itinerary, then by closest clock within ten minutes). A locked bus that already left is not re-locked — the fresh option list shows instead. Sessions older than 48 hours are ignored, so nothing ancient pops up.
+
+### Fixed
+- **“Random refresh pops up a route from some time ago.”** Boot restore used to always load the last arrivals-tab route (`tb-arrival`) with no timestamp, no matter which tab you were actually using. The boot decision now lives in one tested place (`lib/sessionView.js`): fresh planner session → planner; else fresh last view (MTR or arrivals) → that view; else nearby board. Stale arrival locks older than the trip itself are dropped too.
+- Silent planner refreshes now keep the saved locked clock in sync, so a reload right after a refresh still re-locks the same bus.
+
+### Tests
+- Unit: `tests/sessionView.test.js` covers boot-view routing (planner vs MTR vs arrivals vs nearby, 48-hour freshness), relock grace for departed buses, and itinerary-key / closest-clock matching.
+- Smoke: a planner search with a locked trip survives `page.reload()` (tab, 起點/終點, and the locked trip all come back); a three-day-old last bus no longer pops up after a reload.
 
 ---
 
