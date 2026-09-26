@@ -1020,6 +1020,52 @@ test('arrivals lock and catch-up work beyond three minutes', async ({ page }) =>
   expect(posted[0]?.eta).toBe(eta7);
 });
 
+test('planning mode does not run a live search', async ({ page }) => {
+  test.setTimeout(90000);
+  const livePosts = [];
+  const planPosts = [];
+  await page.route('**/api/journey-options', async (route) => {
+    if (route.request().method() === 'POST') livePosts.push(1);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ options: [], emptyReason: 'no_departure', observedOnly: true, preferredMissing: false })
+    });
+  });
+  await page.route('**/api/pretrip', async (route) => {
+    if (route.request().method() === 'POST') planPosts.push(1);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ options: [], emptyReason: 'no_service', observedOnly: false })
+    });
+  });
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
+  const transfer = page.locator('.panel.active');
+  await expect(transfer.getByRole('tab', { name: /^實時$|^Live$/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(transfer.getByLabel(/^日期$|^Date$/)).toHaveCount(0);
+  await transfer.getByRole('tab', { name: /^規劃$|^Plan$/ }).click();
+  await expect(transfer.getByRole('tab', { name: /^規劃$|^Plan$/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(transfer.getByLabel(/^日期$|^Date$/)).toBeVisible();
+  await expect(transfer.getByRole('button', { name: /^搜尋$|^Search$/ })).toHaveCount(0);
+  await pickTransferStop(page, transfer, /起點|^From$/, '竹園邨總站', /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
+  await pickTransferStop(page, transfer, /^終點$|^To$/, '尖沙咀碼頭', /尖沙咀碼頭|Star Ferry/);
+  await page.waitForTimeout(800);
+  expect(livePosts).toHaveLength(0);
+  await transfer.getByRole('button', { name: /估計出門時間|Estimate leave-home time/ }).click();
+  await expect.poll(() => planPosts.length).toBeGreaterThan(0);
+  expect(livePosts).toHaveLength(0);
+  await expect(transfer).toContainText(/這天沒有公布班次|No published trips that day/);
+  await transfer.getByRole('tab', { name: /^實時$|^Live$/ }).click();
+  await expect(transfer.getByLabel(/^日期$|^Date$/)).toHaveCount(0);
+  await expect(transfer.getByRole('button', { name: /^搜尋$|^Search$/ })).toBeVisible();
+  expect(livePosts).toHaveLength(0);
+  await transfer.getByRole('button', { name: /^搜尋$|^Search$/ }).click();
+  await expect.poll(() => livePosts.length).toBeGreaterThan(0);
+});
+
 const STAND_ROUTE = { route: '1', co: 'KMB', bound: 'O', service_type: '1', orig_tc: '竹園邨', dest_tc: '尖沙咀碼頭', orig_en: 'Chuk Yuen', dest_en: 'Star Ferry' };
 const STAND_STOPS = [
   { stop: 'A1', seq: 1, name_tc: '竹園邨總站', name_en: 'Chuk Yuen Estate Bus Terminus', lat: 22.34, long: 114.19, co: 'KMB' },

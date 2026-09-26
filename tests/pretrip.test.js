@@ -165,6 +165,34 @@ test('pretrip weekday uses 編定 duration when TDAS is empty', async () => {
   assert.equal(row.waitMinutes, 6);
 });
 
+test('a timetable route after headway-less routes is not dropped', async () => {
+  const rows = [];
+  const services = [];
+  for (let i = 0; i < 10; i += 1) {
+    const svc = service(i === 9 ? '1' : `N${i}`);
+    services.push(svc);
+    rows.push({ service: svc, seq: [a, c] });
+  }
+  setGtfsIndexForTests({ savedAt: Date.now(), rows: [gtfsRow('1', { ms: 20 * 60 * 1000 })] });
+  const result = await plan({ date: '2026-09-07', arriveBy: '09:00' }, {
+    graph: graphWith(rows),
+    routes: services,
+    first: services[0]
+  });
+  assert.ok(result.options.some((row) => row.first.route === '1'));
+  assert.equal(result.options.find((row) => row.first.route === '1').rideMinutes, 20);
+});
+
+test('traffic estimate does not undercut the published section', async () => {
+  setGtfsIndexForTests({ savedAt: Date.now(), rows: [gtfsRow('1', { ms: 20 * 60 * 1000 })] });
+  const result = await plan({ date: '2026-09-07', arriveBy: '09:00' }, {
+    estimateRide: async () => ({ ms: 5 * 60 * 1000, jam: false, carKmh: 70 })
+  });
+  assert.equal(result.options[0].rideSource, 'gtfs');
+  assert.equal(result.options[0].rideMinutes, 20);
+  assert.equal(result.options[0].jam, false);
+});
+
 test('pretrip TDAS jam replaces 編定 minutes', async () => {
   setGtfsIndexForTests({ savedAt: Date.now(), rows: [gtfsRow('1', { ms: 20 * 60 * 1000 })] });
   const result = await plan({ date: '2026-09-07', arriveBy: '09:00' }, {

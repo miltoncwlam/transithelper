@@ -334,6 +334,7 @@ export default function TransitApp() {
   const [originBoxHidden, setOriginBoxHidden] = useState(false);
   const [journeyOptions, setJourneyOptions] = useState(null);
   const [journeyMessage, setJourneyMessage] = useState('');
+  const [plannerMode, setPlannerMode] = useState('live');
   const [pretripDate, setPretripDate] = useState(() => hktYmd(1));
   const [pretripArriveBy, setPretripArriveBy] = useState('');
   const [pretripResult, setPretripResult] = useState(null);
@@ -379,6 +380,7 @@ export default function TransitApp() {
   const transferSeq = useRef(0);
   const journeySeq = useRef(0);
   const journeyLockedRef = useRef(false);
+  const plannerModeRef = useRef('live');
   const originRef = useRef(null);
   const destinationRef = useRef(null);
   const arrivalRestored = useRef(false);
@@ -1413,7 +1415,7 @@ export default function TransitApp() {
     journeyLockedRef.current = false;
     resetTransferLock();
     const dest = destinationRef.current;
-    if (dest?.stops?.length) searchJourneys({ origin: x, destination: dest, firstService: null });
+    if (plannerModeRef.current === 'live' && dest?.stops?.length) searchJourneys({ origin: x, destination: dest, firstService: null });
   }
 
   function applyDestination(x) {
@@ -1426,7 +1428,14 @@ export default function TransitApp() {
     journeyLockedRef.current = false;
     resetTransferLock();
     const o = originRef.current;
-    if (o?.stops?.length) searchJourneys({ origin: o, destination: x, firstService: null });
+    if (plannerModeRef.current === 'live' && o?.stops?.length) searchJourneys({ origin: o, destination: x, firstService: null });
+  }
+
+  function choosePlannerMode(next) {
+    if (next !== 'live' && next !== 'plan') return;
+    plannerModeRef.current = next;
+    setPlannerMode(next);
+    try { localStorage.setItem('tb-planner-mode', next); } catch {}
   }
 
   const searchPretrip = useCallback(async () => {
@@ -2100,6 +2109,7 @@ export default function TransitApp() {
       const origStops = resolveStopRefs(journey.origin?.stops, allStops);
       const destStops = resolveStopRefs(journey.destination?.stops, allStops);
       if (!origStops.length || !destStops.length) return false;
+      choosePlannerMode('live');
       setTab('transfer');
       setNearby(journey.nearby !== false);
       setRadius(String(journey.radius || '250'));
@@ -2162,6 +2172,11 @@ export default function TransitApp() {
     if (stored === 'en' || stored === 'zh') setLang(stored);
     const mode = localStorage.getItem('tb-eta-mode');
     if (mode === 'clock' || mode === 'countdown') setEtaMode(mode);
+    const planner = localStorage.getItem('tb-planner-mode');
+    if (planner === 'plan' || planner === 'live') {
+      plannerModeRef.current = planner;
+      setPlannerMode(planner);
+    }
     setRecents(readRecents());
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -2330,7 +2345,7 @@ export default function TransitApp() {
       if (tab === 'arrivals' && lastView.current === 'a' && arrivalService && arrivalStopIndex !== '') {
         showArrival(arrivalService, arrivalGroups, arrivalStopIndex, arrivalDestIndex);
       }
-      if (tab === 'transfer' && lastView.current === 't') {
+      if (tab === 'transfer' && lastView.current === 't' && plannerModeRef.current === 'live') {
         if (chosenDirectRef.current) refreshChosenDirect();
         else if (selectedDepartureRef.current || transferPhaseRef.current === 'connections') goTransfer({ silent: true });
         else if ((originRef.current || origin) && (destinationRef.current || destination) && !journeyLockedRef.current) {
@@ -2922,7 +2937,23 @@ export default function TransitApp() {
       <section className={`panel${tab === 'transfer' ? ' active' : ''}`}>
         <div className="card">
           <h2 className="text-lg font-bold">{t('transferHeading')}</h2>
-          <p className="muted mt-1">{t('transferHint')}</p>
+          <div className="tabs mt-3" role="tablist" aria-label={t('plannerModeLabel')}>
+            <button
+              className={`tab${plannerMode === 'live' ? ' active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={plannerMode === 'live'}
+              onClick={() => choosePlannerMode('live')}
+            >{t('plannerLive')}</button>
+            <button
+              className={`tab${plannerMode === 'plan' ? ' active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={plannerMode === 'plan'}
+              onClick={() => choosePlannerMode('plan')}
+            >{t('plannerPlan')}</button>
+          </div>
+          <p className="muted mt-2">{plannerMode === 'live' ? t('transferHint') : t('pretripHelp')}</p>
           <div className={`mt-4${originBoxHidden ? ' hidden' : ''}`}>
             <b>{t('originLabel')}</b>
             <div className="search-row mt-1">
@@ -3010,12 +3041,29 @@ export default function TransitApp() {
               <Button variant="outline" className="tab mt-2" type="button" onClick={() => setDestBoxHidden(false)}>{t('change')}</Button>
             </div>
           ) : null}
-          <Button
-            className="btn btn-block mt-4 w-full"
-            type="button"
-            aria-label={findLabel}
-            onClick={() => searchJourneys()}
-          >{findLabel}</Button>
+          {plannerMode === 'live' ? (
+            <Button
+              className="btn btn-block mt-4 w-full"
+              type="button"
+              aria-label={findLabel}
+              onClick={() => searchJourneys()}
+            >{findLabel}</Button>
+          ) : (
+            <div className="note mt-4">
+              <label className="block">
+                <span className="muted">{t('pretripDate')}</span>
+                <Input className="field mt-1" type="date" value={pretripDate} onChange={(e) => setPretripDate(e.target.value)} aria-label={t('pretripDate')} />
+              </label>
+              <label className="block mt-2">
+                <span className="muted">{t('pretripArriveBy')}</span>
+                <Input className="field mt-1" type="time" value={pretripArriveBy} onChange={(e) => setPretripArriveBy(e.target.value)} aria-label={t('pretripArriveBy')} />
+              </label>
+              <Button className="btn btn-block mt-3 w-full" type="button" onClick={() => searchPretrip()}>{t('pretripFind')}</Button>
+              {pretripMessage ? <div className="note mt-2">{pretripMessage}</div> : null}
+              {pretripResult ? <div className="mt-2">{renderPretripOptions()}</div> : null}
+            </div>
+          )}
+          {plannerMode === 'live' ? (
           <div>
             {journeyMessage ? <div className="note">{journeyMessage}</div> : null}
             {journeyOptions && !chosenDirect && !transferResult ? (
@@ -3248,28 +3296,6 @@ export default function TransitApp() {
               </>
             ) : null}
           </div>
-          {origin && destination ? (
-            <Collapsible className="mt-4">
-              <CollapsibleTrigger asChild>
-                <Button variant="outline" className="tab" type="button">{t('pretripHeading')}</Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="note mt-2">
-                  <p className="muted">{t('pretripHelp')}</p>
-                  <label className="block mt-2">
-                    <span className="muted">{t('pretripDate')}</span>
-                    <Input className="field mt-1" type="date" value={pretripDate} onChange={(e) => setPretripDate(e.target.value)} aria-label={t('pretripDate')} />
-                  </label>
-                  <label className="block mt-2">
-                    <span className="muted">{t('pretripArriveBy')}</span>
-                    <Input className="field mt-1" type="time" value={pretripArriveBy} onChange={(e) => setPretripArriveBy(e.target.value)} aria-label={t('pretripArriveBy')} />
-                  </label>
-                  <Button className="btn btn-block mt-3 w-full" type="button" onClick={() => searchPretrip()}>{t('pretripFind')}</Button>
-                  {pretripMessage ? <div className="note mt-2">{pretripMessage}</div> : null}
-                  {pretripResult ? <div className="mt-2">{renderPretripOptions()}</div> : null}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
           ) : null}
         </div>
       </section>

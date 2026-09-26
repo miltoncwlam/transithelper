@@ -12,10 +12,15 @@ import {
 import { expandNearbyDiverse, namedStop, nearestStops, stopPlaceKey } from './kmb.js';
 import { lookupStopMap } from './stopName.js';
 import { estimateRideMs, metresBetween, namedDest, routeStops, walkMs } from './transfer.js';
-import { currentTopology, ensureTopology, getTopology, parseStopRef, serviceUid, stopUid } from './topology.js';
+import { currentTopology, ensureTopology, getTopology, parseStopRef, stopUid } from './topology.js';
 
 const DIRECT_CAP = 8;
 const TRANSFER_CAP = 6;
+/** How far to look before a no-timetable route counts as a result. Night buses
+ * and routes with no headway at this clock used to fill the cap and hide the
+ * buses that actually run. */
+const DIRECT_SCAN = 48;
+const TRANSFER_SCAN = 36;
 const LONG_HOP_M = 2000;
 
 function uniqStops(list) {
@@ -78,7 +83,9 @@ async function rideEstimate(cache, fromStop, toStop, departAtMs, scheduledMs, op
   if (Number.isFinite(metres) && metres >= LONG_HOP_M) {
     tdas = await estimateRide(cache, fromStop, toStop, departAtMs, opts.tdasOpts || {});
   }
-  if (tdas?.ms) {
+  // Car speed may show a jam (slower than the published section). It must not
+  // invent a bus that is faster than the timetable section.
+  if (tdas?.ms && (!scheduledMs || tdas.ms >= scheduledMs)) {
     return {
       ms: tdas.ms,
       minutes: minutesFromMs(tdas.ms),
@@ -125,8 +132,10 @@ export async function planPretrip(cache, stopMap, allStops, routes, body, opts =
   const seedOriginStops = originStops.slice();
   const seedDestStops = destStops.slice();
   if (nearby && originStops.length && destStops.length) {
-    originStops = uniqStops(expandNearbyDiverse(originStops, allStops, radius + 40, 16, 3));
-    destStops = uniqStops(expandNearbyDiverse(destStops, allStops, radius + 40, 16, 3));
+    // 32, not 16: a useful pole 200m away (旺角道 for 72X) was past the old cap,
+    // so 旺角站 → 大埔中心 came back as a detour with no direct.
+    originStops = uniqStops(expandNearbyDiverse(originStops, allStops, radius + 40, 32, 3));
+    destStops = uniqStops(expandNearbyDiverse(destStops, allStops, radius + 40, 32, 3));
   }
   if (!originStops.length || !destStops.length) {
     return { options: [], emptyReason: 'incomplete', observedOnly: false };
@@ -153,11 +162,19 @@ export async function planPretrip(cache, stopMap, allStops, routes, body, opts =
   let sawNoService = false;
   let sawNoDuration = false;
 
-  for (const candidate of directs.slice(0, DIRECT_CAP)) {
+  let builtDirects = 0;
+  for (const candidate of directs.slice(0, DIRECT_SCAN)) {
+    if (builtDirects >= DIRECT_CAP) break;
     const seq = seqFromGraph(graph, candidate.first);
     const stops = seq.length ? seq : await loadRouteStops(candidate.first);
-    const boardIdx = findBoardIdx(stops, originStops, seedOriginStops);
-    const destIdx = findDestIdx(stops, destStops, boardIdx);
+    let boardIdx = candidate.boardUid
+      ? stops.findIndex((row) => stopUid(row) === candidate.boardUid)
+      : -1;
+    let destIdx = candidate.destUid
+      ? stops.findIndex((row) => stopUid(row) === candidate.destUid)
+      : -1;
+    if (boardIdx < 0) boardIdx = findBoardIdx(stops, originStops, seedOriginStops);
+    if (destIdx <= boardIdx) destIdx = findDestIdx(stops, destStops, boardIdx);
     if (boardIdx < 0 || destIdx <= boardIdx) continue;
     const first = serviceFromGraphRow(candidate.first) || candidate.first;
     if (gtfsHasDayService(first, when) === false) {
@@ -210,9 +227,12 @@ export async function planPretrip(cache, stopMap, allStops, routes, body, opts =
       leaveHomeMs: leaveMs,
       scheduled: true
     });
+    builtDirects += 1;
   }
 
-  for (const pair of pairs.slice(0, TRANSFER_CAP)) {
+  let builtTransfers = 0;
+  for (const pair of pairs.slice(0, TRANSFER_SCAN)) {
+    if (builtTransfers >= TRANSFER_CAP) break;
     const firstSeq = seqFromGraph(graph, pair.first);
     const secondSeq = seqFromGraph(graph, pair.second);
     const firstStops = firstSeq.length ? firstSeq : await loadRouteStops(pair.first);
@@ -298,6 +318,7 @@ export async function planPretrip(cache, stopMap, allStops, routes, body, opts =
       leaveHomeMs: leaveMs,
       scheduled: true
     });
+    builtTransfers += 1;
   }
 
   const wantFares = opts.fareIndex !== undefined || opts.discountIndex !== undefined || opts.attachFares === true
@@ -311,7 +332,15 @@ export async function planPretrip(cache, stopMap, allStops, routes, body, opts =
   const options = [];
   const seen = new Set();
   for (const row of ranked) {
-    const key = [row.kind, serviceUid(row.first), row.second ? serviceUid(row.second) : '', row.fromStop, row.toStop].join('|');
+    const key = [
+      row.kind,
+      String(row.first?.co || 'KMB').toUpperCase(),
+      String(row.first?.route || '').toUpperCase(),
+      String(row.first?.bound || ''),
+      row.second ? String(row.second.co || 'KMB').toUpperCase() : '',
+      row.second ? String(row.second.route || '').toUpperCase() : '',
+      row.second ? String(row.second.bound || '') : ''
+    ].join('|');
     if (seen.has(key)) continue;
     seen.add(key);
     const slower = streetBest ? Math.max(0, Math.round((row.doorMinutes || 0) - (streetBest.doorMinutes || 0))) : 0;

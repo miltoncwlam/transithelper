@@ -6,9 +6,29 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.8.0**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.9.0**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.9.0 — 2026-09-26
+
+### Changed
+- **路線規劃 splits 實時 and 規劃.** The planner page now has two modes at the top, 實時 and 規劃. 實時 is the live search (搜尋, live clocks, 稍後班次, 就乘這一程). 規劃 is the leave-home estimate (日期, 要幾點前到, 估計出門時間) using published headways and a traffic estimate. They no longer share one screen: 出門規劃 is not a collapsed panel under the live list.
+- Picking 起點 and 終點 only auto-searches in 實時. Switching to 規劃 does not call the live planner, and the 30-second refresh does not keep polling live trips while you are planning. Switching back to 實時 shows 搜尋 again; a reload that restores a saved live search opens 實時 so that search is visible. The chosen mode is remembered (`tb-planner-mode`).
+
+### Fixed
+- **規劃 came back empty on the first try.** `/api/pretrip` did not wait for the KMB route map, so the first 估計出門時間 (竹園邨總站 → 尖沙咀碼頭) returned `no_connection` while the map was still loading. It now waits for that map, the same way the live planner does.
+- **A running bus was hidden behind night routes.** Planning only looked at the first 8 directs and 6 transfers. For 旺角站 → 大埔墟站 the first six transfers were night buses (N271, N213) with no morning headway, so the list said 這天沒有公布班次 and dropped 24 → 74A, which does run at 08:15. Routes with no timetable at that clock are now skipped, and the search keeps going until it has real options.
+- **旺角站 → 大埔中心 missed 72X.** Nearby poles were capped at 16, and 72X boards at 旺角道 (about 200m away), so the list was only detours via 奧海城. Planning now keeps 32 nearby poles, and 72X inbound (headway 30 minutes at 08:15) is included. 大埔墟站 itself is not on 72X (about 1km from 大埔中心), so that pair stays a transfer.
+- **沙田市中心 → 尖沙咀碼頭 dropped 280X.** The route map already matched 尖沙咀東（麼地道） within 280m, then the ride builder required the same stop name and threw the direct away, leaving no service. Planning now rides the stop the map already picked, and the walk to the place you typed is still counted.
+- **The same route was listed three times.** 第一城總站 → 太子站 showed 87D three times (same direction, different poles). One direction is now one card.
+- **Car speed was inventing a faster bus than the timetable.** A long hop used the traffic estimate even when it was shorter than the published section (觀塘 → 中環 on 619 came out at 14 minutes). Traffic can only add time (擠塞). The published section is the floor. Empty feed stays empty: 01:00 still says no service, and the same area still says same area.
+
+### Tests
+- Smoke: in 規劃, picking 竹園邨總站 → 尖沙咀碼頭 posts no `/api/journey-options`; 估計出門時間 posts `/api/pretrip`; switching back to 實時 and pressing 搜尋 is what posts the live search.
+- Unit: a timetable route that sits after ten headway-less routes is still returned; a 5-minute traffic estimate does not undercut a 20-minute published section.
 
 ---
 
