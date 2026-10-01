@@ -61,9 +61,10 @@ test('a stale arrivals view does not pop up a route from some time ago', () => {
   assert.equal(choice, 'nearby');
 });
 
-test('legacy install without a view pref keeps the old last-bus restore', () => {
+test('an arrival with no timestamp does not pop', () => {
   const legacyArrival = { route: '281A', service: arrival.service, stopIndex: '3' };
-  assert.equal(pickBootView({ view: null, viewAt: 0, journey: {}, arrival: legacyArrival, now }), 'arrival');
+  assert.equal(pickBootView({ view: null, viewAt: 0, journey: {}, arrival: legacyArrival, now }), 'nearby');
+  assert.equal(pickBootView({ view: 'a', viewAt: now, journey: {}, arrival: legacyArrival, now }), 'nearby');
   assert.equal(pickBootView({ view: null, viewAt: 0, journey: {}, arrival: {}, now }), 'nearby');
 });
 
@@ -73,24 +74,19 @@ test('MTR was the last view: boot lands on the MTR tab', () => {
   assert.equal(pickBootView({ view: 'm', viewAt: stale, journey: {}, arrival: { ...arrival, savedAt: stale }, now }), 'nearby');
 });
 
-test('planner view without a usable session falls back to a fresh last bus, then nearby', () => {
+test('planner view without a usable session stays on route search', () => {
   assert.equal(
     pickBootView({ view: 't', viewAt: now - 60000, journey: {}, arrival, now }),
-    'arrival'
-  );
-  const staleArrival = { ...arrival, savedAt: now - RESTORE_MAX_AGE_MS - HOUR };
-  assert.equal(
-    pickBootView({ view: 't', viewAt: now - 60000, journey: {}, arrival: staleArrival, now }),
-    'nearby'
+    'planner'
   );
   const noDest = { ...journey, destination: { label: 'B', stops: [] } };
   assert.equal(
     pickBootView({ view: 't', viewAt: now - 60000, journey: noDest, arrival, now }),
-    'arrival'
+    'planner'
   );
 });
 
-test('a stale planner session does not restore', () => {
+test('a stale planner session does not restore the old bus', () => {
   const stale = now - RESTORE_MAX_AGE_MS - HOUR;
   const choice = pickBootView({
     view: 't',
@@ -99,7 +95,25 @@ test('a stale planner session does not restore', () => {
     arrival,
     now
   });
-  assert.equal(choice, 'arrival');
+  assert.equal(choice, 'planner');
+  assert.equal(pickBootView({
+    view: 't',
+    viewAt: stale,
+    journey: { ...journey, savedAt: stale },
+    arrival,
+    now
+  }), 'nearby');
+});
+
+test('an arrivals route from a few hours ago does not pop', () => {
+  const old = now - 4 * HOUR;
+  assert.equal(pickBootView({
+    view: 'a',
+    viewAt: old,
+    journey: {},
+    arrival: { ...arrival, savedAt: old },
+    now
+  }), 'nearby');
 });
 
 test('hasRestorableJourney needs both ends with stops', () => {

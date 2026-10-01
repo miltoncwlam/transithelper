@@ -71,8 +71,10 @@ test('saved homes do not steal the arrivals tab', async ({ page }) => {
 test('last bus restores on first open without stealing the tab', async ({ page }) => {
   test.setTimeout(90000);
   await page.addInitScript(() => {
+    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: Date.now() }));
     localStorage.setItem('tb-arrival', JSON.stringify({
       route: '1',
+      savedAt: Date.now(),
       service: {
         route: '1',
         co: 'KMB',
@@ -98,6 +100,42 @@ test('last bus restores on first open without stealing the tab', async ({ page }
   await expect(panel).toContainText(/竹園|Chuk Yuen/);
   await expect(panel.locator('.nearby-board')).toHaveCount(0);
   await expect(panel).toContainText(/分鐘|min|沒有|no bus|目前找不到|\d{1,2}:\d{2}|上午|下午/i, { timeout: 40000 });
+});
+
+test('switching to route search then reloading does not pop the last bus', async ({ page }) => {
+  test.setTimeout(90000);
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('tb-seeded')) return;
+    sessionStorage.setItem('tb-seeded', '1');
+    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: Date.now() }));
+    localStorage.setItem('tb-arrival', JSON.stringify({
+      route: '1',
+      savedAt: Date.now(),
+      service: {
+        route: '1',
+        co: 'KMB',
+        bound: 'O',
+        service_type: '1',
+        orig_tc: '竹園邨',
+        dest_tc: '尖沙咀碼頭',
+        orig_en: 'Chuk Yuen',
+        dest_en: 'Star Ferry'
+      },
+      stopIndex: 0,
+      destIndex: ''
+    }));
+  });
+  await page.goto('/');
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await expect(page.locator('.panel.active .arrival-board')).toBeVisible({ timeout: 40000 });
+  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
+  await expect(page.locator('button.tab-transfer')).toHaveAttribute('data-state', 'active');
+  await page.reload();
+  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
+  await expect(page.locator('button.tab-transfer')).toHaveAttribute('data-state', 'active');
+  const panel = page.locator('.panel.active');
+  await expect(panel).toContainText(/路線規劃|Route planner/);
+  await expect(panel.locator('.arrival-board')).toHaveCount(0);
 });
 
 test('nearby board loads on first open when there is no last bus', async ({ page }) => {
@@ -948,8 +986,10 @@ test('arrivals lock and catch-up work beyond three minutes', async ({ page }) =>
   const eta15 = new Date(Date.now() + 15 * 60000).toISOString();
   const posted = [];
   await page.addInitScript(() => {
+    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: Date.now() }));
     localStorage.setItem('tb-arrival', JSON.stringify({
       route: '1',
+      savedAt: Date.now(),
       service: {
         route: '1',
         co: 'KMB',

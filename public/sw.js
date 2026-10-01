@@ -2,7 +2,6 @@ const CACHE = 'transitbuddy-v5';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(['/styles.css'])));
-  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

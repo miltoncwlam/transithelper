@@ -464,6 +464,9 @@ globalThis.I18N = {
     find: '查詢',
     transferHeading: '路線規劃',
     transferHint: '選起點和終點，列出可乘的實時路線。',
+    plannerModeLabel: '路線模式',
+    plannerLive: '實時',
+    plannerPlan: '規劃',
     nearbyLabel: '同時顯示附近車站的其他選擇',
     radiusLabel: '附近範圍',
     m150: '150 米',
@@ -731,6 +734,9 @@ globalThis.I18N = {
     find: 'Find',
     transferHeading: 'Route planner',
     transferHint: 'Pick from and to. Live bus and minibus options are listed.',
+    plannerModeLabel: 'Planner mode',
+    plannerLive: 'Live',
+    plannerPlan: 'Plan',
     nearbyLabel: 'Also show nearby stop choices',
     radiusLabel: 'Nearby range',
     m150: '150 metres',
@@ -1002,7 +1008,7 @@ const GUIDE = {
         p: [
           '選起點和終點，像地圖一樣列出可乘的實時巴士／小巴。不必先選路線。起點可按「用我的位置」。輸入站名就會出現名單。',
           '按「搜尋」後（選好兩端也會自動搜）會列出實時選擇：路線、開出、到達、車程、步行、轉車等候和八達通車費。排序同時看車程、轉車（含等候）、步行和車費：只快一兩分鐘的轉乘不會排在直達前面。同一路線合成一格。同一路線若有稍後實時班次，按「稍後班次」可改乘那一班。只顯示現正有實時的路線。點一程即鎖定該班車，自動更新時不會改成下一班。若趕不上，按「錯過了」。',
-          '出門規劃收在結果下方，用編定班距和交通估計（不是實時）。選日期（預設明天）和可選的到達時間，會顯示大約出門時間。沒有該天班次就會寫沒有。'
+          '實時和規劃是兩個模式，用頁頂的「實時／規劃」切換。實時只列出現正有班次的路線。規劃用編定班距和交通估計（不是實時），選日期（預設明天）和可選的到達時間，會顯示大約出門時間。沒有該天班次就會寫沒有。切去規劃時不會再搜實時。'
         ]
       },
       {
@@ -1056,7 +1062,7 @@ const GUIDE = {
         p: [
           'Pick from and to — like a map. You do not choose a route first. Use my location sets the start from nearby poles. Typing a stop name lists matches.',
           'Search (it also runs after both stops are picked) lists live options: route, depart, arrive, ride time, walking, transfer wait and Octopus fare. Ranking uses travel time, transfer (including wait), walking and fare — a transfer that is only a minute faster does not beat staying on the bus. The same route is merged into one row. Later live trips of that route sit behind Later departures. Only live trips are listed. Tap a trip to lock it so refresh does not snap to the next bus. If you miss it, use If I missed it.',
-          'Leave-home plan sits under the results. It uses published headways and a traffic estimate — not live arrivals. Pick a date (tomorrow by default) and an optional arrive-by time. No trips that day stays empty.'
+          'Live and Plan are separate modes, switched at the top of the page. Live lists only trips running now. Plan uses published headways and a traffic estimate — not live arrivals. Pick a date (tomorrow by default) and an optional arrive-by time. No trips that day stays empty. Switching to Plan does not run a live search.'
         ]
       },
       {
@@ -1130,7 +1136,7 @@ const MANUAL = {
           '選起點和終點，像地圖一樣列出可乘的實時巴士／小巴。不必先選路線。也可按「用我的位置」。輸入站名就會出現名單。',
           '附近站柱會一併考慮，不必再調距離。不必指定第一程或轉車站。',
           '按「搜尋」後（選好兩端也會自動搜）會列出實時選擇：路線、開出、到達、車程、步行、轉車等候和八達通車費。排序同時看車程、轉車（含等候）、步行和車費。同一路線合成一格。同一路線若有稍後實時班次，按「稍後班次」可改乘那一班。只顯示現正有實時的路線。沿途到達若為推算會標「估計」。',
-          '出門規劃收在結果下方（日期預設明天），用編定班距和交通估計，不是實時。可選到達時間後顯示大約出門時間；沒有該天班次就會寫沒有。沒有交通車速時只顯示編定車程，不會乘上自訂的繁忙時間倍數。',
+          '頁頂「實時」和「規劃」分開。規劃用編定班距和交通估計，不是實時（日期預設明天）。可選到達時間後顯示大約出門時間；沒有該天班次就會寫沒有。沒有交通車速時只顯示編定車程，不會乘上自訂的繁忙時間倍數。切去規劃時不會再搜實時。',
           '點一程即鎖定該班車和接駁，並繼續更新這一班的實時狀態。自動重新整理時不會改成下一班。趕不上按「錯過了」。'
         ]
       },
@@ -1205,7 +1211,7 @@ const MANUAL = {
           'Pick from and to, like a map. You do not pick a bus route first. Use my location is available. Typing a stop name lists matches.',
           'Nearby poles are included automatically. You do not set a first route or transfer stop.',
           'Search (it also runs after both stops are picked) lists live options: route, depart, arrive, ride time, walking, transfer wait and Octopus fare. Ranking uses travel time, transfer (including wait), walking and fare. The same route is merged into one row. Later live trips of that route sit behind Later departures. Only live trips are listed. Hop arrivals marked 估計 / est. are estimates.',
-          'Leave-home plan sits under the results (date defaults to tomorrow). It uses published headways and a traffic estimate, not live clocks. An optional arrive-by time yields an estimated leave-home clock. No trips that day stays empty. Without a traffic speed, ride time stays on the published duration — no invented peak multiplier.',
+          'Live and Plan are separate, switched at the top. Plan uses published headways and a traffic estimate, not live clocks (date defaults to tomorrow). An optional arrive-by time yields an estimated leave-home clock. No trips that day stays empty. Without a traffic speed, ride time stays on the published duration — no invented peak multiplier. Switching to Plan does not run a live search.',
           'Tap a trip to lock those exact buses. Refresh does not snap to the next bus. If you miss it, use If I missed it.'
         ]
       },
@@ -1330,21 +1336,24 @@ const MANUAL = {
     return Number.isFinite(at) && at > 0 && now - at >= 0 && now - at < maxAgeMs;
   }
 
+  const ARRIVAL_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+
   function restorableArrival(pref) {
     const ok = !!(pref?.service) && pref.stopIndex !== '' && pref.stopIndex != null;
-    // Legacy prefs have no savedAt: restore once, the next write timestamps it.
-    return ok && (pref.savedAt == null || freshAt(pref.savedAt));
+    if (pref?.savedAt == null) return false;
+    return ok && freshAt(pref.savedAt, ARRIVAL_MAX_AGE_MS);
   }
 
-  /** Decide what a fresh page load shows. 'none' = stay on an empty arrivals tab. */
+  /** Decide what a fresh page load shows. 'none' = empty arrivals. 'planner' = route search with no saved trip. */
   function pickBootView({ view, viewAt, journey, arrival }) {
     const viewFresh = freshAt(viewAt);
-    if (view === 't' && viewFresh && hasRestorableJourney(journey) && freshAt(journey.savedAt)) return 'journey';
+    if (view === 't' && viewFresh) {
+      if (hasRestorableJourney(journey) && freshAt(journey.savedAt)) return 'journey';
+      return 'planner';
+    }
     if (view === 'm' && viewFresh) return 'mtr';
-    if (view == null || (view === 'a' && viewFresh)) return restorableArrival(arrival) ? 'arrival' : 'none';
-    // Planner/MTR was last but its payload is gone or stale: a fresh last bus is
-    // still useful; anything older is not your context any more.
-    return restorableArrival(arrival) && arrival.savedAt != null ? 'arrival' : 'none';
+    if (view === 'a' && viewFresh && restorableArrival(arrival)) return 'arrival';
+    return 'none';
   }
 
   /** Relock only while the locked clock is still (almost) in the future. */
@@ -2514,9 +2523,9 @@ const MANUAL = {
       journey: readJourneySession(),
       arrival: readJson(ARRIVAL_PREF_KEY)
     });
-    if (choice === 'journey') {
-      const ok = await restoreJourneySession(readJourneySession()).catch(() => false);
-      if (!ok) await restoreArrivalPref();
+    if (choice === 'journey' || choice === 'planner') {
+      tabs('transfer');
+      if (choice === 'journey') await restoreJourneySession(readJourneySession()).catch(() => false);
     } else if (choice === 'mtr') {
       tabs('mtr');
     } else if (choice === 'arrival') {
@@ -3211,8 +3220,10 @@ const MANUAL = {
     }
     S.arrivalPayload = payload;
     paintArrival();
-    S.last = 'a';
-    writeSessionView('a');
+    if (S.tab === 'arrivals') {
+      S.last = 'a';
+      writeSessionView('a');
+    }
     try {
       localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
         route: S.a?.route || '',
@@ -4077,7 +4088,12 @@ const MANUAL = {
     document.querySelectorAll('.panel').forEach((x) => x.classList.toggle('active', x.id === id));
     if (id === 'home') renderHome();
     if (id === 'guide') paintGuide();
-    if (id === 'mtr') mtr();
+    if (id === 'arrivals') writeSessionView('a');
+    if (id === 'transfer') writeSessionView('t');
+    if (id === 'mtr') {
+      writeSessionView('m');
+      mtr();
+    }
   }
 
   function paintGuide() {

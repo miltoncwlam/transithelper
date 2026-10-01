@@ -6,9 +6,23 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.9.0**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.9.1**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.9.1 — 2026-10-01
+
+### Fixed
+- **A reload during 路線規劃 still popped an old bus.** Opening 路線規劃 did not count as the current view until a search finished, so a refresh (or iOS dropping the tab) restored whatever arrivals route was last saved. The planner tab is saved as soon as you open it, and a reload stays on 路線規劃 even when the search itself was not saved yet. It does not fall back to the last bus.
+- **An arrivals route with no timestamp, or from more than three hours ago, no longer pops on open.** Older installs stored the last bus without a time, and that route was restored on every launch. A bus you were actually looking at in the last three hours still comes back when arrivals was the last tab.
+- Picking both ends of a search writes that search before the live result returns, so a refresh in the middle of 搜尋 reopens the same 起點 and 終點 instead of an older route.
+- A new app version no longer takes over an open tab immediately. The update waits until the next visit, so a deploy does not refresh the page out from under a search.
+
+### Tests
+- Unit: route search with no saved trip stays on the planner; a stale planner session does not restore the last bus; an undated arrivals pref and a four-hour-old bus do not pop.
+- Smoke: open the last bus, switch to 路線規劃, reload, and the active panel is the planner with no arrivals board.
 
 ---
 

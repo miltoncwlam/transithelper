@@ -374,6 +374,15 @@ export default function TransitApp() {
   const arrivalPickSeq = useRef(0);
   const firstSearchSeq = useRef(0);
   const lastView = useRef(null);
+  const bootSnapshot = useRef(undefined);
+  const bootApplied = useRef(false);
+  if (bootSnapshot.current === undefined && typeof window !== 'undefined') {
+    bootSnapshot.current = {
+      view: readSessionView(),
+      journey: readJourneySession(),
+      arrival: readArrivalPref()
+    };
+  }
   const mtrSeq = useRef(0);
   const arrivalBoardRef = useRef(null);
   const arrivalLiveRef = useRef(null);
@@ -844,7 +853,7 @@ export default function TransitApp() {
             body: JSON.stringify({ first: s, boardStops: (g.stops || []).map((row) => row.stop), destStops: [] })
           });
           setArrivalTimes({ trips: json.trips || [], destLabel: null, emptyReason: json.emptyReason });
-          lastView.current = 'a';
+          if (lastView.current !== 't' && lastView.current !== 'm') lastView.current = 'a';
           writeArrivalPref({ route: s.route, service: s, stopIndex: String(idx), destIndex: '' });
           const hit = pending.eta ? pickLockedTrip(json.trips || [], pending.eta) : null;
           if (hit) lockArrivalTrip(hit);
@@ -891,8 +900,12 @@ export default function TransitApp() {
     } catch {
       setArrivalTimes({ trips: [], destLabel: destGroup?.label || null, emptyReason: 'empty' });
     }
-    lastView.current = 'a';
-    writeSessionView('a');
+    // A ride request started on arrivals can finish after the user opened 路線規劃.
+    // Do not pull the saved view back to that bus.
+    if (lastView.current !== 't' && lastView.current !== 'm') {
+      lastView.current = 'a';
+      writeSessionView('a');
+    }
     writeArrivalPref({
       route: service.route,
       service,
@@ -1415,6 +1428,17 @@ export default function TransitApp() {
     journeyLockedRef.current = false;
     resetTransferLock();
     const dest = destinationRef.current;
+    lastView.current = 't';
+    writeSessionView('t');
+    if (dest?.stops?.length) {
+      writeJourneySession({
+        origin: { label: x.label || '', stops: stopRefs(x) },
+        destination: { label: dest.label || '', stops: stopRefs(dest) },
+        firstService: null,
+        interchangeStops: null,
+        locked: null
+      });
+    }
     if (plannerModeRef.current === 'live' && dest?.stops?.length) searchJourneys({ origin: x, destination: dest, firstService: null });
   }
 
@@ -1428,6 +1452,17 @@ export default function TransitApp() {
     journeyLockedRef.current = false;
     resetTransferLock();
     const o = originRef.current;
+    lastView.current = 't';
+    writeSessionView('t');
+    if (o?.stops?.length) {
+      writeJourneySession({
+        origin: { label: o.label || '', stops: stopRefs(o) },
+        destination: { label: x.label || '', stops: stopRefs(x) },
+        firstService: null,
+        interchangeStops: null,
+        locked: null
+      });
+    }
     if (plannerModeRef.current === 'live' && o?.stops?.length) searchJourneys({ origin: o, destination: x, firstService: null });
   }
 
@@ -2239,12 +2274,12 @@ export default function TransitApp() {
   useEffect(() => {
     if (nearbyAutoStarted.current) return;
     nearbyAutoStarted.current = true;
-    const viewPref = readSessionView();
+    const snap = bootSnapshot.current;
     const choice = pickBootView({
-      view: viewPref.view,
-      viewAt: viewPref.at,
-      journey: readJourneySession(),
-      arrival: readArrivalPref()
+      view: snap?.view?.view,
+      viewAt: snap?.view?.at,
+      journey: snap?.journey,
+      arrival: snap?.arrival
     });
     if (choice !== 'nearby') return;
     loadNearbyBoard();
@@ -2252,15 +2287,26 @@ export default function TransitApp() {
 
   useEffect(() => {
     if (arrivalRestored.current || !routes.length) return;
-    const viewPref = readSessionView();
-    const pref = readArrivalPref();
-    const journey = readJourneySession();
-    const choice = pickBootView({ view: viewPref.view, viewAt: viewPref.at, journey, arrival: pref });
-    if (choice === 'journey') {
+    const snap = bootSnapshot.current || {};
+    const pref = snap.arrival || readArrivalPref();
+    const journey = snap.journey || readJourneySession();
+    const choice = pickBootView({
+      view: snap.view?.view,
+      viewAt: snap.view?.at,
+      journey,
+      arrival: pref
+    });
+    bootApplied.current = true;
+    if (choice === 'journey' || choice === 'planner') {
       arrivalRestored.current = true;
-      restoreJourneySession(journey).then((ok) => {
-        if (ok === false) loadNearbyBoard();
-      });
+      lastView.current = 't';
+      writeSessionView('t');
+      setTab('transfer');
+      if (choice === 'journey') {
+        restoreJourneySession(journey).then((ok) => {
+          if (ok === false) setTab('transfer');
+        });
+      }
       return;
     }
     if (choice === 'mtr') {
@@ -2734,7 +2780,22 @@ export default function TransitApp() {
       </header>
       <div className="note">{dirCount == null ? t('loading') : dirCount < 0 ? (offline && showLocalDevHint() ? t('connectionRefused') : t('loadFail')) : t('ready', dirCount)}</div>
       {standaloneHint ? <p className="muted add-home-hint">{t('addHomeScreen')}</p> : null}
-      <Tabs value={tab} onValueChange={setTab} className="my-5">
+      <Tabs value={tab} onValueChange={(next) => {
+        setTab(next);
+        // The arrivals tab is the default. Its startup notification must not
+        // overwrite a planner or MTR view saved before this load.
+        if (!bootApplied.current && next === 'arrivals') return;
+        if (next === 'arrivals') {
+          lastView.current = 'a';
+          writeSessionView('a');
+        } else if (next === 'transfer') {
+          lastView.current = 't';
+          writeSessionView('t');
+        } else if (next === 'mtr') {
+          lastView.current = 'm';
+          writeSessionView('m');
+        }
+      }} className="my-5">
         <TabsList className="tabs">
           {tabs.map(([id, label]) => (
             <TabsTrigger key={id} value={id} className={`tab tab-${id}${tab === id ? ' active' : ''}`}>{label}</TabsTrigger>

@@ -80,21 +80,24 @@
     return Number.isFinite(at) && at > 0 && now - at >= 0 && now - at < maxAgeMs;
   }
 
+  const ARRIVAL_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+
   function restorableArrival(pref) {
     const ok = !!(pref?.service) && pref.stopIndex !== '' && pref.stopIndex != null;
-    // Legacy prefs have no savedAt: restore once, the next write timestamps it.
-    return ok && (pref.savedAt == null || freshAt(pref.savedAt));
+    if (pref?.savedAt == null) return false;
+    return ok && freshAt(pref.savedAt, ARRIVAL_MAX_AGE_MS);
   }
 
-  /** Decide what a fresh page load shows. 'none' = stay on an empty arrivals tab. */
+  /** Decide what a fresh page load shows. 'none' = empty arrivals. 'planner' = route search with no saved trip. */
   function pickBootView({ view, viewAt, journey, arrival }) {
     const viewFresh = freshAt(viewAt);
-    if (view === 't' && viewFresh && hasRestorableJourney(journey) && freshAt(journey.savedAt)) return 'journey';
+    if (view === 't' && viewFresh) {
+      if (hasRestorableJourney(journey) && freshAt(journey.savedAt)) return 'journey';
+      return 'planner';
+    }
     if (view === 'm' && viewFresh) return 'mtr';
-    if (view == null || (view === 'a' && viewFresh)) return restorableArrival(arrival) ? 'arrival' : 'none';
-    // Planner/MTR was last but its payload is gone or stale: a fresh last bus is
-    // still useful; anything older is not your context any more.
-    return restorableArrival(arrival) && arrival.savedAt != null ? 'arrival' : 'none';
+    if (view === 'a' && viewFresh && restorableArrival(arrival)) return 'arrival';
+    return 'none';
   }
 
   /** Relock only while the locked clock is still (almost) in the future. */
@@ -1264,9 +1267,9 @@
       journey: readJourneySession(),
       arrival: readJson(ARRIVAL_PREF_KEY)
     });
-    if (choice === 'journey') {
-      const ok = await restoreJourneySession(readJourneySession()).catch(() => false);
-      if (!ok) await restoreArrivalPref();
+    if (choice === 'journey' || choice === 'planner') {
+      tabs('transfer');
+      if (choice === 'journey') await restoreJourneySession(readJourneySession()).catch(() => false);
     } else if (choice === 'mtr') {
       tabs('mtr');
     } else if (choice === 'arrival') {
@@ -1961,8 +1964,10 @@
     }
     S.arrivalPayload = payload;
     paintArrival();
-    S.last = 'a';
-    writeSessionView('a');
+    if (S.tab === 'arrivals') {
+      S.last = 'a';
+      writeSessionView('a');
+    }
     try {
       localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
         route: S.a?.route || '',
@@ -2827,7 +2832,12 @@
     document.querySelectorAll('.panel').forEach((x) => x.classList.toggle('active', x.id === id));
     if (id === 'home') renderHome();
     if (id === 'guide') paintGuide();
-    if (id === 'mtr') mtr();
+    if (id === 'arrivals') writeSessionView('a');
+    if (id === 'transfer') writeSessionView('t');
+    if (id === 'mtr') {
+      writeSessionView('m');
+      mtr();
+    }
   }
 
   function paintGuide() {
