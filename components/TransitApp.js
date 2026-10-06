@@ -19,6 +19,7 @@ import {
   pickBootView,
   readJourneySession,
   readSessionView,
+  forgetRouteMemory,
   shouldRelock,
   writeJourneySession,
   writeSessionView
@@ -191,15 +192,6 @@ function sameWatchedTrip(a, b) {
     && Math.abs(new Date(a.eta) - new Date(b.eta)) < 10 * 60 * 1000;
 }
 
-function readRecents() {
-  try {
-    const raw = JSON.parse(localStorage.getItem('tb-recents') || '{}');
-    return { routes: raw.routes || [], stops: raw.stops || [] };
-  } catch {
-    return { routes: [], stops: [] };
-  }
-}
-
 const HOMES_KEY = 'tb-homes';
 const MTR_PREF_KEY = 'tb-mtr';
 const ARRIVAL_PREF_KEY = 'tb-arrival';
@@ -214,16 +206,7 @@ function readMtrPref() {
   }
 }
 
-function writeMtrPref(next) {
-  try {
-    const cur = readMtrPref();
-    localStorage.setItem(MTR_PREF_KEY, JSON.stringify({
-      line: next.line ?? cur.line ?? '',
-      station: next.station ?? cur.station ?? '',
-      dest: next.dest ?? cur.dest ?? ''
-    }));
-  } catch {}
-}
+function writeMtrPref() {}
 
 function readArrivalPref() {
   if (typeof window === 'undefined') return {};
@@ -235,19 +218,7 @@ function readArrivalPref() {
   }
 }
 
-function writeArrivalPref(next) {
-  try {
-    const cur = readArrivalPref();
-    localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
-      route: next.route !== undefined ? next.route : (cur.route || ''),
-      service: next.service !== undefined ? next.service : (cur.service || null),
-      stopIndex: next.stopIndex !== undefined ? next.stopIndex : (cur.stopIndex ?? ''),
-      destIndex: next.destIndex !== undefined ? next.destIndex : (cur.destIndex ?? ''),
-      lockedEta: next.lockedEta !== undefined ? (next.lockedEta || '') : (cur.lockedEta || ''),
-      savedAt: Date.now()
-    }));
-  } catch {}
-}
+function writeArrivalPref() {}
 
 function matchArrivalService(pref, routes) {
   const s = pref?.service;
@@ -359,7 +330,6 @@ export default function TransitApp() {
   const [homeError, setHomeError] = useState('');
   const [arrivalFares, setArrivalFares] = useState(null);
   const [firstFares, setFirstFares] = useState(null);
-  const [recents, setRecents] = useState({ routes: [], stops: [] });
   const [standaloneHint, setStandaloneHint] = useState(false);
   const [routeNearNote, setRouteNearNote] = useState('');
   const [routeLine, setRouteLine] = useState(null);
@@ -555,16 +525,6 @@ export default function TransitApp() {
     return stopsLoad.current;
   }
 
-  function pushRecent(kind, value) {
-    if (value == null || value === '') return;
-    const cur = readRecents();
-    const token = JSON.stringify(value);
-    const list = [value, ...(cur[kind] || []).filter((row) => JSON.stringify(row) !== token)].slice(0, 8);
-    const next = { ...cur, [kind]: list };
-    try { localStorage.setItem('tb-recents', JSON.stringify(next)); } catch {}
-    setRecents(next);
-  }
-
   function groups(rows) {
     const m = new Map();
     rows.forEach((x) => {
@@ -708,7 +668,6 @@ export default function TransitApp() {
 
   async function loadChoices(routeStr) {
     const q = n(routeStr);
-    if (q) pushRecent('routes', q);
     if (!q) return { error: 'noRoute' };
     const local = directoryKeep(routes, q);
     try {
@@ -1470,7 +1429,6 @@ export default function TransitApp() {
     if (next !== 'live' && next !== 'plan') return;
     plannerModeRef.current = next;
     setPlannerMode(next);
-    try { localStorage.setItem('tb-planner-mode', next); } catch {}
   }
 
   const searchPretrip = useCallback(async () => {
@@ -2203,16 +2161,11 @@ export default function TransitApp() {
   }
 
   useEffect(() => {
+    forgetRouteMemory();
     const stored = localStorage.getItem('tb-lang');
     if (stored === 'en' || stored === 'zh') setLang(stored);
     const mode = localStorage.getItem('tb-eta-mode');
     if (mode === 'clock' || mode === 'countdown') setEtaMode(mode);
-    const planner = localStorage.getItem('tb-planner-mode');
-    if (planner === 'plan' || planner === 'live') {
-      plannerModeRef.current = planner;
-      setPlannerMode(planner);
-    }
-    setRecents(readRecents());
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
@@ -2869,16 +2822,6 @@ export default function TransitApp() {
                   {!(cluster.buses || []).length && !(cluster.gmbs || []).length ? <p className="muted">{t('nearbyEmpty')}</p> : null}
                 </div>
               ))}
-            </div>
-          ) : null}
-          {!arrivalService && recents.routes.length ? (
-            <div className="mt-2">
-              <div className="muted">{t('recentRoutes')}</div>
-              <div className="row-actions recent-routes">
-                {recents.routes.map((route) => (
-                  <Button key={route} variant="outline" className="tab" type="button" onClick={() => searchArrivalByRoute(route)}>{route}</Button>
-                ))}
-              </div>
             </div>
           ) : null}
           <div className="search-row mt-3">

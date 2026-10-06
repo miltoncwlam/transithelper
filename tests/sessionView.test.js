@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   findRelockOption,
+  forgetRouteMemory,
   hasRestorableJourney,
   pickBootView,
-  shouldRelock,
-  RESTORE_MAX_AGE_MS
+  ROUTE_MEMORY_KEYS,
+  shouldRelock
 } from '../lib/sessionView.js';
 import { itineraryKey } from '../lib/journeyGroups.js';
 
-const HOUR = 60 * 60 * 1000;
 const now = Date.now();
 
 const journey = {
@@ -27,93 +27,16 @@ const arrival = {
   savedAt: now - 10 * 60 * 1000
 };
 
-test('planner was the last view: the planner session restores, not an old bus route', () => {
-  const choice = pickBootView({
-    view: 't',
-    viewAt: now - 5 * 60 * 1000,
-    journey,
-    arrival,
-    now
-  });
-  assert.equal(choice, 'journey');
-});
-
-test('arrivals was the last view and is fresh: last bus restores as before', () => {
-  const choice = pickBootView({
-    view: 'a',
-    viewAt: now - 5 * 60 * 1000,
-    journey: {},
-    arrival,
-    now
-  });
-  assert.equal(choice, 'arrival');
-});
-
-test('a stale arrivals view does not pop up a route from some time ago', () => {
-  const stale = now - RESTORE_MAX_AGE_MS - HOUR;
-  const choice = pickBootView({
-    view: 'a',
-    viewAt: stale,
-    journey: {},
-    arrival: { ...arrival, savedAt: stale },
-    now
-  });
-  assert.equal(choice, 'nearby');
-});
-
-test('an arrival with no timestamp does not pop', () => {
-  const legacyArrival = { route: '281A', service: arrival.service, stopIndex: '3' };
-  assert.equal(pickBootView({ view: null, viewAt: 0, journey: {}, arrival: legacyArrival, now }), 'nearby');
-  assert.equal(pickBootView({ view: 'a', viewAt: now, journey: {}, arrival: legacyArrival, now }), 'nearby');
-  assert.equal(pickBootView({ view: null, viewAt: 0, journey: {}, arrival: {}, now }), 'nearby');
-});
-
-test('MTR was the last view: boot lands on the MTR tab', () => {
-  assert.equal(pickBootView({ view: 'm', viewAt: now - 60000, journey: {}, arrival, now }), 'mtr');
-  const stale = now - RESTORE_MAX_AGE_MS - HOUR;
-  assert.equal(pickBootView({ view: 'm', viewAt: stale, journey: {}, arrival: { ...arrival, savedAt: stale }, now }), 'nearby');
-});
-
-test('planner view without a usable session stays on route search', () => {
-  assert.equal(
-    pickBootView({ view: 't', viewAt: now - 60000, journey: {}, arrival, now }),
-    'planner'
-  );
-  const noDest = { ...journey, destination: { label: 'B', stops: [] } };
-  assert.equal(
-    pickBootView({ view: 't', viewAt: now - 60000, journey: noDest, arrival, now }),
-    'planner'
-  );
-});
-
-test('a stale planner session does not restore the old bus', () => {
-  const stale = now - RESTORE_MAX_AGE_MS - HOUR;
-  const choice = pickBootView({
-    view: 't',
-    viewAt: now - 60000,
-    journey: { ...journey, savedAt: stale },
-    arrival,
-    now
-  });
-  assert.equal(choice, 'planner');
-  assert.equal(pickBootView({
-    view: 't',
-    viewAt: stale,
-    journey: { ...journey, savedAt: stale },
-    arrival,
-    now
-  }), 'nearby');
-});
-
-test('an arrivals route from a few hours ago does not pop', () => {
-  const old = now - 4 * HOUR;
-  assert.equal(pickBootView({
-    view: 'a',
-    viewAt: old,
-    journey: {},
-    arrival: { ...arrival, savedAt: old },
-    now
-  }), 'nearby');
+test('a stored route never opens on boot', () => {
+  assert.equal(pickBootView({ view: 't', viewAt: now, journey, arrival, now }), 'nearby');
+  assert.equal(pickBootView({ view: 'a', viewAt: now, journey: {}, arrival, now }), 'nearby');
+  assert.equal(pickBootView({ view: 'm', viewAt: now, journey: {}, arrival, now }), 'nearby');
+  assert.equal(pickBootView(), 'nearby');
+  assert.ok(ROUTE_MEMORY_KEYS.includes('tb-arrival'));
+  assert.ok(ROUTE_MEMORY_KEYS.includes('tb-recents'));
+  assert.equal(ROUTE_MEMORY_KEYS.includes('tb-homes'), false);
+  assert.equal(ROUTE_MEMORY_KEYS.includes('tb-lang'), false);
+  assert.equal(typeof forgetRouteMemory, 'function');
 });
 
 test('hasRestorableJourney needs both ends with stops', () => {

@@ -999,7 +999,7 @@ const GUIDE = {
         h: '巴士／小巴到站',
         p: [
           '輸入路線號碼後按「查詢」，才會載入班次。正在輸入時不會搜尋。同一路線的各方向會收成一張卡片；有實時班次的方向列在前面，沒有實時的收在「沒有實時班次」。九巴與城巴同一起訖會標成九巴／城巴。只有一個實時方向時會自動選取。港鐵巴士（例如 K12）同樣用路線號碼查詢。',
-          '沒有上次巴士時，到站頁會先用定位顯示附近站柱現正公布的巴士與小巴，不必先按「附近到站」。沒有公布就會留空。拒絕定位時仍可輸入路線。可把該位置儲存為回家附近或返工附近：儲存後仍留在到站頁，每種只保留一處。之後可按到站頁的「回家附近」或「返工附近」重開該位置的實時牌。上次巴士會還原，不會改去「我的回家路線」。',
+          '開啟時到站頁用定位顯示附近站柱現正公布的巴士與小巴，不必先按「附近到站」。沒有公布就會留空。拒絕定位時仍可輸入路線。不會自動打開上次查過的路線。可把該位置儲存為回家附近或返工附近：儲存後仍留在到站頁，每種只保留一處。之後可按到站頁的「回家附近」或「返工附近」重開該位置的實時牌。只有「我的回家路線」會記住。',
           '選好路線後，用地圖或可搜尋的車站名單選上車站，即顯示該站實時到站。按「就乘這一程」鎖定這一班，自動更新時不會改成下一班。若趕不上，按「錯過了」：顯示本站下一班同一路線；若已選終點，也會列出目前較快到達的實時選擇。不會叫你跑去下一站趕這一班。終點可留空，此時會跟車至路線最後一站。地圖畫在本頁，是運輸署公布走線。右上角可把時間改為鐘面或倒數。'
         ]
       },
@@ -1033,7 +1033,7 @@ const GUIDE = {
       {
         h: '我的回家路線',
         p: [
-          '無需登入。回家附近／返工附近是該位置的實時到站牌，每種只保留一處，從到站頁一按重開。巴士、路線規劃或港鐵也可儲存。換瀏覽器或清除網站資料後就不會再見到。開啟已儲存的路線規劃時，若上車站／轉車站已不合理，不會執行錯誤行程。'
+          '無需登入。重新開啟時不會回到上次查詢。只有在這裡儲存的路線會留下：回家附近／返工附近是該位置的實時到站牌，每種只保留一處，從到站頁一按重開。巴士、路線規劃或港鐵也可儲存。換瀏覽器或清除網站資料後就不會再見到。開啟已儲存的路線規劃時，若上車站／轉車站已不合理，不會執行錯誤行程。'
         ]
       },
       {
@@ -1053,7 +1053,7 @@ const GUIDE = {
         h: 'Bus / minibus arrivals',
         p: [
           'Type a route number, then tap Search — typing alone does not search. Bounds of the same route sit on one card; live trips are listed first, idle ones behind “no live trips”. Joint KMB and Citybus of the same origin and destination appear as one KMB / Citybus row. A single live bound is picked automatically. MTR Bus (for example K12) is searched the same way.',
-          'Before picking a route, if there is no last bus to restore, Arrivals loads Nearby arrivals from your location — you do not have to tap the button first. Empty operator feeds stay empty. If location is denied, type a route. You can save that place as home nearby or work nearby: you stay on Arrivals, only one of each is kept, and the Arrivals chips reopen that live board without searching.',
+          'On open, Arrivals loads Nearby arrivals from your location — you do not have to tap the button first. Empty operator feeds stay empty. If location is denied, type a route. A previous search is not reopened. You can save that place as home nearby or work nearby: you stay on Arrivals, only one of each is kept, and the Arrivals chips reopen that live board without searching. Only My travel home is remembered.',
           'After a route, pick a boarding stop from the searchable list or the map. You may pick a destination on the same trip; leave it empty to follow to the last stop. Take this trip locks that clock so refresh does not snap to the next bus. If you miss it, you see the next live trip of the same route at this pole, and a faster live option when a destination is set. The app does not send you walking to the next stop to chase this bus. The official path is drawn on this tab. Use the header to switch clock times and countdown.'
         ]
       },
@@ -1125,7 +1125,7 @@ const MANUAL = {
       {
         h: '到站、終點、地圖與各站時間',
         p: [
-          '選路線後，用可搜尋的車站名單或點地圖站號選上車站。可再選此程終點；終點只會列出上車之後的站。終點可留空，此時會跟車至路線最後一站。按「就乘這一程」鎖定這一班，自動更新時不會改成下一班。若趕不上，按「錯過了」：顯示本站下一班同一路線；若已選終點，也會列出目前較快到達的實時選擇。不會叫你跑去下一站趕這一班。沒有上次巴士時，到站頁會先用定位列出附近站柱現正公布的班次；也可再按「附近到站」。儲存為回家附近或返工附近後仍留在到站頁；每種只保留一處。之後可按到站頁的「回家附近」／「返工附近」重開該位置的實時牌，不必再搜。開啟時沒有公布就會留空。不會在啟動時改去「我的回家路線」。',
+          '選路線後，用可搜尋的車站名單或點地圖站號選上車站。可再選此程終點；終點只會列出上車之後的站。終點可留空，此時會跟車至路線最後一站。按「就乘這一程」鎖定這一班，自動更新時不會改成下一班。若趕不上，按「錯過了」：顯示本站下一班同一路線；若已選終點，也會列出目前較快到達的實時選擇。不會叫你跑去下一站趕這一班。開啟時到站頁用定位列出附近站柱現正公布的班次，不會自動打開上次查過的路線；也可再按「附近到站」。儲存為回家附近或返工附近後仍留在到站頁；每種只保留一處。之後可按到站頁的「回家附近」／「返工附近」重開該位置的實時牌，不必再搜。開啟時沒有公布就會留空。不會在啟動時改去「我的回家路線」。',
           '地圖畫在巴士／小巴頁，是運輸署公布走線。找不到官方走線時會說明，不會編造路徑。',
           '會顯示開出時間、到達時間、車程（分鐘）。可展開「查看各站時間」。標了估計的時間是沿途推算，不是營辦商逐站公布。'
         ]
@@ -1200,7 +1200,7 @@ const MANUAL = {
       {
         h: 'Arrivals, destination, map, stop times',
         p: [
-          'After a route, pick a boarding stop from the searchable selector or the map. You may pick a destination on the same trip; only later stops are offered. Leave destination empty to follow to the last stop. Take this trip locks that clock so refresh does not snap to the next bus. If you miss it, you see the next live trip of the same route at this pole, and a faster live option when a destination is set. The app does not send you walking to the next stop to chase this bus. With no last bus to restore, Arrivals loads Nearby arrivals from your location first. Saving home nearby or work nearby stays on Arrivals, keeps one of each, and the chips reopen that live board without searching. An empty feed stays empty. Saved homes do not steal the arrivals tab on boot. A last bus restores instead of auto nearby.',
+          'After a route, pick a boarding stop from the searchable selector or the map. You may pick a destination on the same trip; only later stops are offered. Leave destination empty to follow to the last stop. Take this trip locks that clock so refresh does not snap to the next bus. If you miss it, you see the next live trip of the same route at this pole, and a faster live option when a destination is set. The app does not send you walking to the next stop to chase this bus. On open, Arrivals loads Nearby arrivals from your location and does not reopen a previous search. Saving home nearby or work nearby stays on Arrivals, keeps one of each, and the chips reopen that live board without searching. An empty feed stays empty. Saved homes do not steal the arrivals tab on boot.',
           'The map on this tab draws the Transport Department official bus path. If no official line exists, the app says so and does not invent a path.',
           'You get departure, arrival, travel time, and expandable times at each stop. Times marked as estimates are inferred along the route.'
         ]
@@ -1239,7 +1239,7 @@ const MANUAL = {
       {
         h: 'My travel home (this device only)',
         p: [
-          'No sign-in and no account. Saved in this browser on this device. Home nearby and work nearby are live boards for a place, not a single bus: Open reloads what is published now, and an empty feed stays empty. Only one home and one work. Saved buses, route planner and MTR sit below.',
+          'No sign-in and no account. Opening the app does not restore the last search. Only routes saved here stay on this device. Home nearby and work nearby are live boards for a place, not a single bus: Open reloads what is published now, and an empty feed stays empty. Only one home and one work. Saved buses, route planner and MTR sit below.',
           'Another browser, another phone, or clearing site data will not show them. A saved route with an impossible boarding/interchange pair will not be run.'
         ]
       },
@@ -1296,9 +1296,12 @@ const MANUAL = {
     return { view: raw.view || null, at: Number(raw.at) || 0 };
   }
 
-  function writeSessionView(view) {
-    if (view !== 'a' && view !== 't' && view !== 'm') return;
-    try { localStorage.setItem(VIEW_KEY, JSON.stringify({ view, at: Date.now() })); } catch {}
+  function writeSessionView() {}
+
+  function forgetRouteMemory() {
+    for (const key of ['tb-view', 'tb-journey', 'tb-arrival', 'tb-mtr', 'tb-planner-mode', 'tb-recents']) {
+      try { localStorage.removeItem(key); } catch {}
+    }
   }
 
   function readJourneySession() {
@@ -1306,26 +1309,7 @@ const MANUAL = {
     return raw && raw.version === 1 ? raw : {};
   }
 
-  /** Merge-write. A key set to null clears it; undefined keeps the saved value. */
-  function writeJourneySession(next) {
-    try {
-      const cur = readJourneySession();
-      const merged = {
-        version: 1,
-        first: next.first !== undefined ? next.first : (cur.first || null),
-        boardStops: next.boardStops !== undefined ? next.boardStops : (cur.boardStops || []),
-        interchangeStops: next.interchangeStops !== undefined ? next.interchangeStops : (cur.interchangeStops || []),
-        destination: next.destination !== undefined ? next.destination : (cur.destination || null),
-        nearby: next.nearby !== undefined ? next.nearby : (cur.nearby !== false),
-        radius: next.radius !== undefined ? String(next.radius) : (cur.radius || '250'),
-        selectedDeparture: next.selectedDeparture !== undefined ? next.selectedDeparture : (cur.selectedDeparture || null),
-        selectedConnection: next.selectedConnection !== undefined ? next.selectedConnection : (cur.selectedConnection || null),
-        chosenDirect: next.chosenDirect !== undefined ? next.chosenDirect : (cur.chosenDirect || null),
-        savedAt: Date.now()
-      };
-      localStorage.setItem(JOURNEY_KEY, JSON.stringify(merged));
-    } catch {}
-  }
+  function writeJourneySession() {}
 
   function hasRestorableJourney(j) {
     return !!(j?.first?.route && j?.boardStops?.length && j?.interchangeStops?.length && j?.destination?.stops?.length);
@@ -1344,15 +1328,8 @@ const MANUAL = {
     return ok && freshAt(pref.savedAt, ARRIVAL_MAX_AGE_MS);
   }
 
-  /** Decide what a fresh page load shows. 'none' = empty arrivals. 'planner' = route search with no saved trip. */
-  function pickBootView({ view, viewAt, journey, arrival }) {
-    const viewFresh = freshAt(viewAt);
-    if (view === 't' && viewFresh) {
-      if (hasRestorableJourney(journey) && freshAt(journey.savedAt)) return 'journey';
-      return 'planner';
-    }
-    if (view === 'm' && viewFresh) return 'mtr';
-    if (view === 'a' && viewFresh && restorableArrival(arrival)) return 'arrival';
+  /** A fresh page load does not reopen a searched route. */
+  function pickBootView() {
     return 'none';
   }
 
@@ -2492,6 +2469,7 @@ const MANUAL = {
   }
 
   async function load() {
+    forgetRouteMemory();
     put('status', t('loading'));
     try {
       if (await hasBackend()) {
@@ -3220,19 +3198,7 @@ const MANUAL = {
     }
     S.arrivalPayload = payload;
     paintArrival();
-    if (S.tab === 'arrivals') {
-      S.last = 'a';
-      writeSessionView('a');
-    }
-    try {
-      localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
-        route: S.a?.route || '',
-        service: S.a,
-        stopIndex: v,
-        destIndex: destVal,
-        savedAt: Date.now()
-      }));
-    } catch {}
+    if (S.tab === 'arrivals') S.last = 'a';
   }
 
   async function pickF(s, restore = {}) {
@@ -3786,16 +3752,7 @@ const MANUAL = {
     }
   }
 
-  function saveMtrPref() {
-    writeSessionView('m');
-    try {
-      localStorage.setItem(MTR_PREF_KEY, JSON.stringify({
-        line: $('mtrLine')?.value || '',
-        station: $('mtrStation')?.value || '',
-        dest: $('mtrDest')?.value || ''
-      }));
-    } catch {}
-  }
+  function saveMtrPref() {}
 
   function mtrLineEntries() {
     return Object.entries(S.lines).sort(([a], [b]) => (a === 'LRT' ? -1 : b === 'LRT' ? 1 : 0));

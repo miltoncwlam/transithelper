@@ -6,9 +6,21 @@ Every user-visible change from the original HTML paste through today. Versions a
 - **y** — feature the user can see
 - **z** — fix, deploy, copy, CI
 
-Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.9.1**.
+Repo: [miltoncwlam/transithelper](https://github.com/miltoncwlam/transithelper). Checkout: `git checkout v2.4.0`. Current: **3.9.2**.
 
 The long TransitBuddy chat had **272 user messages**. System pings (“restart dev server”, “inform the user”) are not versions. Every real request that landed in code is below, including work that was later squashed into one git commit.
+
+---
+
+## 3.9.2 — 2026-10-05
+
+### Changed
+- **最近查詢 is gone, and a reload no longer opens a previous route.** The arrivals page does not list recent route numbers. Opening the app, or refreshing during 路線規劃, stays on the arrivals tab with the nearby board. It does not reopen the last bus, the last planner search, the last 港鐵 station, or 規劃 mode.
+- **The only saved trips are 我的回家路線.** A route, planner trip, or MTR ride stays only if you save it there. Language and clock/countdown still stay on this device. Anything already stored as a recent search or last bus is cleared on the next open.
+
+### Tests
+- Unit: boot always chooses the nearby arrivals board, and the cleared keys do not include homes or language.
+- Smoke: a stored bus, recent list, and planner view do not open, while a saved home remains. A planner search does not come back after reload. Standalone does the same.
 
 ---
 

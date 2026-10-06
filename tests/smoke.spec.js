@@ -68,10 +68,13 @@ test('saved homes do not steal the arrivals tab', async ({ page }) => {
   await expect(page.getByRole('button', { name: /^回家附近$|^Home nearby$/ })).toBeVisible();
 });
 
-test('last bus restores on first open without stealing the tab', async ({ page }) => {
+test('a saved route does not open, and only a saved home stays', async ({ page }) => {
   test.setTimeout(90000);
   await page.addInitScript(() => {
-    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: Date.now() }));
+    localStorage.setItem('tb-lang', 'zh');
+    localStorage.setItem('tb-homes', JSON.stringify([{ id: 'local-keep', type: 'arrival', title: { zh: '回家', en: 'Home' }, payload: { route: '1' } }]));
+    localStorage.setItem('tb-view', JSON.stringify({ view: 't', at: Date.now() }));
+    localStorage.setItem('tb-recents', JSON.stringify({ routes: ['281A'], stops: [] }));
     localStorage.setItem('tb-arrival', JSON.stringify({
       route: '1',
       savedAt: Date.now(),
@@ -81,45 +84,7 @@ test('last bus restores on first open without stealing the tab', async ({ page }
         bound: 'O',
         service_type: '1',
         orig_tc: '竹園邨',
-        dest_tc: '尖沙咀碼頭',
-        orig_en: 'Chuk Yuen',
-        dest_en: 'Star Ferry'
-      },
-      stopIndex: 0,
-      destIndex: ''
-    }));
-  });
-  await page.goto('/');
-  await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
-  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
-  await expect(page.locator('button.tab-home')).toHaveAttribute('data-state', 'inactive');
-  const panel = page.locator('.panel.active');
-  await expect(panel.locator('.arrival-board')).toBeVisible({ timeout: 40000 });
-  await expect(panel).toContainText(/九巴 1|KMB 1/);
-  await expect(panel).toContainText(/竹園|Chuk Yuen/);
-  await expect(panel.locator('.nearby-board')).toHaveCount(0);
-  await expect(panel).toContainText(/分鐘|min|沒有|no bus|目前找不到|\d{1,2}:\d{2}|上午|下午/i, { timeout: 40000 });
-});
-
-test('switching to route search then reloading does not pop the last bus', async ({ page }) => {
-  test.setTimeout(90000);
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('tb-seeded')) return;
-    sessionStorage.setItem('tb-seeded', '1');
-    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: Date.now() }));
-    localStorage.setItem('tb-arrival', JSON.stringify({
-      route: '1',
-      savedAt: Date.now(),
-      service: {
-        route: '1',
-        co: 'KMB',
-        bound: 'O',
-        service_type: '1',
-        orig_tc: '竹園邨',
-        dest_tc: '尖沙咀碼頭',
-        orig_en: 'Chuk Yuen',
-        dest_en: 'Star Ferry'
+        dest_tc: '尖沙咀碼頭'
       },
       stopIndex: 0,
       destIndex: ''
@@ -127,15 +92,24 @@ test('switching to route search then reloading does not pop the last bus', async
   });
   await page.goto('/');
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await expect(page.locator('.panel.active .arrival-board')).toBeVisible({ timeout: 40000 });
-  await page.getByRole('tab', { name: /路線規劃|Route planner/ }).click();
-  await expect(page.locator('button.tab-transfer')).toHaveAttribute('data-state', 'active');
-  await page.reload();
-  await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await expect(page.locator('button.tab-transfer')).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('button.tab-transfer')).toHaveAttribute('data-state', 'inactive');
   const panel = page.locator('.panel.active');
-  await expect(panel).toContainText(/路線規劃|Route planner/);
+  await expect(panel.getByLabel(/路線，例如|Route, for example/)).toHaveValue('');
   await expect(panel.locator('.arrival-board')).toHaveCount(0);
+  await expect(panel).not.toContainText(/最近查詢|Recent routes/);
+  const left = await page.evaluate(() => ({
+    view: localStorage.getItem('tb-view'),
+    arrival: localStorage.getItem('tb-arrival'),
+    recents: localStorage.getItem('tb-recents'),
+    homes: localStorage.getItem('tb-homes'),
+    lang: localStorage.getItem('tb-lang')
+  }));
+  expect(left.view).toBeNull();
+  expect(left.arrival).toBeNull();
+  expect(left.recents).toBeNull();
+  expect(left.homes).toContain('local-keep');
+  expect(left.lang).toBe('zh');
 });
 
 test('nearby board loads on first open when there is no last bus', async ({ page }) => {
@@ -809,7 +783,7 @@ test('planner later departures lock that clock', async ({ page }) => {
   expect(lockedClock).not.toBe(expectedEarly);
 });
 
-test('planner search and locked trip survive a page reload', async ({ page }) => {
+test('a planner search is not restored after a reload', async ({ page }) => {
   test.setTimeout(120000);
   await page.route('**/api/journey-options', async (route) => {
     if (route.request().method() !== 'POST') return route.continue();
@@ -858,11 +832,12 @@ test('planner search and locked trip survive a page reload', async ({ page }) =>
 
   await page.reload();
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
-  await expect(page.locator('button.tab-transfer')).toHaveAttribute('data-state', 'active', { timeout: 30000 });
-  const restored = page.locator('.panel.active');
-  await expect(restored).toContainText(/竹園邨總站|Chuk Yuen Estate Bus Terminus/, { timeout: 30000 });
-  await expect(restored).toContainText(/尖沙咀碼頭|Star Ferry/);
-  await expect(restored.getByRole('button', { name: /返回路線|Back to routes/ })).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('button.tab-arrivals')).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('button.tab-transfer')).toHaveAttribute('data-state', 'inactive');
+  const panel = page.locator('.panel.active');
+  await expect(panel.getByLabel(/路線，例如|Route, for example/)).toHaveValue('');
+  await expect(panel.locator('.arrival-board')).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: /返回路線|Back to routes/ })).toHaveCount(0);
 });
 
 test('a stale last bus does not pop up after a reload', async ({ page }) => {
@@ -985,25 +960,6 @@ test('arrivals lock and catch-up work beyond three minutes', async ({ page }) =>
   const eta7 = new Date(Date.now() + 7 * 60000).toISOString();
   const eta15 = new Date(Date.now() + 15 * 60000).toISOString();
   const posted = [];
-  await page.addInitScript(() => {
-    localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: Date.now() }));
-    localStorage.setItem('tb-arrival', JSON.stringify({
-      route: '1',
-      savedAt: Date.now(),
-      service: {
-        route: '1',
-        co: 'KMB',
-        bound: 'O',
-        service_type: '1',
-        orig_tc: '竹園邨',
-        dest_tc: '尖沙咀碼頭',
-        orig_en: 'Chuk Yuen',
-        dest_en: 'Star Ferry'
-      },
-      stopIndex: 0,
-      destIndex: ''
-    }));
-  });
   await page.route('**/api/kmb/route-stop/**', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -1044,6 +1000,10 @@ test('arrivals lock and catch-up work beyond three minutes', async ({ page }) =>
   await page.goto('/');
   await expect(dirNote(page)).toContainText(DIR_READY, { timeout: 45000 });
   const panel = page.locator('.panel.active');
+  await panel.getByLabel(/路線，例如|Route, for example/).fill('1');
+  await panel.getByRole('button', { name: /^查詢$|^Find$/ }).click();
+  await page.getByRole('button', { name: /九巴 1|KMB 1/ }).filter({ hasText: /竹園|Chuk Yuen/ }).first().click();
+  await pickComboboxOption(page, panel.getByRole('combobox', { name: /選擇上車站|Choose boarding stop/ }), /竹園邨總站|Chuk Yuen Estate Bus Terminus/);
   await expect(panel.locator('.arrival-board')).toBeVisible({ timeout: 40000 });
   await expect(panel.getByRole('button', { name: /錯過了|If I missed it/ })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: /就乘這一程|Take this trip/ })).toHaveCount(2);
@@ -1146,9 +1106,10 @@ async function mockStandaloneApis(page, { rideTrips, transferJson } = {}) {
   }));
 }
 
-test('standalone restores a fresh last bus on open', async ({ page }) => {
+test('standalone does not open a saved last bus', async ({ page }) => {
   test.setTimeout(60000);
   await page.addInitScript(() => {
+    localStorage.setItem('tb-homes', JSON.stringify([{ id: 'local-keep', type: 'arrival' }]));
     localStorage.setItem('tb-view', JSON.stringify({ view: 'a', at: Date.now() }));
     localStorage.setItem('tb-arrival', JSON.stringify({
       route: '1',
@@ -1161,9 +1122,14 @@ test('standalone restores a fresh last bus on open', async ({ page }) => {
   await mockStandaloneApis(page);
   await page.goto('/standalone.html');
   await expect(page.locator('#status')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 20000 });
-  await expect(page.locator('#arrivalRoute')).toHaveValue('1');
-  await expect(page.locator('#arrivalOutput')).toContainText(/竹園邨總站|Chuk Yuen Estate Bus Terminus/, { timeout: 20000 });
-  await expect(page.locator('#arrivalOutput')).toContainText(/分鐘|min/);
+  await expect(page.locator('#arrivalRoute')).toHaveValue('');
+  await expect(page.locator('#arrivalOutput')).toHaveText('');
+  const left = await page.evaluate(() => ({
+    arrival: localStorage.getItem('tb-arrival'),
+    homes: localStorage.getItem('tb-homes')
+  }));
+  expect(left.arrival).toBeNull();
+  expect(left.homes).toContain('local-keep');
 });
 
 test('standalone does not pop up a stale last bus', async ({ page }) => {
@@ -1187,7 +1153,7 @@ test('standalone does not pop up a stale last bus', async ({ page }) => {
   await expect(page.locator('#arrivalOutput')).toHaveText('');
 });
 
-test('standalone planner session survives a reload', async ({ page }) => {
+test('standalone does not reopen a saved planner search', async ({ page }) => {
   test.setTimeout(60000);
   await page.addInitScript(() => {
     localStorage.setItem('tb-view', JSON.stringify({ view: 't', at: Date.now() }));
@@ -1208,9 +1174,7 @@ test('standalone planner session survives a reload', async ({ page }) => {
   await mockStandaloneApis(page);
   await page.goto('/standalone.html');
   await expect(page.locator('#status')).toContainText(/共 \d+ 條路線服務|Directory ready/, { timeout: 20000 });
-  await expect(page.locator('.tab[data-tab="transfer"]')).toHaveClass(/active/, { timeout: 20000 });
-  const panel = page.locator('.panel.active');
-  await expect(panel).toContainText(/即將開出的第一程巴士|Upcoming first-bus departures/, { timeout: 20000 });
-  await expect(panel).toContainText(/分鐘|min/);
-  await expect(page.locator('#destinationSummary')).toContainText(/尖沙咀碼頭|Star Ferry/);
+  await expect(page.locator('.tab[data-tab="arrivals"]')).toHaveClass(/active/);
+  await expect(page.locator('#arrivalRoute')).toHaveValue('');
+  await expect(page.locator('#destinationSummary')).toHaveText('');
 });

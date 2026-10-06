@@ -40,9 +40,12 @@
     return { view: raw.view || null, at: Number(raw.at) || 0 };
   }
 
-  function writeSessionView(view) {
-    if (view !== 'a' && view !== 't' && view !== 'm') return;
-    try { localStorage.setItem(VIEW_KEY, JSON.stringify({ view, at: Date.now() })); } catch {}
+  function writeSessionView() {}
+
+  function forgetRouteMemory() {
+    for (const key of ['tb-view', 'tb-journey', 'tb-arrival', 'tb-mtr', 'tb-planner-mode', 'tb-recents']) {
+      try { localStorage.removeItem(key); } catch {}
+    }
   }
 
   function readJourneySession() {
@@ -50,26 +53,7 @@
     return raw && raw.version === 1 ? raw : {};
   }
 
-  /** Merge-write. A key set to null clears it; undefined keeps the saved value. */
-  function writeJourneySession(next) {
-    try {
-      const cur = readJourneySession();
-      const merged = {
-        version: 1,
-        first: next.first !== undefined ? next.first : (cur.first || null),
-        boardStops: next.boardStops !== undefined ? next.boardStops : (cur.boardStops || []),
-        interchangeStops: next.interchangeStops !== undefined ? next.interchangeStops : (cur.interchangeStops || []),
-        destination: next.destination !== undefined ? next.destination : (cur.destination || null),
-        nearby: next.nearby !== undefined ? next.nearby : (cur.nearby !== false),
-        radius: next.radius !== undefined ? String(next.radius) : (cur.radius || '250'),
-        selectedDeparture: next.selectedDeparture !== undefined ? next.selectedDeparture : (cur.selectedDeparture || null),
-        selectedConnection: next.selectedConnection !== undefined ? next.selectedConnection : (cur.selectedConnection || null),
-        chosenDirect: next.chosenDirect !== undefined ? next.chosenDirect : (cur.chosenDirect || null),
-        savedAt: Date.now()
-      };
-      localStorage.setItem(JOURNEY_KEY, JSON.stringify(merged));
-    } catch {}
-  }
+  function writeJourneySession() {}
 
   function hasRestorableJourney(j) {
     return !!(j?.first?.route && j?.boardStops?.length && j?.interchangeStops?.length && j?.destination?.stops?.length);
@@ -88,15 +72,8 @@
     return ok && freshAt(pref.savedAt, ARRIVAL_MAX_AGE_MS);
   }
 
-  /** Decide what a fresh page load shows. 'none' = empty arrivals. 'planner' = route search with no saved trip. */
-  function pickBootView({ view, viewAt, journey, arrival }) {
-    const viewFresh = freshAt(viewAt);
-    if (view === 't' && viewFresh) {
-      if (hasRestorableJourney(journey) && freshAt(journey.savedAt)) return 'journey';
-      return 'planner';
-    }
-    if (view === 'm' && viewFresh) return 'mtr';
-    if (view === 'a' && viewFresh && restorableArrival(arrival)) return 'arrival';
+  /** A fresh page load does not reopen a searched route. */
+  function pickBootView() {
     return 'none';
   }
 
@@ -1236,6 +1213,7 @@
   }
 
   async function load() {
+    forgetRouteMemory();
     put('status', t('loading'));
     try {
       if (await hasBackend()) {
@@ -1964,19 +1942,7 @@
     }
     S.arrivalPayload = payload;
     paintArrival();
-    if (S.tab === 'arrivals') {
-      S.last = 'a';
-      writeSessionView('a');
-    }
-    try {
-      localStorage.setItem(ARRIVAL_PREF_KEY, JSON.stringify({
-        route: S.a?.route || '',
-        service: S.a,
-        stopIndex: v,
-        destIndex: destVal,
-        savedAt: Date.now()
-      }));
-    } catch {}
+    if (S.tab === 'arrivals') S.last = 'a';
   }
 
   async function pickF(s, restore = {}) {
@@ -2530,16 +2496,7 @@
     }
   }
 
-  function saveMtrPref() {
-    writeSessionView('m');
-    try {
-      localStorage.setItem(MTR_PREF_KEY, JSON.stringify({
-        line: $('mtrLine')?.value || '',
-        station: $('mtrStation')?.value || '',
-        dest: $('mtrDest')?.value || ''
-      }));
-    } catch {}
-  }
+  function saveMtrPref() {}
 
   function mtrLineEntries() {
     return Object.entries(S.lines).sort(([a], [b]) => (a === 'LRT' ? -1 : b === 'LRT' ? 1 : 0));

@@ -25,7 +25,8 @@ Scheme: **x.y.z** — major / minor / patch. Git tags are `vX.Y.Z`.
 | 3.7.0 | `v3.7.0` | Reload restores the view you were on; planner search + locked trip survive; no stale-route popup |
 | 3.8.0 | `v3.8.0` | Standalone.html parity: session restore + 稍後班次 packing; stress suite |
 | 3.9.0 | `v3.9.0` | Route planner splits 實時 and 規劃; planning does not run a live search |
-| 3.9.1 | `v3.9.1` | Reload during route search stays on the planner; old buses no longer pop (current) |
+| 3.9.1 | `v3.9.1` | Reload during route search stays on the planner; old buses no longer pop |
+| 3.9.2 | `v3.9.2` | No recent routes; only 我的回家路線 is saved (current) |
 
 ```bash
 git fetch origin --tags
